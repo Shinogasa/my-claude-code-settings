@@ -16,6 +16,7 @@ TARGETS=(
   "commands:$CLAUDE_DIR/commands"
   "rules:$CLAUDE_DIR/rules"
   "statusline.js:$CLAUDE_DIR/statusline.js"
+  "output-styles:$CLAUDE_DIR/output-styles"
 )
 
 # 色付き出力

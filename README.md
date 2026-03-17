@@ -20,6 +20,7 @@ bash setup.sh
 | `commands/` | `~/.claude/commands/` | カスタムスラッシュコマンド |
 | `rules/` | `~/.claude/rules/` | 条件付きルール |
 | `statusline.js` | `~/.claude/statusline.js` | ステータスライン表示スクリプト |
+| `output-styles/` | `~/.claude/output-styles/` | カスタムアウトプットスタイル |
 
 - 何度実行しても安全（冪等）
 - 既存ファイルは `~/.claude/backups/` に自動バックアップ
@@ -35,6 +36,11 @@ bash setup.sh
 │   ├── explain.md
 │   └── pr-create.md
 ├── rules/             # 条件付きルール
+├── output-styles/     # カスタムアウトプットスタイル
+│   ├── mentoring.md   #   メンタリング（教育・TODO(human)）
+│   ├── review.md      #   レビュー（Security/Performance/Maintainability）
+│   ├── fast.md        #   高速実行（説明最小限）
+│   └── architect.md   #   アーキテクト（設計思考・トレードオフ分析）
 ├── statusline.js      # ステータスライン表示
 ├── setup.sh           # セットアップスクリプト
 └── README.md
