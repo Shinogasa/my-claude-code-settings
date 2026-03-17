@@ -37,10 +37,8 @@ bash setup.sh
 │   └── pr-create.md
 ├── rules/             # 条件付きルール
 ├── output-styles/     # カスタムアウトプットスタイル
-│   ├── mentoring.md   #   メンタリング（教育・TODO(human)）
-│   ├── review.md      #   レビュー（Security/Performance/Maintainability）
-│   ├── fast.md        #   高速実行（説明最小限）
-│   └── architect.md   #   アーキテクト（設計思考・トレードオフ分析）
+│   ├── mentoring.md   #   統合メンタリング（教育・レビュー・設計思考）
+│   └── fast.md        #   高速実行（説明最小限）
 ├── statusline.js      # ステータスライン表示
 ├── setup.sh           # セットアップスクリプト
 └── README.md
