@@ -8,10 +8,15 @@ Claude Codeの個人設定をGit管理するリポジトリ。
 ```bash
 git clone <this-repo>
 cd my-claude-code-settings
+cp .env.example .env
+# .env を編集して ANTHROPIC_AUTH_TOKEN 等を設定
 bash setup.sh
 ```
 
-`setup.sh` は以下のシンボリックリンクを `~/.claude/` 配下に作成する：
+`setup.sh` は以下を実行する：
+
+1. シンボリックリンクを `~/.claude/` 配下に作成
+2. `.env` + テンプレートから `~/.claude/settings.json` を生成
 
 | リポジトリ | リンク先 | 内容 |
 |---|---|---|
@@ -40,6 +45,8 @@ bash setup.sh
 │   ├── mentoring.md   #   統合メンタリング（教育・レビュー・設計思考）
 │   └── fast.md        #   高速実行（説明最小限）
 ├── statusline.js      # ステータスライン表示
+├── settings.json.template  # settings.jsonテンプレート
+├── .env.example       # 環境変数サンプル
 ├── setup.sh           # セットアップスクリプト
 └── README.md
 ```
@@ -91,9 +98,10 @@ paths:
 
 ## 管理対象外
 
-以下は機密情報を含むため、このリポジトリでは管理しない：
+以下は機密情報を含むため、`.gitignore` で除外している：
 
-- `~/.claude/settings.json` — APIキー・トークン等
+- `.env` — APIトークン等の環境変数（`settings.json.template` と組み合わせて使用）
+- `settings.json` — 生成済みの設定ファイル
 - `.claude/settings.local.json` — プロジェクト固有設定
 
 ## 参考

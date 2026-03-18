@@ -1,0 +1,4 @@
+.env
+settings.json
+.DS_Store
+*.swp
