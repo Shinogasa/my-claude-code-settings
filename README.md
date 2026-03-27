@@ -42,7 +42,7 @@ bash setup.sh
 │   └── pr-create.md
 ├── rules/             # 条件付きルール
 ├── output-styles/     # カスタムアウトプットスタイル
-│   ├── mentoring.md   #   統合メンタリング（教育・レビュー・設計思考）
+│   ├── mentoring.md   #   Review & Design（コードレビュー・設計判断特化）
 │   └── fast.md        #   高速実行（説明最小限）
 ├── statusline.js      # ステータスライン表示
 ├── settings.json.template  # settings.jsonテンプレート

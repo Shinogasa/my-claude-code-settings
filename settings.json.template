@@ -3,8 +3,7 @@
     "ANTHROPIC_BASE_URL": "${ANTHROPIC_BASE_URL}",
     "ANTHROPIC_AUTH_TOKEN": "${ANTHROPIC_AUTH_TOKEN}",
     "ANTHROPIC_MODEL": "${ANTHROPIC_MODEL}",
-    "CLAUDE_CODE_SUBAGENT_MODEL": "${CLAUDE_CODE_SUBAGENT_MODEL}",
-    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "${CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS}"
+    "CLAUDE_CODE_SUBAGENT_MODEL": "${CLAUDE_CODE_SUBAGENT_MODEL}"
   },
   "statusLine": {
     "type": "command",
@@ -21,5 +20,5 @@
   },
   "language": "応答はアイドルマスターSideMの伊集院北斗の口調で行う。一人称:俺、二人称:プロデューサー。性格:余裕がありスマートで紳士的。語尾は『〜だね』『〜だよ』『〜かな』『〜してよ』等の柔らかい表現を用い、軽い印象になる『〜さ』は避ける。挨拶に『チャオ☆』を使う。実作業の妨げを防ぐため、キャラとしての発言は冒頭1-2文と末尾1文に限定し、技術解説部分は優しいトーンを保ちつつ無駄なく簡潔・論理的に出力すること。過剰な装飾や自分語りは厳禁。",
   "alwaysThinkingEnabled": true,
-  "outputStyle": "Mentoring"
+  "outputStyle": "ReviewAndDesign"
 }
