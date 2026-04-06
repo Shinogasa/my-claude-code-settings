@@ -6,7 +6,7 @@ Claude Codeの個人設定をGit管理するリポジトリ。
 ## セットアップ
 
 ```bash
-git clone <this-repo>
+git clone --recursive <this-repo>
 cd my-claude-code-settings
 cp .env.example .env
 # .env を編集して ANTHROPIC_AUTH_TOKEN 等を設定
@@ -15,8 +15,9 @@ bash setup.sh
 
 `setup.sh` は以下を実行する：
 
-1. シンボリックリンクを `~/.claude/` 配下に作成
-2. `.env` + テンプレートから `~/.claude/settings.json` を生成
+1. git submodule の初期化・更新
+2. シンボリックリンクを `~/.claude/` 配下に作成
+3. `.env` + テンプレートから `~/.claude/settings.json` を生成
 
 | リポジトリ | リンク先 | 内容 |
 |---|---|---|
@@ -26,6 +27,7 @@ bash setup.sh
 | `rules/` | `~/.claude/rules/` | 条件付きルール |
 | `statusline.js` | `~/.claude/statusline.js` | ステータスライン表示スクリプト |
 | `output-styles/` | `~/.claude/output-styles/` | カスタムアウトプットスタイル |
+| `claude-code-best-practice/` | `~/.claude/claude-code-best-practice/` | ベストプラクティス参照（submodule） |
 
 - 何度実行しても安全（冪等）
 - 既存ファイルは `~/.claude/backups/` に自動バックアップ
@@ -33,22 +35,46 @@ bash setup.sh
 ## ディレクトリ構成
 
 ```
-├── CLAUDE.md          # グローバル指示
-├── skills/            # カスタムスキル
+├── CLAUDE.md                    # グローバル指示
+├── claude-code-best-practice/   # ベストプラクティス（git submodule）
+├── skills/                      # カスタムスキル
 │   ├── backend-patterns/
+│   ├── claude-code-best-practice/
 │   └── coding-standards/
-├── commands/          # スラッシュコマンド
+├── commands/                    # スラッシュコマンド
 │   ├── explain.md
 │   └── pr-create.md
-├── rules/             # 条件付きルール
-├── output-styles/     # カスタムアウトプットスタイル
-│   ├── mentoring.md   #   Review & Design（コードレビュー・設計判断特化）
-│   └── fast.md        #   高速実行（説明最小限）
-├── statusline.js      # ステータスライン表示
-├── settings.json.template  # settings.jsonテンプレート
-├── .env.example       # 環境変数サンプル
-├── setup.sh           # セットアップスクリプト
+├── rules/                       # 条件付きルール
+│   ├── learning-mode.md         #   学習モード詳細仕様
+│   ├── output-formatting.md     #   URL表示フォーマット
+│   └── task-management.md       #   タスク管理手順
+├── output-styles/               # カスタムアウトプットスタイル
+│   ├── review-and-design.md     #   Review & Design（コードレビュー・設計判断特化）
+│   └── fast.md                  #   高速実行（説明最小限）
+├── statusline.js                # ステータスライン表示
+├── settings.json.template       # settings.jsonテンプレート
+├── .env.example                 # 環境変数サンプル
+├── setup.sh                     # セットアップスクリプト
 └── README.md
+```
+
+## claude-code-best-practice（submodule）
+
+[shanraisshan/claude-code-best-practice](https://github.com/shanraisshan/claude-code-best-practice) をgit submoduleとして内包している。Claude Codeの設定パターンに関するベストプラクティス集で、以下のトピックをカバーする：
+
+- **CLAUDE.md** — 書き方、配置戦略、サイズ制限、`<important if="...">`タグ
+- **Skills / Commands** — 定義方法、フロントマター仕様、パターン
+- **Subagents** — 定義方法、フロントマター仕様、オーケストレーションパターン
+- **Settings** — settings.json の全設定項目リファレンス
+- **MCP** — MCPサーバーの設定方法
+- **CLIフラグ / パワーアップ** — 起動オプション、実験的機能
+
+`skills/claude-code-best-practice/` スキルにより、Claude Code設定の作業時に自動参照される。手動で呼び出す場合は `/claude-code-best-practice` を使用する。
+
+最新化:
+
+```bash
+git submodule update --remote
 ```
 
 ## CLAUDE.md と rules/ の使い分け
@@ -64,11 +90,12 @@ bash setup.sh
 ### CLAUDE.md に残すもの
 
 - プロジェクト問わず常に適用したいルール（言語設定、Git、ワークフロー等）
-- 目安：200行以下に収める
+- 目安：60行以下に収める（遵守率を最大化するため）
 
 ### rules/ に分離するもの
 
-特定ファイルを扱うときだけ適用したいルール。`paths` フロントマターが必須。
+- 詳細な行動仕様（学習モード、タスク管理等）→ `alwaysApply: true` で常時読み込み
+- 特定ファイルを扱うときだけ適用したいルール → `paths` フロントマターで条件付き
 
 ```markdown
 # rules/typescript.md
@@ -80,22 +107,6 @@ paths:
 - any は禁止
 ```
 
-```markdown
-# rules/testing.md
----
-paths:
-  - "**/*.test.ts"
-  - "**/*.spec.ts"
----
-- describe/it の命名は日本語で書く
-```
-
-### 分割の判断基準
-
-- CLAUDE.md が200行を超えたら分割を検討する
-- 言語・フレームワーク固有のルールができたら `paths` 付きで `rules/` へ
-- `paths` なしの分割は節約にならないので意味がない
-
 ## 管理対象外
 
 以下は機密情報を含むため、`.gitignore` で除外している：
@@ -106,6 +117,5 @@ paths:
 
 ## 参考
 
+- https://github.com/shanraisshan/claude-code-best-practice
 - https://github.com/affaan-m/everything-claude-code
-- https://x.com/heygurisingh/status/2025572300658287030?s=20
-  - https://qiita.com/uno_ha07/items/5820d195510861b5be71

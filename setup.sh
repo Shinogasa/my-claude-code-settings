@@ -17,6 +17,7 @@ TARGETS=(
   "rules:$CLAUDE_DIR/rules"
   "statusline.js:$CLAUDE_DIR/statusline.js"
   "output-styles:$CLAUDE_DIR/output-styles"
+  "claude-code-best-practice:$CLAUDE_DIR/claude-code-best-practice"
 )
 
 # 色付き出力
@@ -34,6 +35,16 @@ if [ ! -d "$CLAUDE_DIR" ]; then
   red "エラー: $CLAUDE_DIR が存在しません。Claude Code を一度起動してください。"
   exit 1
 fi
+
+# git submodule の初期化・更新
+echo "=== git submodule 初期化 ==="
+if [ -f "$SCRIPT_DIR/.gitmodules" ]; then
+  (cd "$SCRIPT_DIR" && git submodule update --init --recursive)
+  green "✓ submodule を初期化しました"
+else
+  yellow "スキップ: .gitmodules が見つかりません"
+fi
+echo ""
 
 backup_created=false
 
