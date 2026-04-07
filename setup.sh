@@ -17,6 +17,8 @@ TARGETS=(
   "rules:$CLAUDE_DIR/rules"
   "statusline.js:$CLAUDE_DIR/statusline.js"
   "output-styles:$CLAUDE_DIR/output-styles"
+  "agents:$CLAUDE_DIR/agents"
+  "contexts:$CLAUDE_DIR/contexts"
   "claude-code-best-practice:$CLAUDE_DIR/claude-code-best-practice"
 )
 
