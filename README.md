@@ -25,6 +25,8 @@ bash setup.sh
 | `skills/` | `~/.claude/skills/` | カスタムスキル |
 | `commands/` | `~/.claude/commands/` | カスタムスラッシュコマンド |
 | `rules/` | `~/.claude/rules/` | 条件付きルール |
+| `agents/` | `~/.claude/agents/` | サブエージェント定義 |
+| `contexts/` | `~/.claude/contexts/` | コンテキスト切替 |
 | `statusline.js` | `~/.claude/statusline.js` | ステータスライン表示スクリプト |
 | `output-styles/` | `~/.claude/output-styles/` | カスタムアウトプットスタイル |
 | `claude-code-best-practice/` | `~/.claude/claude-code-best-practice/` | ベストプラクティス参照（submodule） |
@@ -38,16 +40,52 @@ bash setup.sh
 ├── CLAUDE.md                    # グローバル指示
 ├── claude-code-best-practice/   # ベストプラクティス（git submodule）
 ├── skills/                      # カスタムスキル
-│   ├── backend-patterns/
-│   ├── claude-code-best-practice/
-│   └── coding-standards/
+│   ├── api-design/              #   REST API設計パターン
+│   ├── architecture-decision-records/  # ADR記録
+│   ├── backend-patterns/        #   バックエンドパターン
+│   ├── claude-code-best-practice/  # 設定ベストプラクティス参照
+│   ├── coding-standards/        #   コーディング規約
+│   ├── database-migrations/     #   DBマイグレーション
+│   ├── deployment-patterns/     #   デプロイパターン
+│   ├── hexagonal-architecture/  #   ヘキサゴナルアーキテクチャ
+│   ├── security-review/         #   セキュリティレビュー
+│   ├── systematic-debugging/    #   構造化デバッグ（4フェーズ）
+│   ├── subagent-driven-development/  # サブエージェント駆動開発
+│   ├── tdd-workflow/            #   TDD（Iron Law付き）
+│   └── verification-loop/       #   検証ループ（Iron Law付き）
 ├── commands/                    # スラッシュコマンド
-│   ├── explain.md
-│   └── pr-create.md
-├── rules/                       # 条件付きルール
+│   ├── aside.md                 #   サイドクエスチョン
+│   ├── build-fix.md             #   ビルドエラー修正
+│   ├── code-review.md           #   コードレビュー
+│   ├── explain.md               #   プロジェクト説明
+│   ├── feature-dev.md           #   フィーチャー開発
+│   ├── plan.md                  #   実装計画
+│   ├── pr-create.md             #   PR作成
+│   ├── quality-gate.md          #   品質ゲート
+│   ├── refactor-clean.md        #   リファクタリング
+│   ├── tdd.md                   #   TDD（shimコマンド）
+│   ├── test-coverage.md         #   テストカバレッジ
+│   └── verify.md                #   検証（shimコマンド）
+├── agents/                      # サブエージェント定義
+│   ├── planner.md               #   実装計画（opus, bite-sized tasks）
+│   ├── code-architect.md        #   アーキテクチャ設計
+│   ├── code-explorer.md         #   コードベース調査
+│   ├── code-simplifier.md       #   コード簡素化
+│   ├── refactor-cleaner.md      #   デッドコード除去
+│   ├── security-reviewer.md     #   セキュリティレビュー
+│   ├── build-error-resolver.md  #   ビルドエラー解決
+│   └── silent-failure-hunter.md #   サイレント障害検出
+├── rules/                       # 常時適用ルール
 │   ├── learning-mode.md         #   学習モード詳細仕様
 │   ├── output-formatting.md     #   URL表示フォーマット
-│   └── task-management.md       #   タスク管理手順
+│   ├── task-management.md       #   タスク管理手順
+│   ├── ecc-coding-style.md      #   コーディングスタイル
+│   ├── ecc-development-workflow.md  # 開発ワークフロー
+│   └── ecc-testing.md           #   テスト要件
+├── contexts/                    # コンテキスト切替
+│   ├── dev.md                   #   開発モード
+│   ├── research.md              #   調査モード
+│   └── review.md                #   レビューモード
 ├── output-styles/               # カスタムアウトプットスタイル
 │   ├── review-and-design.md     #   Review & Design（コードレビュー・設計判断特化）
 │   └── fast.md                  #   高速実行（説明最小限）
@@ -115,7 +153,21 @@ paths:
 - `settings.json` — 生成済みの設定ファイル
 - `.claude/settings.local.json` — プロジェクト固有設定
 
+## Superpowers由来の強化
+
+[obra/superpowers](https://github.com/obra/superpowers)（MIT License）のエッセンスをチェリーピックで取り入れている。丸ごとの導入ではなく、学習モードやoutput-styleなど独自の仕組みとの共存を優先して選択的に採用。
+
+| 取り入れた要素 | 適用先 | 内容 |
+|---|---|---|
+| Rationalization Prevention Tables | tdd-workflow, verification-loop, planner | エージェントの自己正当化を事前にブロックする対応表 |
+| Systematic Debugging | skills/systematic-debugging/ | 4フェーズ構造化デバッグ手法（新規） |
+| Bite-Sized Task Granularity | agents/planner.md | 2-5分粒度のタスク分解 + プレースホルダー禁止 |
+| Subagent-Driven Development | skills/subagent-driven-development/ | サブエージェント実行 + 2段階レビュー（新規） |
+| Verification Iron Law | skills/verification-loop/ | 「証拠なしに完了を主張するな」の行動規範 |
+| TDD Iron Law | skills/tdd-workflow/ | 「テスト前にコード書いたら削除」の鉄則 |
+
 ## 参考
 
-- https://github.com/shanraisshan/claude-code-best-practice
-- https://github.com/affaan-m/everything-claude-code
+- https://github.com/obra/superpowers — エージェント向けスキルフレームワーク（チェリーピック元）
+- https://github.com/shanraisshan/claude-code-best-practice — Claude Code設定ベストプラクティス（submodule）
+- https://github.com/affaan-m/everything-claude-code — Claude Code設定集

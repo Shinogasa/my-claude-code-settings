@@ -16,6 +16,24 @@ This skill ensures all code development follows TDD principles with comprehensiv
 - Adding API endpoints
 - Creating new components
 
+## The Iron Law
+
+```
+NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST
+```
+
+Wrote code before the test? **Delete it. Start over.**
+
+No exceptions:
+- Don't keep it as "reference"
+- Don't "adapt" it while writing tests
+- Don't look at it
+- Delete means delete
+
+Implement fresh from tests. Period.
+
+**Exploration is OK** — but throw away the exploration code entirely before starting TDD. If you catch yourself keeping exploration code "just for reference," you are violating this rule.
+
 ## Core Principles
 
 ### 1. Tests BEFORE Code
@@ -459,5 +477,20 @@ npm test && npm run lint
 - Tests catch bugs before production
 
 ---
+
+## 合理化防止（Rationalization Prevention）
+
+以下の思考が浮かんだら、それはTDDをスキップする合理化である。立ち止まること。
+
+| 合理化 | 現実 |
+|---|---|
+| 「これはシンプルすぎてテスト不要」 | シンプルなコードも壊れる。テストは30秒で書ける |
+| 「後でテストを書く」 | テスト後付けは即パスするため、何も証明しない |
+| 「手動で確認済み」 | アドホック≠体系的。記録がなく再実行できない |
+| 「TDDは遅い」 | TDDはデバッグより速い。後からバグを直す方が遅い |
+| 「既存コードにテストがない」 | だからこそ今テストを追加する。改善の機会 |
+| 「先にコード書いて、参考にしながらテスト書く」 | それはテスト後付け。コードを削除してテストから始める |
+| 「探索が必要だからTDD後で」 | 探索は捨てる。探索後にTDDで最初から書き直す |
+| 「今回だけ例外」 | 例外はない。「今回だけ」は常習化の入り口 |
 
 **Remember**: Tests are not optional. They are the safety net that enables confident refactoring, rapid development, and production reliability.

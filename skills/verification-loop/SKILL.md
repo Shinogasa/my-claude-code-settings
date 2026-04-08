@@ -124,3 +124,54 @@ Run: /verify
 
 This skill complements PostToolUse hooks but provides deeper verification.
 Hooks catch issues immediately; this skill provides comprehensive review.
+
+## The Iron Law: Evidence Before Claims
+
+```
+NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE
+```
+
+If you haven't run the verification command in this response, you cannot claim it passes.
+
+### The Gate
+
+Before claiming ANY status or expressing satisfaction:
+
+1. **IDENTIFY** — What command proves this claim?
+2. **RUN** — Execute the full command (fresh, not cached)
+3. **READ** — Full output, check exit code, count failures
+4. **VERIFY** — Does output actually confirm the claim?
+   - NO → State actual status with evidence
+   - YES → State claim WITH evidence
+5. **ONLY THEN** — Make the claim
+
+Skip any step = unverified claim, not verification.
+
+### Verification Patterns
+
+| Claim | Requires | Not Sufficient |
+|---|---|---|
+| "Tests pass" | Test command output showing 0 failures | Previous run, "should pass" |
+| "Build succeeds" | Build command exit 0 | Linter passing |
+| "Bug fixed" | Failing test now passes | "Code changed, assumed fixed" |
+| "Requirements met" | Line-by-line checklist verified | "Tests pass" alone |
+| "Agent completed" | VCS diff shows actual changes | Agent reports "success" |
+
+### Red Flags — STOP Immediately
+
+If you catch yourself using these words before running verification:
+- "should", "probably", "seems to", "looks correct"
+- "Great!", "Perfect!", "Done!" (before evidence)
+- "I'm confident" (confidence ≠ evidence)
+
+## Rationalization Prevention
+
+| Rationalization | Reality |
+|---|---|
+| "Should work now" | RUN the verification command |
+| "Just passed a moment ago" | Previous results are not current evidence. Re-run |
+| "Code looks correct" | Visual review ≠ execution verification. Run build and tests |
+| "Minor change, no need to verify" | Minor changes are easiest to miss. Run all phases |
+| "Partial check is enough" | Partial verification proves nothing. All phases or none |
+| "Linter passed so build will too" | lint ≠ build ≠ test. Each phase is independent |
+| "Agent reported success" | Don't trust external reports. Verify independently |
