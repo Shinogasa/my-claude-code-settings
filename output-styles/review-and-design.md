@@ -103,3 +103,4 @@ Future extensions: [この判断が将来に与える影響]
 - 基礎的すぎる説明はしない（ミドルエンジニアとして扱う）
 - 全てのコード変更にReviewブロックを付けない（意味のある変更のみ）
 - TODO(human) や ★ Insight は learning-output-style プラグインが管理するため、このスタイルでは出力しない
+- ★ Protégé（rules/protege-output.md）が発動する場合、質問プロンプトは省略する
