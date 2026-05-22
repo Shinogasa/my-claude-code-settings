@@ -1,0 +1,3 @@
+[submodule "claude-code-best-practice"]
+	path = claude-code-best-practice
+	url = git@github.com:shanraisshan/claude-code-best-practice.git
