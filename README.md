@@ -152,6 +152,30 @@ paths:
 - `.env` — APIトークン等の環境変数（`settings.json.template` と組み合わせて使用）
 - `settings.json` — 生成済みの設定ファイル
 - `.claude/settings.local.json` — プロジェクト固有設定
+- `tasks/learning-journal.md` — 学習ログ（後述の理由で symlink 集約 + 非追跡）
+
+## learning-journal.md の集約
+
+学習ログ（プロテジェ効果の記録）は複数リポジトリ・Docker コンテナから書き込まれるが、
+実体は **`cw-workspace-local`（PRIVATE リポジトリ）に一元化** している。
+
+```
+実体（唯一）: cw-workspace-local/tasks/learning-journal.md  [PRIVATE]
+        ▲                              ▲
+        │ symlink                      │ symlink
+このリポジトリ tasks/learning-journal.md   cw_coding_agent_workspace/tasks/learning-journal.md
+        │                              │ (コンテナは cw-workspace-local を
+        │                              │  同一絶対パスで bind mount して symlink を解決)
+```
+
+- **なぜ PRIVATE に実体を置くか**: journal には業務プロジェクトの内部設計・コードパスが含まれる。
+  このリポジトリは PUBLIC のため、実体を追跡すると情報漏洩になる。`.gitignore` + symlink で
+  「参照はできるが追跡はしない」を実現している。
+- **`setup.sh` の動作**: `cw-workspace-local` の実体が存在すれば symlink を張る。
+  存在しない環境（別マシン）では自動スキップする（冪等）。
+- **コンテナ対応**: `cw-workspace-local/devcontainer/docker-compose.override.yml` が
+  `cw-workspace-local` を read-write bind mount することで、コンテナ内でも symlink が解決でき、
+  プロテジェの書き込みが実体に届く。
 
 ## Superpowers由来の強化
 
