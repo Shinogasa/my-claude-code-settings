@@ -79,7 +79,8 @@ alwaysApply: true
 
 ## 記録
 
-ユーザーが回答したら `tasks/learning-journal.md` に追記する（未存在なら新規作成）:
+ユーザーが回答したら `tasks/learning-journal.md` の**末尾**に追記する（未存在なら新規作成）。
+日付昇順（古い→新しい）を維持するため、先頭には挿入しない。
 
 ```
 ## [YYYY-MM-DD] | [タスク概要]
