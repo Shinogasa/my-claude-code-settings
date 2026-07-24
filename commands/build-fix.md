@@ -1,3 +1,7 @@
+---
+description: ビルド・型エラーを最小差分で段階的に修正する
+---
+
 # Build and Fix
 
 Incrementally fix build and type errors with minimal, safe changes.

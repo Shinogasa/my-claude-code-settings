@@ -1,3 +1,7 @@
+---
+description: デッドコードを安全に検出し、テストで検証しながら削除する
+---
+
 # Refactor Clean
 
 Safely identify and remove dead code with test verification at every step.

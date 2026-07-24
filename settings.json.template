@@ -24,5 +24,6 @@
   "alwaysThinkingEnabled": true,
   "outputStyle": "ReviewAndDesign",
   "theme": "dark-daltonized",
-  "effortLevel": "xhigh"
+  "effortLevel": "xhigh",
+  "askUserQuestionTimeout": "never"
 }
