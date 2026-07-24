@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const { execFileSync } = require('child_process');
+
+const LITELLM_CACHE_PATH = path.join(os.homedir(), '.claude', 'cache', 'litellm-budget.json');
+const LITELLM_CACHE_TTL_MS = 60_000;
 
 // ANSI カラー
 const C = {
@@ -19,10 +24,10 @@ const C = {
 
 let input = '';
 process.stdin.on('data', chunk => (input += chunk));
-process.stdin.on('end', () => {
+process.stdin.on('end', async () => {
   try {
     const data = JSON.parse(input);
-    const lines = buildStatusLines(data);
+    const lines = await buildStatusLines(data);
     console.log(lines.join('\n'));
   } catch (e) {
     // フォールバック: パース失敗時もstatuslineは出す
@@ -31,9 +36,9 @@ process.stdin.on('end', () => {
   }
 });
 
-function buildStatusLines(data) {
+async function buildStatusLines(data) {
   const line1 = buildEnvLine(data);
-  const line2 = buildUsageLine(data);
+  const line2 = await buildUsageLine(data);
   return [line1, line2];
 }
 
@@ -77,7 +82,7 @@ function buildEnvLine(data) {
 }
 
 // ───── Line 2: 使用量・コスト・進捗 ─────
-function buildUsageLine(data) {
+async function buildUsageLine(data) {
   const ctx = data.context_window || {};
   const cost = data.cost || {};
   const rl = data.rate_limits;
@@ -106,6 +111,10 @@ function buildUsageLine(data) {
   if (typeof usd === 'number') {
     parts.push(formatCost(usd));
   }
+
+  // litellm 利用額 (全ターミナル合算、キャッシュ経由)
+  const budget = await getLitellmBudget();
+  if (budget) parts.push(formatBudget(budget.spend, budget.max_budget));
 
   // コード変更行数 (1行以上変更があれば表示)
   const added = cost.total_lines_added || 0;
@@ -165,6 +174,53 @@ function getGitInfo(projectDir) {
   }
 }
 
+async function getLitellmBudget() {
+  if (!process.env.ANTHROPIC_BASE_URL || !process.env.ANTHROPIC_AUTH_TOKEN) return null;
+
+  let cached = null;
+  try {
+    cached = JSON.parse(fs.readFileSync(LITELLM_CACHE_PATH, 'utf8'));
+  } catch {
+    // キャッシュ未存在または壊れている場合は下の初回取得にフォールバック
+  }
+
+  const isFresh = cached && Date.now() - cached.fetched_at < LITELLM_CACHE_TTL_MS;
+  if (isFresh) return cached;
+
+  // キャッシュ無し(初回)は表示に間に合わせるため待つ。キャッシュ有り(TTL切れ)は
+  // 古い値を先に返し、更新は次回表示に反映されるようバックグラウンドで進める
+  if (!cached) return updateLitellmBudgetCache();
+
+  updateLitellmBudgetCache();
+  return cached;
+}
+
+async function updateLitellmBudgetCache() {
+  const base = process.env.ANTHROPIC_BASE_URL;
+  const token = process.env.ANTHROPIC_AUTH_TOKEN;
+  if (!base || !token) return null;
+
+  try {
+    const res = await fetch(`${base}/key/info`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const spend = data?.info?.spend;
+    const maxBudget = data?.info?.max_budget;
+    if (typeof spend !== 'number' || typeof maxBudget !== 'number') return null;
+
+    const cache = { spend, max_budget: maxBudget, fetched_at: Date.now() };
+    fs.mkdirSync(path.dirname(LITELLM_CACHE_PATH), { recursive: true });
+    fs.writeFileSync(LITELLM_CACHE_PATH, JSON.stringify(cache));
+    return cache;
+  } catch {
+    // ネットワーク不通・タイムアウト時は静かに諦める(次回のTTL切れで再試行される)
+    return null;
+  }
+}
+
 function formatProgressBar(pct, exceeds200k) {
   const width = 10;
   const clamped = Math.max(0, Math.min(100, pct));
@@ -195,6 +251,14 @@ function formatCost(usd) {
   // 小さい額は4桁、大きい額は2桁
   const formatted = usd < 1 ? usd.toFixed(4) : usd.toFixed(2);
   return `${color}💰 $${formatted}${C.reset}`;
+}
+
+function formatBudget(spend, maxBudget) {
+  const pct = maxBudget > 0 ? (spend / maxBudget) * 100 : 0;
+  let color = C.green;
+  if (pct >= 90) color = C.red + C.bold;
+  else if (pct >= 70) color = C.yellow;
+  return `${color}💳 $${Math.round(spend)}/$${Math.round(maxBudget)}${C.reset}`;
 }
 
 function formatDuration(ms) {
