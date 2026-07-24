@@ -26,7 +26,7 @@ bash setup.sh
 | `commands/` | `~/.claude/commands/` | カスタムスラッシュコマンド |
 | `rules/` | `~/.claude/rules/` | 条件付きルール |
 | `agents/` | `~/.claude/agents/` | サブエージェント定義 |
-| `contexts/` | `~/.claude/contexts/` | コンテキスト切替 |
+| `hooks/` | `~/.claude/hooks/` | 危険コマンドブロック等のhooksスクリプト |
 | `statusline.js` | `~/.claude/statusline.js` | ステータスライン表示スクリプト |
 | `output-styles/` | `~/.claude/output-styles/` | カスタムアウトプットスタイル |
 | `claude-code-best-practice/` | `~/.claude/claude-code-best-practice/` | ベストプラクティス参照（submodule） |
@@ -82,10 +82,9 @@ bash setup.sh
 │   ├── ecc-coding-style.md      #   コーディングスタイル
 │   ├── ecc-development-workflow.md  # 開発ワークフロー
 │   └── ecc-testing.md           #   テスト要件
-├── contexts/                    # コンテキスト切替
-│   ├── dev.md                   #   開発モード
-│   ├── research.md              #   調査モード
-│   └── review.md                #   レビューモード
+├── hooks/                       # 危険コマンドブロック等のhooksスクリプト
+│   ├── guard-dangerous-bash.sh  #   PreToolUse(Bash)フックのエントリポイント
+│   └── guard-dangerous-bash.py  #   危険コマンド判定の実処理
 ├── output-styles/               # カスタムアウトプットスタイル
 │   ├── review-and-design.md     #   Review & Design（コードレビュー・設計判断特化）
 │   └── fast.md                  #   高速実行（説明最小限）
