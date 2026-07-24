@@ -19,6 +19,7 @@ TARGETS=(
   "output-styles:$CLAUDE_DIR/output-styles"
   "agents:$CLAUDE_DIR/agents"
   "contexts:$CLAUDE_DIR/contexts"
+  "hooks:$CLAUDE_DIR/hooks"
   "claude-code-best-practice:$CLAUDE_DIR/claude-code-best-practice"
 )
 
