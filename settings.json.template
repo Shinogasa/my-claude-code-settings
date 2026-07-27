@@ -25,5 +25,19 @@
   "outputStyle": "ReviewAndDesign",
   "theme": "dark-daltonized",
   "effortLevel": "xhigh",
-  "askUserQuestionTimeout": "never"
+  "askUserQuestionTimeout": "never",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/guard-dangerous-bash.sh",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  }
 }

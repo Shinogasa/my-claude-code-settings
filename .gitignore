@@ -8,3 +8,6 @@ settings.local.json
 # learning-journal.md は業務ナレッジを含み、実体は cw-workspace-local (PRIVATE) 側に集約する。
 # 本リポジトリは PUBLIC のため追跡しない (setup.sh が実体への symlink を張る)。
 tasks/learning-journal.md
+
+# todo.md はタスクごとに使い捨てる一時ファイル (rules/task-management.md参照)。
+tasks/todo.md
