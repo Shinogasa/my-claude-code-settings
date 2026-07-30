@@ -143,6 +143,42 @@ else
     cat "$SETTINGS_DEST"
     exit 1
   fi
+
+  # === settings.ollama.json テンプレート生成（任意） ===
+  OLLAMA_TEMPLATE="$SCRIPT_DIR/settings.ollama.json.template"
+  OLLAMA_SETTINGS_DEST="$CLAUDE_DIR/settings.ollama.json"
+
+  if [ -z "${OLLAMA_BASE_URL:-}" ]; then
+    yellow "スキップ: settings.ollama.json（.env に OLLAMA_BASE_URL が未設定）"
+  else
+    if [ -f "$OLLAMA_SETTINGS_DEST" ] && [ ! -L "$OLLAMA_SETTINGS_DEST" ]; then
+      if [ "$backup_created" = false ]; then
+        mkdir -p "$BACKUP_DIR"
+        backup_created=true
+      fi
+      yellow "  バックアップ: $OLLAMA_SETTINGS_DEST → $BACKUP_DIR/settings.ollama.json"
+      cp "$OLLAMA_SETTINGS_DEST" "$BACKUP_DIR/settings.ollama.json"
+    fi
+
+    if command -v envsubst > /dev/null 2>&1; then
+      envsubst < "$OLLAMA_TEMPLATE" > "$OLLAMA_SETTINGS_DEST"
+    else
+      cp "$OLLAMA_TEMPLATE" "$OLLAMA_SETTINGS_DEST"
+      sed -i '' \
+        -e "s|\${OLLAMA_BASE_URL}|${OLLAMA_BASE_URL}|g" \
+        -e "s|\${OLLAMA_AUTH_TOKEN}|${OLLAMA_AUTH_TOKEN}|g" \
+        -e "s|\${OLLAMA_MODEL}|${OLLAMA_MODEL}|g" \
+        "$OLLAMA_SETTINGS_DEST"
+    fi
+
+    if python3 -m json.tool "$OLLAMA_SETTINGS_DEST" > /dev/null 2>&1; then
+      green "✓ settings.ollama.json を生成しました → $OLLAMA_SETTINGS_DEST"
+    else
+      red "エラー: 生成された settings.ollama.json が不正なJSONです。"
+      cat "$OLLAMA_SETTINGS_DEST"
+      exit 1
+    fi
+  fi
 fi
 
 # === learning-journal.md を PRIVATE 実体へ symlink 集約 ===

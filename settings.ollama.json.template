@@ -1,0 +1,12 @@
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "${OLLAMA_BASE_URL}",
+    "ANTHROPIC_AUTH_TOKEN": "${OLLAMA_AUTH_TOKEN}",
+    "ANTHROPIC_MODEL": "${OLLAMA_MODEL}",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "${OLLAMA_MODEL}"
+  },
+  "enabledPlugins": {
+    "context7@claude-plugins-official": false,
+    "asana@claude-plugins-official": false
+  }
+}
