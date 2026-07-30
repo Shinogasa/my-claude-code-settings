@@ -34,6 +34,34 @@ bash setup.sh
 - 何度実行しても安全（冪等）
 - 既存ファイルは `~/.claude/backups/` に自動バックアップ
 
+## ローカルLLM（Ollama）利用時の注意
+
+shellでexportした `ANTHROPIC_*` 環境変数は `~/.claude/settings.json` の `env` より優先度が低く、
+起動時に上書きされてしまう。ローカルLLMへ切り替えるには `--settings` にJSON文字列または
+JSONファイルへのパスを渡し、CLI引数として上書きする（`settings.json` の他の設定は保持される）。
+
+```bash
+# .env に OLLAMA_BASE_URL 等を設定した上で setup.sh を実行すると
+# ~/.claude/settings.ollama.json が生成される
+alias claude-qwen='claude --settings ~/.claude/settings.ollama.json'
+```
+
+`settings.ollama.json.template` は `context7` ・ `asana` プラグインを無効化している。Ollama利用時は
+コンテキスト上限（`qwen3-coder` で32768〜262144トークン程度）に対してMCPツール定義や会話履歴が
+占める割合が大きく、業務ツール連携系プラグインを削るとプロンプトサイズを抑えられるため。
+
+Ollama自体の設定（Ollama.appにGUIの環境変数欄が無いため `launchctl setenv` で設定し、
+Ollama.app再起動で反映させる）：
+
+```bash
+launchctl setenv OLLAMA_MAX_LOADED_MODELS 1   # 複数モデル同時ロードによるVRAM競合を防ぐ
+launchctl setenv OLLAMA_KEEP_ALIVE 30m         # アイドルアンロード→再ロード(コールドスタート)を防ぐ
+# Ollama.appをGUIから再起動（メニューバー → Quit → 再度起動）
+```
+
+`launchctl setenv` はログイン中のみ有効（ログアウト/再起動で消える）。反映確認は
+`ps eww $(pgrep -f "ollama serve") | tr ' ' '\n' | grep OLLAMA` で行う。
+
 ## ディレクトリ構成
 
 ```
@@ -90,6 +118,7 @@ bash setup.sh
 │   └── fast.md                  #   高速実行（説明最小限）
 ├── statusline.js                # ステータスライン表示
 ├── settings.json.template       # settings.jsonテンプレート
+├── settings.ollama.json.template  # ローカルLLM(Ollama)利用時のテンプレート（任意）
 ├── .env.example                 # 環境変数サンプル
 ├── setup.sh                     # セットアップスクリプト
 └── README.md
