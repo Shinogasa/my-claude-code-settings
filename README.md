@@ -26,7 +26,7 @@ bash setup.sh
 | `commands/` | `~/.claude/commands/` | カスタムスラッシュコマンド |
 | `rules/` | `~/.claude/rules/` | 条件付きルール |
 | `agents/` | `~/.claude/agents/` | サブエージェント定義 |
-| `hooks/` | `~/.claude/hooks/` | 危険コマンドブロック等のhooksスクリプト |
+| `hooks/` | `~/.claude/hooks/` | 危険コマンドブロック等のhooksスクリプト（rtkフックはsettings.json.template側で管理） |
 | `statusline.js` | `~/.claude/statusline.js` | ステータスライン表示スクリプト |
 | `output-styles/` | `~/.claude/output-styles/` | カスタムアウトプットスタイル |
 | `claude-code-best-practice/` | `~/.claude/claude-code-best-practice/` | ベストプラクティス参照（submodule） |
@@ -80,7 +80,7 @@ bash setup.sh
 │   ├── ecc-coding-style.md      #   コーディングスタイル
 │   ├── ecc-development-workflow.md  # 開発ワークフロー
 │   └── ecc-testing.md           #   テスト要件
-├── hooks/                       # 危険コマンドブロック等のhooksスクリプト
+├── hooks/                       # 危険コマンドブロック等のhooksスクリプト（rtkフックはsettings.json.template側で管理）
 │   ├── guard-dangerous-bash.sh  #   PreToolUse(Bash)フックのエントリポイント
 │   └── guard-dangerous-bash.py  #   危険コマンド判定の実処理
 ├── output-styles/               # カスタムアウトプットスタイル
