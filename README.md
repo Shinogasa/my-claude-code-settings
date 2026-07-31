@@ -49,8 +49,6 @@ bash setup.sh
 │   ├── deployment-patterns/     #   デプロイパターン
 │   ├── hexagonal-architecture/  #   ヘキサゴナルアーキテクチャ
 │   ├── security-review/         #   セキュリティレビュー
-│   ├── systematic-debugging/    #   構造化デバッグ（4フェーズ）
-│   ├── subagent-driven-development/  # サブエージェント駆動開発
 │   ├── tdd-workflow/            #   TDD（Iron Law付き）
 │   └── verification-loop/       #   検証ループ（Iron Law付き）
 ├── commands/                    # スラッシュコマンド
@@ -178,19 +176,19 @@ paths:
 
 ## Superpowers由来の強化
 
-[obra/superpowers](https://github.com/obra/superpowers)（MIT License）のエッセンスをチェリーピックで取り入れている。丸ごとの導入ではなく、学習モードやoutput-styleなど独自の仕組みとの共存を優先して選択的に採用。
+[obra/superpowers](https://github.com/obra/superpowers)（MIT License）は`superpowers@claude-plugins-official`プラグインとして丸ごと導入している（`settings.json.template`の`enabledPlugins`参照）。プラグイン本体が`systematic-debugging`・`subagent-driven-development`等のスキルを提供するため、同名で重複する独自skillは置かない。
+
+一方、学習モードやoutput-styleなど本リポジトリ独自の仕組みと組み合わせる形で、以下の要素は独自ファイルに部分的に取り込んでいる。
 
 | 取り入れた要素 | 適用先 | 内容 |
 |---|---|---|
 | Rationalization Prevention Tables | tdd-workflow, verification-loop, planner | エージェントの自己正当化を事前にブロックする対応表 |
-| Systematic Debugging | skills/systematic-debugging/ | 4フェーズ構造化デバッグ手法（新規） |
 | Bite-Sized Task Granularity | agents/planner.md | 2-5分粒度のタスク分解 + プレースホルダー禁止 |
-| Subagent-Driven Development | skills/subagent-driven-development/ | サブエージェント実行 + 2段階レビュー（新規） |
 | Verification Iron Law | skills/verification-loop/ | 「証拠なしに完了を主張するな」の行動規範 |
 | TDD Iron Law | skills/tdd-workflow/ | 「テスト前にコード書いたら削除」の鉄則 |
 
 ## 参考
 
-- https://github.com/obra/superpowers — エージェント向けスキルフレームワーク（チェリーピック元）
+- https://github.com/obra/superpowers — エージェント向けスキルフレームワーク（`superpowers`プラグインとして導入）
 - https://github.com/shanraisshan/claude-code-best-practice — Claude Code設定ベストプラクティス（submodule）
 - https://github.com/affaan-m/everything-claude-code — Claude Code設定集
