@@ -8,6 +8,15 @@ Claude Codeの個人設定をGit管理するリポジトリ。
 ```bash
 git clone --recursive <this-repo>
 cd my-claude-code-settings
+bash setup.sh
+```
+
+`.env` はLiteLLM等のAPIキー経由でClaude Codeを利用する場合（会社PC等）のみ必要。
+個人のAnthropicアカウント（Pro/Maxプランの通常ログイン）を使う場合は `.env` 不要で、
+`statusLine`/`enabledPlugins`/`theme`等の共通設定はそのまま反映される。
+
+```bash
+# LiteLLM/APIキー経由で使う場合のみ
 cp .env.example .env
 # .env を編集して ANTHROPIC_AUTH_TOKEN 等を設定
 bash setup.sh
@@ -17,7 +26,8 @@ bash setup.sh
 
 1. git submodule の初期化・更新
 2. シンボリックリンクを `~/.claude/` 配下に作成
-3. `.env` + テンプレートから `~/.claude/settings.json` を生成
+3. `settings.json.template` から共通設定を `~/.claude/settings.json` へ生成（`.env` の有無に関わらず常に実行）
+4. `.env` が存在する場合のみ、`env.json.template` から生成した `env` ブロック（APIキー等）を追加マージ
 
 | リポジトリ | リンク先 | 内容 |
 |---|---|---|
@@ -87,7 +97,8 @@ bash setup.sh
 │   ├── review-and-design.md     #   Review & Design（コードレビュー・設計判断特化）
 │   └── fast.md                  #   高速実行（説明最小限）
 ├── statusline.js                # ステータスライン表示
-├── settings.json.template       # settings.jsonテンプレート
+├── settings.json.template       # settings.jsonテンプレート（共通設定、.env不要）
+├── env.json.template            # envブロックテンプレート（LiteLLM等APIキー利用時のみ、.env必要）
 ├── .env.example                 # 環境変数サンプル
 ├── setup.sh                     # セットアップスクリプト
 └── README.md
@@ -146,7 +157,7 @@ paths:
 
 以下は機密情報を含むため、`.gitignore` で除外している：
 
-- `.env` — APIトークン等の環境変数（`settings.json.template` と組み合わせて使用）
+- `.env` — APIトークン等の環境変数（LiteLLM等APIキー経由で利用する場合のみ必要。`env.json.template` と組み合わせて使用）
 - `settings.json` — 生成済みの設定ファイル
 - `.claude/settings.local.json` — プロジェクト固有設定
 - `tasks/learning-journal.md` — 学習ログ（後述の理由で symlink 集約 + 非追跡）
