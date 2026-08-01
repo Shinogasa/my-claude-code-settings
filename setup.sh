@@ -88,16 +88,50 @@ for target in "${TARGETS[@]}"; do
 done
 
 # === settings.json テンプレート生成 ===
+# 共通設定(statusLine/plugins/theme等)は machine非依存のため .env の有無に
+# 関わらず常に生成する。会社PCのLiteLLM経由API利用に必要な env ブロック
+# (ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN等)は .env がある場合のみ追加マージする。
 echo ""
 echo "=== settings.json 生成 ==="
 
-TEMPLATE="$SCRIPT_DIR/settings.json.template"
+BASE_TEMPLATE="$SCRIPT_DIR/settings.json.template"
+ENV_TEMPLATE="$SCRIPT_DIR/env.json.template"
 SETTINGS_DEST="$CLAUDE_DIR/settings.json"
 ENV_FILE="$SCRIPT_DIR/.env"
 
+# 既存 settings.json のバックアップ(生成物ではない実ファイルの場合のみ)
+if [ -f "$SETTINGS_DEST" ] && [ ! -L "$SETTINGS_DEST" ]; then
+  if [ "$backup_created" = false ]; then
+    mkdir -p "$BACKUP_DIR"
+    backup_created=true
+  fi
+  yellow "  バックアップ: $SETTINGS_DEST → $BACKUP_DIR/settings.json"
+  cp "$SETTINGS_DEST" "$BACKUP_DIR/settings.json"
+fi
+
+# ベーステンプレート(env抜き)を常に適用。
+# `/model` 等のCLIコマンドがsettings.jsonに書き込む値(テンプレート未管理のキー)は
+# 上書きせず温存し、テンプレートが管理するキーだけを反映するマージ方式にする。
+python3 -c "
+import json, sys
+dest, template = sys.argv[1], sys.argv[2]
+try:
+    with open(dest) as f:
+        settings = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    settings = {}
+with open(template) as f:
+    base = json.load(f)
+settings.update(base)
+with open(dest, 'w') as f:
+    json.dump(settings, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+" "$SETTINGS_DEST" "$BASE_TEMPLATE"
+green "✓ 共通設定を生成しました → $SETTINGS_DEST"
+
 if [ ! -f "$ENV_FILE" ]; then
-  yellow "警告: .env が見つかりません。settings.json の生成をスキップします。"
-  yellow "  → cp .env.example .env して値を設定してください。"
+  yellow "  → .env が見つからないため、LiteLLM等のAPIキー設定(env)はスキップします。"
+  yellow "    (個人Anthropicアカウント/Proプラン利用の場合はこれで問題ありません)"
 else
   # 環境変数をロード
   set -a
@@ -110,39 +144,46 @@ else
     exit 1
   fi
 
-  # 既存 settings.json のバックアップ
-  if [ -f "$SETTINGS_DEST" ] && [ ! -L "$SETTINGS_DEST" ]; then
-    if [ "$backup_created" = false ]; then
-      mkdir -p "$BACKUP_DIR"
-      backup_created=true
-    fi
-    yellow "  バックアップ: $SETTINGS_DEST → $BACKUP_DIR/settings.json"
-    cp "$SETTINGS_DEST" "$BACKUP_DIR/settings.json"
-  fi
-
-  # テンプレートから settings.json を生成
+  # env ブロックを生成してマージ
+  ENV_JSON_TMP="$(mktemp)"
   if command -v envsubst > /dev/null 2>&1; then
-    envsubst < "$TEMPLATE" > "$SETTINGS_DEST"
+    envsubst < "$ENV_TEMPLATE" > "$ENV_JSON_TMP"
   else
     yellow "envsubst が見つかりません。sed で代替します。"
-    cp "$TEMPLATE" "$SETTINGS_DEST"
+    cp "$ENV_TEMPLATE" "$ENV_JSON_TMP"
     sed -i '' \
       -e "s|\${ANTHROPIC_BASE_URL}|${ANTHROPIC_BASE_URL}|g" \
       -e "s|\${ANTHROPIC_AUTH_TOKEN}|${ANTHROPIC_AUTH_TOKEN}|g" \
       -e "s|\${ANTHROPIC_MODEL}|${ANTHROPIC_MODEL}|g" \
       -e "s|\${CLAUDE_CODE_SUBAGENT_MODEL}|${CLAUDE_CODE_SUBAGENT_MODEL}|g" \
       -e "s|\${CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS}|${CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS}|g" \
-      "$SETTINGS_DEST"
+      "$ENV_JSON_TMP"
   fi
 
-  # JSON検証
-  if python3 -m json.tool "$SETTINGS_DEST" > /dev/null 2>&1; then
-    green "✓ settings.json を生成しました → $SETTINGS_DEST"
-  else
-    red "エラー: 生成された settings.json が不正なJSONです。"
-    cat "$SETTINGS_DEST"
-    exit 1
-  fi
+  python3 -c "
+import json, sys
+dest, env_json = sys.argv[1], sys.argv[2]
+with open(dest) as f:
+    settings = json.load(f)
+with open(env_json) as f:
+    env_block = json.load(f)
+settings.update(env_block)
+with open(dest, 'w') as f:
+    json.dump(settings, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+" "$SETTINGS_DEST" "$ENV_JSON_TMP"
+  rm -f "$ENV_JSON_TMP"
+
+  green "✓ LiteLLM用env設定をマージしました → $SETTINGS_DEST"
+fi
+
+# JSON検証
+if python3 -m json.tool "$SETTINGS_DEST" > /dev/null 2>&1; then
+  green "✓ settings.json の生成が完了しました → $SETTINGS_DEST"
+else
+  red "エラー: 生成された settings.json が不正なJSONです。"
+  cat "$SETTINGS_DEST"
+  exit 1
 fi
 
 # === learning-journal.md を PRIVATE 実体へ symlink 集約 ===
