@@ -69,7 +69,7 @@ for target in "${TARGETS[@]}"; do
       continue
     else
       # 別の場所を指すシンボリックリンクがある場合は削除して再作成
-      yellow "  更新: $dest （旧リンク先: $current_target）"
+      yellow "  更新: $dest （旧リンク先: ${current_target}）"
       rm "$dest"
     fi
   elif [ -e "$dest" ]; then
@@ -141,6 +141,10 @@ else
   # 必須項目の検証
   if [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
     red "エラー: ANTHROPIC_AUTH_TOKEN が設定されていません。"
+    exit 1
+  fi
+  if [ "${ANTHROPIC_AUTH_TOKEN}" = "your-token-here" ]; then
+    red "エラー: ANTHROPIC_AUTH_TOKEN が .env.example のプレースホルダのままです。実際のトークンに書き換えてください。"
     exit 1
   fi
 
