@@ -202,30 +202,21 @@ paths:
 - `.env` — APIトークン等の環境変数（LiteLLM等APIキー経由で利用する場合のみ必要。`env.json.template` と組み合わせて使用）
 - `settings.json` — 生成済みの設定ファイル
 - `.claude/settings.local.json` — プロジェクト固有設定
-- `tasks/learning-journal.md` — 学習ログ（後述の理由で symlink 集約 + 非追跡）
 
-## learning-journal.md の集約
+## learning-journal.md の運用
 
-学習ログ（プロテジェ効果の記録）は複数リポジトリ・Docker コンテナから書き込まれるが、
-実体は **`cw-workspace-local`（PRIVATE リポジトリ）に一元化** している。
+学習ログ（★ Predict / ★ Delta の記録）の実体は **このリポジトリの `tasks/learning-journal.md`** に置き、git で追跡する。
 
-```
-実体（唯一）: cw-workspace-local/tasks/learning-journal.md  [PRIVATE]
-        ▲                              ▲
-        │ symlink                      │ symlink
-このリポジトリ tasks/learning-journal.md   cw_coding_agent_workspace/tasks/learning-journal.md
-        │                              │ (コンテナは cw-workspace-local を
-        │                              │  同一絶対パスで bind mount して symlink を解決)
-```
-
-- **なぜ PRIVATE に実体を置くか**: journal には業務プロジェクトの内部設計・コードパスが含まれる。
-  このリポジトリは PUBLIC のため、実体を追跡すると情報漏洩になる。`.gitignore` + symlink で
-  「参照はできるが追跡はしない」を実現している。
-- **`setup.sh` の動作**: `cw-workspace-local` の実体が存在すれば symlink を張る。
-  存在しない環境（別マシン）では自動スキップする（冪等）。
-- **コンテナ対応**: `cw-workspace-local/devcontainer/docker-compose.override.yml` が
-  `cw-workspace-local` を read-write bind mount することで、コンテナ内でも symlink が解決でき、
-  プロテジェの書き込みが実体に届く。
+- **なぜこのリポジトリに置くか**: マシン間で同期され、バックアップされ、後から振り返れる。
+  以前は業務用の PRIVATE リポジトリに実体を集約し symlink で参照していたが、
+  個人の学習ログを業務用リポジトリに同居させる構成が適切でないため 2026-08-02 に移行した。
+  これに伴い `setup.sh` の symlink 集約機構は撤去した。
+- **PUBLIC であることの制約**: このリポジトリは PUBLIC のため、社名・プロジェクト名・
+  リポジトリ名・内部パス・業務コードを書かない。技術的本質のみを一般化して記録する
+  （`rules/learning-mode.md` の抽象化ルール）。抽象化の強制はセキュリティ要件であると同時に、
+  本質だけを取り出して言語化する訓練としても機能する。
+- **移行前のアーカイブ**: 2026-08-02 以前の詳細版（業務固有情報を含む）は移行元の
+  PRIVATE リポジトリにアーカイブとして残しており、以降そちらには追記しない。
 
 ## Superpowers由来の強化
 
