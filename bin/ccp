@@ -1,0 +1,17 @@
+#!/bin/bash
+# 個人のAnthropicアカウント(OAuth/keychain)でClaude Codeを起動する。
+# 会社PCでは ~/.claude/settings.json に LiteLLM 経由の env が焼き込まれているため、
+# 認証系の env を全て空文字列で上書きして無効化する(CLI引数はuser settingsより優先)。
+
+set -euo pipefail
+
+PERSONAL_SETTINGS="$HOME/.claude/settings.personal.json"
+
+# 設定が無い状態で素通しすると、個人アカウントのつもりで会社のLiteLLMに繋がってしまう。
+# 無言のフォールバックはさせず、明示的に落とす。
+if [ ! -f "$PERSONAL_SETTINGS" ]; then
+  echo "エラー: $PERSONAL_SETTINGS が見つかりません。bash setup.sh を実行してください。" >&2
+  exit 1
+fi
+
+exec claude --settings "$PERSONAL_SETTINGS" "$@"
