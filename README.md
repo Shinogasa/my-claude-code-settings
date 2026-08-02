@@ -28,6 +28,7 @@ bash setup.sh
 2. シンボリックリンクを `~/.claude/` 配下に作成
 3. `settings.json.template` から共通設定を `~/.claude/settings.json` へ生成（`.env` の有無に関わらず常に実行）
 4. `.env` が存在する場合のみ、`env.json.template` から生成した `env` ブロック（APIキー等）を追加マージ
+5. `~/.claude/settings.personal.json` を生成（[認証プロファイルの切り替え](#認証プロファイルの切り替え)用）
 
 | リポジトリ | リンク先 | 内容 |
 |---|---|---|
@@ -37,12 +38,51 @@ bash setup.sh
 | `rules/` | `~/.claude/rules/` | 条件付きルール |
 | `agents/` | `~/.claude/agents/` | サブエージェント定義 |
 | `hooks/` | `~/.claude/hooks/` | 危険コマンドブロック等のhooksスクリプト（rtkフックはsettings.json.template側で管理） |
+| `bin/` | `~/.claude/bin/` | 起動ラッパー（`ccp` = 個人アカウントでの起動） |
 | `statusline.js` | `~/.claude/statusline.js` | ステータスライン表示スクリプト |
 | `output-styles/` | `~/.claude/output-styles/` | カスタムアウトプットスタイル |
 | `claude-code-best-practice/` | `~/.claude/claude-code-best-practice/` | ベストプラクティス参照（submodule） |
 
 - 何度実行しても安全（冪等）
 - 既存ファイルは `~/.claude/backups/` に自動バックアップ
+
+## 認証プロファイルの切り替え
+
+会社PCのように1台のマシンで「LiteLLM経由（業務）」と「個人Anthropicアカウント」を
+使い分けたい場合、起動コマンドで切り替えられる。
+
+| コマンド | 接続先 | 仕組み |
+|---|---|---|
+| `claude` | LiteLLM経由（会社） | `~/.claude/settings.json` の `env` がそのまま効く |
+| `ccp` | 個人Anthropicアカウント | `--settings` で認証系 `env` を空文字列に上書きし、OAuth/keychain認証にフォールバックさせる |
+
+`ccp` を使うには `~/.claude/bin` にPATHを通す（`setup.sh` が未通しの場合に案内する）：
+
+```bash
+# ~/.zshrc に追記
+export PATH="$HOME/.claude/bin:$PATH"
+```
+
+現在どちらに繋がっているかは statusline に常時表示される（`🏢WORK` / `🏠PERSONAL`）。
+コマンドで確認する場合：
+
+```bash
+claude auth status   # 会社: authMethod = "oauth_token"（email等は出ない）
+ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
+```
+
+### 設計上の判断
+
+**なぜ `claude` 側を素のままにするか**: 逆向き（`settings.json` から認証 `env` を抜き、
+会社用のときだけラッパーで注入する）も技術的には成立するが、シェル統合が読み込まれなかったとき
+`claude` が**黙って個人アカウントで動く**ため、業務コードが個人契約に流れる無言の事故になる。
+本方式なら `ccp: command not found` で即座に気づける。既存の会社PC設定を一切変更しない点でも
+影響が小さい。
+
+**無効化キーの二重管理を避ける**: `settings.personal.json` は `env.json.template` のキー集合から
+`setup.sh` が導出する。テンプレートにキーを足したときの無効化漏れを構造的に防ぐため。
+
+詳細は `docs/superpowers/specs/2026-08-01-auth-profile-switching-design.md` を参照。
 
 ## ディレクトリ構成
 
@@ -93,6 +133,8 @@ bash setup.sh
 ├── hooks/                       # 危険コマンドブロック等のhooksスクリプト（rtkフックはsettings.json.template側で管理）
 │   ├── guard-dangerous-bash.sh  #   PreToolUse(Bash)フックのエントリポイント
 │   └── guard-dangerous-bash.py  #   危険コマンド判定の実処理
+├── bin/                         # 起動ラッパー（PATHを通して使う）
+│   └── ccp                      #   個人Anthropicアカウントで起動する
 ├── output-styles/               # カスタムアウトプットスタイル
 │   ├── review-and-design.md     #   Review & Design（コードレビュー・設計判断特化）
 │   └── fast.md                  #   高速実行（説明最小限）
