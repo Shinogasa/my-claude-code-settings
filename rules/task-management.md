@@ -10,7 +10,7 @@ alwaysApply: true
 4. **変更を説明する**: 各ステップで高レベルのサマリーを提供する
 5. **結果をドキュメント化する**: `tasks/todo.md` にレビューセクションを追加する
 6. **学びを記録する**: 修正を受けた後に `tasks/lessons.md` を更新する（AI側の修正パターン記録）
-7. **理解を言語化する**: ★ Protégé の回答を `tasks/learning-journal.md` に記録する（ユーザー側の学びの言語化）
+7. **理解を言語化する**: ★ Predict の予測と ★ Delta の差分を `tasks/learning-journal.md` に記録する（ユーザー側の学びの言語化）
 
 ## `tasks/todo.md` の運用
 
