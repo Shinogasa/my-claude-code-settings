@@ -19,6 +19,7 @@ TARGETS=(
   "output-styles:$CLAUDE_DIR/output-styles"
   "agents:$CLAUDE_DIR/agents"
   "hooks:$CLAUDE_DIR/hooks"
+  "bin:$CLAUDE_DIR/bin"
   "claude-code-best-practice:$CLAUDE_DIR/claude-code-best-practice"
 )
 
@@ -190,6 +191,32 @@ else
   exit 1
 fi
 
+# === settings.personal.json 生成 (個人Anthropicアカウント用) ===
+# 会社PCでは settings.json に LiteLLM 経由の env が焼き込まれるため、素の `claude` は
+# 常に LiteLLM を向く。個人アカウントで起動したいとき用に、認証系 env を全て空文字列に
+# した設定を用意する。`bin/ccp` がこれを --settings で読ませて上書き無効化する
+# (空文字列は「未設定」として扱われ、OAuth/keychain 認証にフォールバックする)。
+#
+# キーは env.json.template から導出する。無効化対象を手書きで二重管理すると
+# env.json.template にキーを足したとき無効化漏れが起きるため、構造的に防ぐ。
+# .env の有無に関わらず常に生成する (個人PCでは冗長だが無害で、分岐を持たない方が単純)。
+echo ""
+echo "=== settings.personal.json 生成 ==="
+
+PERSONAL_DEST="$CLAUDE_DIR/settings.personal.json"
+
+python3 -c "
+import json, sys
+env_template, dest = sys.argv[1], sys.argv[2]
+with open(env_template) as f:
+    keys = json.load(f)['env'].keys()
+with open(dest, 'w') as f:
+    json.dump({'env': {k: '' for k in keys}}, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+" "$ENV_TEMPLATE" "$PERSONAL_DEST"
+
+green "✓ 個人アカウント用設定を生成しました → $PERSONAL_DEST"
+
 # === learning-journal.md を PRIVATE 実体へ symlink 集約 ===
 # 学習ログの実体は cw-workspace-local (PRIVATE) 側に一元化する。
 # 本リポジトリは PUBLIC のため業務ナレッジを含む journal を追跡してはならない
@@ -234,6 +261,22 @@ consolidate_learning_journal() {
 }
 
 consolidate_learning_journal
+
+# === PATH 確認 ===
+# bin/ 配下のラッパー (ccp 等) はPATHが通っていないと使えない。
+# .zshrc は本リポジトリの管轄外かつ冪等な自動編集が難しいため、案内だけ出す。
+echo ""
+echo "=== PATH 確認 ==="
+
+case ":$PATH:" in
+  *":$CLAUDE_DIR/bin:"*)
+    green "✓ $CLAUDE_DIR/bin は PATH に含まれています"
+    ;;
+  *)
+    yellow "  $CLAUDE_DIR/bin が PATH にありません。~/.zshrc に次の1行を追加してください:"
+    yellow "    export PATH=\"\$HOME/.claude/bin:\$PATH\""
+    ;;
+esac
 
 echo ""
 echo "=== 完了 ==="

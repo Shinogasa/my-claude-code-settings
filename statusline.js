@@ -64,6 +64,9 @@ function buildEnvLine(data) {
   if (modelSuffix.length > 0) modelPart += `${C.dim}[${C.reset}${modelSuffix.join(' ')}${C.dim}]${C.reset}`;
   parts.push(modelPart);
 
+  // 認証プロファイル (常時表示)
+  parts.push(formatProfile());
+
   // セッション名 (カスタム名が付いているときのみ)
   if (sessionName) parts.push(`${C.dim}📌 ${sessionName}${C.reset}`);
 
@@ -279,6 +282,14 @@ function formatEffort(level) {
     max: `${C.red}${C.bold}⚡max${C.reset}`,
   };
   return map[level] || `${C.gray}⚡${level}${C.reset}`;
+}
+
+// 認証プロファイル: LiteLLM経由(会社) か 個人Anthropicアカウントか。
+// getLitellmBudget() と同じ判定条件を使い、💳 残高表示の有無と整合させる。
+// 意図しない接続先で作業する事故を防ぐため、どちらの状態でも必ず表示する。
+function formatProfile() {
+  const isWork = Boolean(process.env.ANTHROPIC_BASE_URL && process.env.ANTHROPIC_AUTH_TOKEN);
+  return isWork ? `${C.yellow}🏢WORK${C.reset}` : `${C.green}🏠PERSONAL${C.reset}`;
 }
 
 function formatRateLimit(label, win) {
