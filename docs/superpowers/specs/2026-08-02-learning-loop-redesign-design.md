@@ -12,11 +12,11 @@
 
 | # | ファクト | 確認方法 |
 |---|---|---|
-| 1 | journal は `cw-workspace-local/tasks/learning-journal.md` に11件・143行が蓄積されている（2026-04-17 〜 2026-07-01） | 実ファイル |
+| 1 | journal は移行元 PRIVATE リポジトリの `tasks/learning-journal.md` に11件・143行が蓄積されている（2026-04-17 〜 2026-07-01） | 実ファイル |
 | 2 | **最終更新が2026-07-01で、約1ヶ月停止している** | 同上 |
 | 3 | 日付昇順ルールが守られていない（最新の2026-07-01が先頭に挿入されている） | 同上。commit 9b3ad0f で明文化済みのルール |
 | 4 | 見出しフォーマットが揺れている（`## [YYYY-MM-DD]` と `## YYYY-MM-DD` が混在） | 同上 |
-| 5 | `setup.sh` は `cw-workspace-local` 不在時に journal の symlink 作成を**黙ってスキップ**する | `setup.sh:234`。この環境では clone 前だったため直近の書き込みは失敗していた |
+| 5 | `setup.sh` は移行元リポジトリ不在時に journal の symlink 作成を**黙ってスキップ**する | `setup.sh:234`。この環境では clone 前だったため直近の書き込みは失敗していた |
 | 6 | `tasks/lessons.md` は2026-07-24の1件のみ | ファイル内容 |
 | 7 | OFFトリガーに「実装して」が含まれる | `CLAUDE.md` 学習モード節 |
 | 8 | TODO(human) が `rules/learning-mode.md` と `learning-output-style` プラグインで二重定義 | `output-styles/review-and-design.md:105` が責務分離を明記 |
@@ -147,9 +147,9 @@
 
 - 実体を `tasks/learning-journal.md` に置き、**git で追跡する**
 - `.gitignore` から `tasks/learning-journal.md` の行を削除
-- `setup.sh:220-260` の symlink 集約ブロックを**削除**（`cw-workspace-local` への依存が消え、機構が1つ減る）
+- `setup.sh:220-260` の symlink 集約ブロックを**削除**（移行元リポジトリへの依存が消え、機構が1つ減る）
 
-理由: `cw-workspace-local` は PRIVATE かつ業務用リポジトリであり、個人の学習ログの置き場として適切でない。このリポジトリで追跡することでマシン間同期とバックアップが得られ、後から振り返れる。
+理由: 移行元は PRIVATE かつ業務用リポジトリであり、個人の学習ログの置き場として適切でない。このリポジトリで追跡することでマシン間同期とバックアップが得られ、後から振り返れる。
 
 ### 4.2 抽象化ルール（セキュリティ要件）
 
@@ -187,9 +187,9 @@
 
 ### 4.4 既存11エントリの移行
 
-`cw-workspace-local/tasks/learning-journal.md`（11件・143行、2026-04-17〜2026-07-01）を本リポジトリへ移行する。
+移行元 PRIVATE リポジトリの `tasks/learning-journal.md`（11件・143行、2026-04-17〜2026-07-01）を本リポジトリへ移行する。
 
-**方針**: 抽象化して移行し、**原本はアーカイブとして cw-workspace-local に残す**（以降は書き込まない）。抽象化で失われる業務固有のディテールを、PRIVATE 側で保持しておくため。
+**方針**: 抽象化して移行し、**原本はアーカイブとして移行元リポジトリに残す**（以降は書き込まない）。抽象化で失われる業務固有のディテールを、PRIVATE 側で保持しておくため。
 
 **手順**
 
@@ -205,7 +205,7 @@
 - 業務システム固有の構成・エンドポイント・パラメータ名 → 一般化するか削除する
 - 技術トピック（分散DBの基礎、Kotlin の `by lazy`、モックテストの観点 等）は一般的知識であり、そのまま残してよい
 
-**cw-workspace-local 側の後始末**は本リポジトリからは実施しない。実装完了後に引継書を作成し、当該リポジトリ側の Claude に委譲する（対象: `setup.sh` の symlink 集約ブロック、`README.md` の「個人ナレッジ集約」節、devcontainer の bind mount の要否、`cw_coding_agent_workspace` 側 symlink の後始末）。
+**移行元リポジトリ側の後始末**は本リポジトリからは実施しない。実装完了後に引継書を作成し、当該リポジトリ側の Claude に委譲する（対象: `setup.sh` の symlink 集約ブロック、`README.md` の「個人ナレッジ集約」節、devcontainer の bind mount の要否、共有ワークスペース側 symlink の後始末）。
 
 ---
 
@@ -223,7 +223,7 @@
 | `README.md` | 「learning-journal.md の集約」節を書き換え、管理対象外リストから除去 |
 | `tasks/learning-journal.md` | 新規作成。検証チェックポイントを含むヘッダ ＋ 抽象化・昇順整形した既存11エントリ |
 
-`cw-workspace-local` 側の変更は本スコープ外。実装完了後に引継書（`docs/handover/`）を作成して委譲する。
+移行元リポジトリ側の変更は本スコープ外。実装完了後に引継書（`docs/handover/`）を作成して委譲する。
 
 ---
 

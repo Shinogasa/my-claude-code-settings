@@ -4,7 +4,7 @@
 
 **Goal:** `learning-mode` と `protege-output` の2機構を、★ Predict / ★ Delta の単一ループに統合し、実際に発火して蓄積される状態にする。
 
-**Architecture:** 「答えを開示する前に予測させ、差分を返す」ループに一本化する。停止は散文の指示ではなく `AskUserQuestion` ツールの呼び出しで機構的に担保し、発火回数に下限（1タスク1回）を設ける。学習ログの実体を `cw-workspace-local`（PRIVATE）から本リポジトリへ移し、symlink 集約機構を撤去する。
+**Architecture:** 「答えを開示する前に予測させ、差分を返す」ループに一本化する。停止は散文の指示ではなく `AskUserQuestion` ツールの呼び出しで機構的に担保し、発火回数に下限（1タスク1回）を設ける。学習ログの実体をPRIVATEな作業環境リポジトリから本リポジトリへ移し、symlink 集約機構を撤去する。
 
 **Tech Stack:** Markdown（rules / CLAUDE.md / output-styles）、Bash（setup.sh）
 
@@ -15,7 +15,7 @@
 - **このリポジトリは PUBLIC**（`github.com/Shinogasa/my-claude-code-settings`）。journal に社名・組織名・プロジェクト名・リポジトリ名・内部ホスト名・内部URL・テーブル名・内部パス・業務コードを書かない。
 - 日本語で記述する（ドキュメント・コメント・コミットメッセージ）。
 - `TODO(human)` は `learning-output-style` プラグインが管理する**別機構**。`output-styles/review-and-design.md:105` の言及は**残す**。今回の削除対象ではない。
-- `cw-workspace-local` 側のファイルは**一切変更しない**（読み取りのみ）。後始末は実装完了後に引継書で委譲する。
+- PRIVATEな作業環境リポジトリ側のファイルは**一切変更しない**（読み取りのみ）。後始末は実装完了後に引継書で委譲する。
 - コミットメッセージは Conventional Commits 形式。末尾に `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` を付ける。
 
 ---
@@ -210,7 +210,7 @@ git rm rules/protege-output.md
 
 置換前:
 ```markdown
-- **学習アウトプット**: タスク完了時、学習要素があれば ★ Protégé で問いかけ、`tasks/learning-journal.md` に記録する（実体は `cw-workspace-local` に集約された symlink。詳細は README「learning-journal.md の集約」参照）
+- **学習アウトプット**: タスク完了時、学習要素があれば ★ Protégé で問いかけ、`tasks/learning-journal.md` に記録する（実体はPRIVATEな作業環境リポジトリに集約された symlink。詳細は README「learning-journal.md の集約」参照）
 ```
 
 置換後:
@@ -290,7 +290,7 @@ symlink（`->` 表示）だった場合のみ `rm tasks/learning-journal.md` で
 
 置換前（8-10行目、直前の空行含む）:
 ```
-# learning-journal.md は業務ナレッジを含み、実体は cw-workspace-local (PRIVATE) 側に集約する。
+# learning-journal.md は業務ナレッジを含み、実体はPRIVATEな作業環境リポジトリ側に集約する。
 # 本リポジトリは PUBLIC のため追跡しない (setup.sh が実体への symlink を張る)。
 tasks/learning-journal.md
 ```
@@ -382,7 +382,7 @@ consolidate_learning_journal
 学習ログ（★ Predict / ★ Delta の記録）の実体は **このリポジトリの `tasks/learning-journal.md`** に置き、git で追跡する。
 
 - **なぜこのリポジトリに置くか**: マシン間で同期され、バックアップされ、後から振り返れる。
-  以前は `cw-workspace-local`（PRIVATE・業務用）に実体を集約し symlink で参照していたが、
+  以前は業務用の PRIVATE リポジトリに実体を集約し symlink で参照していたが、
   個人の学習ログを業務用リポジトリに同居させる構成が適切でないため 2026-08-02 に移行した。
   これに伴い `setup.sh` の symlink 集約機構は撤去した。
 - **PUBLIC であることの制約**: このリポジトリは PUBLIC のため、社名・プロジェクト名・
@@ -390,7 +390,7 @@ consolidate_learning_journal
   （`rules/learning-mode.md` の抽象化ルール）。抽象化の強制はセキュリティ要件であると同時に、
   本質だけを取り出して言語化する訓練としても機能する。
 - **移行前のアーカイブ**: 2026-08-02 以前の詳細版（業務固有情報を含む）は
-  `cw-workspace-local` 側にアーカイブとして残しており、以降そちらには追記しない。
+  移行元の PRIVATE リポジトリにアーカイブとして残しており、以降そちらには追記しない。
 ```
 
 - [ ] **Step 7: setup.sh を2回連続実行して冪等性を検証**
@@ -421,11 +421,11 @@ git add -A .gitignore setup.sh tasks/learning-journal.md README.md
 git commit -F - <<'EOF'
 feat: learning-journal の実体を本リポジトリへ移し symlink 集約を撤去
 
-学習ログを PRIVATE の業務用リポジトリ (cw-workspace-local) に集約する
+学習ログを PRIVATE の業務用リポジトリに集約する
 構成をやめ、本リポジトリで追跡する方式へ変更した。
 
 - .gitignore から tasks/learning-journal.md を除外解除
-- setup.sh の symlink 集約ブロック (193-237行) を削除し cw-workspace-local 依存を解消
+- setup.sh の symlink 集約ブロック (193-237行) を削除し外部リポジトリ依存を解消
 - tasks/learning-journal.md を新規作成。冒頭に検証チェックポイントと
   PUBLIC 向け抽象化ルールの警告を配置
 - README の該当節を「集約」から「運用」へ書き換え
@@ -439,7 +439,7 @@ EOF
 ### Task 3: 既存11エントリの抽象化移行
 
 **Files:**
-- Read only: `~/garage/cw-workspace-local/tasks/learning-journal.md`
+- Read only: 移行元 PRIVATE リポジトリの `tasks/learning-journal.md`
 - Modify: `tasks/learning-journal.md`（Task 2 で作成したファイルに追記）
 
 **Interfaces:**
@@ -451,7 +451,7 @@ EOF
 
 Run:
 ```bash
-cat ~/garage/cw-workspace-local/tasks/learning-journal.md
+cat <移行元PRIVATEリポジトリのパス>/tasks/learning-journal.md
 ```
 
 11エントリ（143行、2026-04-17〜2026-07-01）。原本は**変更しない**。
@@ -462,11 +462,11 @@ cat ~/garage/cw-workspace-local/tasks/learning-journal.md
 
 | 原本の要素 | 対応 |
 |---|---|
-| 業務リポジトリ名（`cw_coding_agent_workspace` 等） | 役割で言い換える（例:「負荷試験スクリプトのリポジトリ」「エージェント作業用ワークスペース」） |
+| 業務リポジトリ名 | 役割で言い換える（例:「負荷試験スクリプトのリポジトリ」「エージェント作業用ワークスペース」） |
 | 業務システム固有の構成・エンドポイント・パラメータ名 | 一般化するか削除する |
 | 内部ファイルパス | 相対的な役割で表現する（例:「設定オブジェクト」） |
 | 一般的技術トピック（分散DBの基礎、Kotlin の `by lazy`、モックテストの観点、CDN のキャッシュ挙動 等） | **そのまま残してよい** |
-| `cw-workspace-local` / `my-claude-code-settings` への言及 | `my-claude-code-settings` は本リポジトリ自身なので残してよい。`cw-workspace-local` は「PRIVATE な作業環境リポジトリ」と表現する |
+| 移行元リポジトリ / 本リポジトリへの言及 | 本リポジトリ自身への言及（`my-claude-code-settings`）は残してよい。移行元は「PRIVATE な作業環境リポジトリ」と表現する |
 
 判断に迷う要素は**削除する**（残す方に倒さない）。
 
@@ -533,8 +533,8 @@ Run:
 echo "--- 1. protege 参照 ---"
 grep -rn "protege\|Protégé" . --exclude-dir=.git --exclude-dir=docs --exclude-dir=claude-code-best-practice || echo "OK: 0件"
 
-echo "--- 2. cw-workspace-local 参照（README/setup.sh に残っていないこと） ---"
-grep -rn "cw-workspace-local" README.md setup.sh CLAUDE.md rules/ || echo "OK: 0件"
+echo "--- 2. 移行元PRIVATEリポジトリ名の参照が残っていないこと ---"
+grep -rn "<移行元PRIVATEリポジトリ名>" . --exclude-dir=.git || echo "OK: 0件"
 
 echo "--- 3. journal 追跡状態 ---"
 git ls-files --error-unmatch tasks/learning-journal.md && echo "OK: 追跡済み"
@@ -543,7 +543,8 @@ echo "--- 4. setup.sh 冪等性 ---"
 bash setup.sh >/dev/null && bash setup.sh >/dev/null && echo "OK: 2回とも成功"
 ```
 
-Expected: 1・2 は0件（`README.md` の「移行前のアーカイブ」節で `cw-workspace-local` に触れている場合はその1件のみ許容）、3・4 は OK。
+Expected: 1・2 は0件（`README.md` の「移行前のアーカイブ」節で移行元リポジトリ名に触れている場合はその1件のみ許容）、3・4 は OK。
+検証範囲は `docs/` と `tasks/lessons.md` を除外しないこと（初回実装時、範囲をREADME/setup.sh/CLAUDE.md/rules/のみに絞ったため計画書・lessons.md内の実名記載を見落とした教訓）。
 
 - [ ] **Step 2: 差分を確認**
 
@@ -563,7 +564,7 @@ git push -u origin feat/learning-loop-redesign
 
 - [ ] **Step 4: 引継書の作成**
 
-`docs/handover/2026-08-02-cw-workspace-local-journal-migration.md` を作成し、`cw-workspace-local` 側の Claude に委譲する作業を記述する。
+`docs/handover/2026-08-02-journal-migration.md` を作成し、移行元PRIVATEリポジトリ側の Claude に委譲する作業を記述する。
 
 含める項目:
 - 背景（本リポジトリ側で何を変えたか、なぜ委譲するか）
@@ -571,7 +572,7 @@ git push -u origin feat/learning-loop-redesign
 - `README.md:72-79` の「個人ナレッジ集約」節をアーカイブ方針へ書き換え
 - `tasks/learning-journal.md` の冒頭に「アーカイブ。以降は追記しない。現行ログは my-claude-code-settings 側」の注記を追加
 - `devcontainer/docker-compose.override.yml` の bind mount が journal 以外の目的でも使われているかの確認（使われていれば残す）
-- `cw_coding_agent_workspace` 側の journal symlink の後始末
+- 共有ワークスペース側の journal symlink の後始末
 - **やってはいけないこと**: 原本の内容を削除・改変しない（アーカイブとして保持する）
 
 ---
