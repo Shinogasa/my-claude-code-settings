@@ -190,51 +190,6 @@ else
   exit 1
 fi
 
-# === learning-journal.md を PRIVATE 実体へ symlink 集約 ===
-# 学習ログの実体は cw-workspace-local (PRIVATE) 側に一元化する。
-# 本リポジトリは PUBLIC のため業務ナレッジを含む journal を追跡してはならない
-# (.gitignore 済み)。ここでは実体への symlink を張り、ホストからの参照性だけ確保する。
-# 実体が無い環境 (cw-workspace-local 未 clone のマシン) では何もしない。
-echo ""
-echo "=== learning-journal.md 集約 ==="
-
-consolidate_learning_journal() {
-  local journal_src="$HOME/garage/cw-workspace-local/tasks/learning-journal.md"
-  local journal_dest="$SCRIPT_DIR/tasks/learning-journal.md"
-
-  # 実体 (集約先) が存在しない環境ではスキップ (冪等ガード)
-  if [ ! -f "$journal_src" ]; then
-    yellow "スキップ: cw-workspace-local の実体が見つかりません ($journal_src)"
-    return
-  fi
-
-  mkdir -p "$(dirname "$journal_dest")"
-
-  # 既に正しい symlink ならスキップ
-  if [ -L "$journal_dest" ]; then
-    if [ "$(readlink "$journal_dest")" = "$journal_src" ]; then
-      green "✓ tasks/learning-journal.md → 実体 (リンク済み)"
-      return
-    fi
-    yellow "  更新: tasks/learning-journal.md （旧リンク先: $(readlink "$journal_dest")）"
-    rm "$journal_dest"
-  elif [ -f "$journal_dest" ]; then
-    # 実ファイルが残っている場合はバックアップしてから symlink へ置換
-    if [ "$backup_created" = false ]; then
-      mkdir -p "$BACKUP_DIR"
-      backup_created=true
-    fi
-    mkdir -p "$BACKUP_DIR/tasks"
-    yellow "  バックアップ: $journal_dest → $BACKUP_DIR/tasks/learning-journal.md"
-    mv "$journal_dest" "$BACKUP_DIR/tasks/learning-journal.md"
-  fi
-
-  ln -s "$journal_src" "$journal_dest"
-  green "✓ tasks/learning-journal.md → $journal_src （新規作成）"
-}
-
-consolidate_learning_journal
-
 echo ""
 echo "=== 完了 ==="
 
