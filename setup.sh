@@ -217,6 +217,42 @@ with open(dest, 'w') as f:
 
 green "✓ 個人アカウント用設定を生成しました → $PERSONAL_DEST"
 
+# === git pre-commit フック有効化 ===
+# このリポジトリは PUBLIC。学習ログや設計ドキュメントに業務由来の固有名詞が混入すると、
+# 公開 git 履歴 (fork・ミラー・既存クローン・コード検索索引) から消せない。
+# 「抽象化ルールを守る」という規約だけでは実際に2回すり抜けたため、機構として検査する。
+#
+# .git/hooks は追跡できないので、tracked な .githooks/ を core.hooksPath で指す。
+# この設定は .git/config に入る＝マシンごとに必要なため、setup.sh の責務に置く。
+echo ""
+echo "=== git pre-commit フック有効化 ==="
+
+setup_git_hooks() {
+  local hooks_dir=".githooks"
+  local patterns_local="$SCRIPT_DIR/$hooks_dir/patterns-local.txt"
+  local patterns_example="$SCRIPT_DIR/$hooks_dir/patterns-local.txt.example"
+
+  if ! git -C "$SCRIPT_DIR" rev-parse --git-dir > /dev/null 2>&1; then
+    yellow "スキップ: git リポジトリではないためフックを設定しません"
+    return
+  fi
+
+  git -C "$SCRIPT_DIR" config core.hooksPath "$hooks_dir"
+  green "✓ core.hooksPath → $hooks_dir"
+
+  # 固有名詞パターンは untracked。欠損時フックは fail closed で全コミットを止めるため、
+  # ここでひな形から初期化しておく (既存があれば内容を保持する)。
+  if [ -f "$patterns_local" ]; then
+    green "✓ patterns-local.txt は設定済みです"
+  else
+    cp "$patterns_example" "$patterns_local"
+    yellow "  patterns-local.txt をひな形から作成しました。固有名詞を記入してください:"
+    yellow "    $patterns_local"
+  fi
+}
+
+setup_git_hooks
+
 # === PATH 確認 ===
 # bin/ 配下のラッパー (ccp 等) はPATHが通っていないと使えない。
 # .zshrc は本リポジトリの管轄外かつ冪等な自動編集が難しいため、案内だけ出す。

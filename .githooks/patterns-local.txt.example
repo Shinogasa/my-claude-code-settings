@@ -1,0 +1,28 @@
+# 禁止パターン（固有名詞）— 1行1正規表現、大文字小文字は区別しない
+#
+# このファイルをコピーして patterns-local.txt を作り、実際の固有名詞を書く。
+#
+#   cp .githooks/patterns-local.txt.example .githooks/patterns-local.txt
+#
+# patterns-local.txt は .gitignore で追跡対象外にしてある。
+# 理由: 禁止したい固有名詞そのものが機密であり、それを PUBLIC リポジトリに
+#       書いた時点で目的と矛盾するため。パターンを2層に分けているのはこのため。
+#
+# 表記ゆれは | で束ねる（英語表記・日本語表記・略称など）。
+#
+# --- 記入例（すべてコメントアウト済み。実際の値に置き換えて有効化する）---
+
+# 社名・組織名
+# \b(acme|acmecorp|アクメ)\b
+
+# 社内プロジェクト名・サービス名・リポジトリ名
+# \b(project-foo|foo-service|foo-bff)\b
+
+# 内部ホスト・エンドポイント
+# \b(api|admin)\.foo\.example\.com\b
+
+# 業務DBのテーブル名・カラム名
+# \b(user_payment_ledger|internal_account_id)\b
+
+# 社内の人名・アカウント名
+# \b(yamada-taro|t-yamada)\b

@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""pre-commit フック: ステージ済み差分の追加行に禁止パターンが無いか検査する。
+
+このリポジトリは PUBLIC で、学習ログ (tasks/learning-journal.md) や設計ドキュメントなど
+業務由来の記述が混入しうるファイルを追跡している。公開 git 履歴は SHA 直参照・PR ref・
+fork ネットワーク・既存クローン・コード検索インデックスに残るため、一度 push した内容は
+実質的に取り消せない。「抽象化ルールを守る」という規約だけでは実際に2回すり抜けたため
+(計画書・lessons への実名混入 / エントリの誤爆)、機構として検査する。
+
+検査対象は「ステージ済み差分の追加行」のみ。既存行まで対象にすると、既に履歴へ
+入ってしまった記述のせいで無関係なコミットが止まり続け、--no-verify が習慣化して
+機構そのものが死ぬ。ここは新規の漏洩を止めることに絞り、既存分の是正は別タスクとする。
+
+パターン定義は2層:
+  patterns-common.txt — 構造的パターン (内部IP・秘密鍵形式等)。tracked。公開して安全
+  patterns-local.txt  — 固有名詞 (社名・内部ホスト等)。untracked。これ自体が機密のため
+
+バイパスは `git commit --no-verify`。意図的に行う分には構わないが、常用すると
+このフックは存在しないのと同じになる。
+"""
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+HOOK_DIR = Path(__file__).resolve().parent
+COMMON_PATTERNS = HOOK_DIR / "patterns-common.txt"
+LOCAL_PATTERNS = HOOK_DIR / "patterns-local.txt"
+LOCAL_EXAMPLE = HOOK_DIR / "patterns-local.txt.example"
+
+# パターン定義ファイル自身は検査対象外。正規表現の字面が自己マッチしうるため。
+EXCLUDED_PREFIXES = (".githooks/patterns-",)
+
+# git が空ツリーを指すのに使う固定ハッシュ (初回コミット時の比較対象)
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
+def red(text):
+    return f"\033[31m{text}\033[0m"
+
+
+def yellow(text):
+    return f"\033[33m{text}\033[0m"
+
+
+def load_patterns(path):
+    """1行1正規表現のファイルを読む。空行と # 始まりは無視する。
+
+    戻り値は (元の行, コンパイル済み正規表現) のリスト。
+    大文字小文字は区別しない (社名等の表記ゆれを拾うため)。
+    """
+    patterns = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            patterns.append((line, re.compile(line, re.IGNORECASE)))
+        except re.error as exc:
+            print(red(f"エラー: {path.name} の正規表現が不正です: {line} ({exc})"), file=sys.stderr)
+            sys.exit(1)
+    return patterns
+
+
+def staged_diff():
+    """ステージ済み差分を追加行のみ (-U0) で取得する。"""
+    base = "HEAD"
+    if subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"],
+                      capture_output=True).returncode != 0:
+        base = EMPTY_TREE  # 初回コミット
+
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--unified=0", "--no-color",
+         "--diff-filter=ACM", base],
+        capture_output=True, text=True, errors="replace",
+    )
+    if result.returncode != 0:
+        print(red(f"エラー: git diff に失敗しました: {result.stderr.strip()}"), file=sys.stderr)
+        sys.exit(1)
+    return result.stdout
+
+
+def iter_added_lines(diff_text):
+    """unified diff から (ファイルパス, 行番号, 追加された行) を順に取り出す。"""
+    current_file = None
+    line_no = 0
+    for line in diff_text.split("\n"):
+        if line.startswith("+++ "):
+            target = line[4:].strip()
+            current_file = None if target == "/dev/null" else target[2:]  # "b/" を落とす
+        elif line.startswith("@@"):
+            match = re.search(r"\+(\d+)", line)
+            line_no = int(match.group(1)) if match else 0
+        elif line.startswith("+") and not line.startswith("+++"):
+            if current_file and not current_file.startswith(EXCLUDED_PREFIXES):
+                yield current_file, line_no, line[1:]
+            line_no += 1
+
+
+def main():
+    if not COMMON_PATTERNS.exists():
+        print(red(f"ブロック: {COMMON_PATTERNS.name} がありません。"), file=sys.stderr)
+        print("  リポジトリが壊れています。git status で確認してください。", file=sys.stderr)
+        return 1
+
+    # 欠損時は fail closed。黙って通すと「検査したつもり」で漏洩が素通りする
+    # ＝ 気付けない故障になるため、必ず止めて復旧手順を出す。
+    if not LOCAL_PATTERNS.exists():
+        print(red(f"ブロック: {LOCAL_PATTERNS.name} がありません。"), file=sys.stderr)
+        print("  固有名詞の禁止パターンが未設定のため検査を実行できません。", file=sys.stderr)
+        print("  次を実行して初期化してください:", file=sys.stderr)
+        print(f"    cp {LOCAL_EXAMPLE.name} {LOCAL_PATTERNS.name}  # .githooks/ 配下", file=sys.stderr)
+        print("    (または bash setup.sh)", file=sys.stderr)
+        return 1
+
+    common = load_patterns(COMMON_PATTERNS)
+    local = load_patterns(LOCAL_PATTERNS)
+
+    # 有効なローカルパターンが0件でも止めはしないが、黙認もしない。
+    # 「設定したつもりで空」は検査をすり抜ける典型なので必ず可視化する。
+    if not local:
+        print(yellow(f"警告: {LOCAL_PATTERNS.name} に有効なパターンがありません "
+                     "(構造的パターンのみで検査します)"), file=sys.stderr)
+
+    patterns = common + local
+    findings = []
+    for path, line_no, text in iter_added_lines(staged_diff()):
+        for source, regex in patterns:
+            found = regex.search(text)
+            if found:
+                findings.append((path, line_no, source, found.group(0)))
+                break  # 1行につき1件報告すれば十分
+
+    if not findings:
+        return 0
+
+    print(red(f"ブロック: 禁止パターンを {len(findings)} 件検出しました。"), file=sys.stderr)
+    print("  このリポジトリは PUBLIC です。push した内容は履歴から消せません。", file=sys.stderr)
+    print("", file=sys.stderr)
+    for path, line_no, source, matched in findings:
+        print(f"  {path}:{line_no}", file=sys.stderr)
+        print(f"    検出: {matched}", file=sys.stderr)
+        print(f"    規則: {source}", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("  対処: 該当箇所を一般化して書き直してください "
+          "(rules/learning-mode.md の抽象化ルール)。", file=sys.stderr)
+    print("  誤検知の場合は .githooks/patterns-local.txt を調整してください。", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

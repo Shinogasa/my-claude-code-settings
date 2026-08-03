@@ -218,6 +218,41 @@ paths:
 - **移行前のアーカイブ**: 2026-08-02 以前の詳細版（業務固有情報を含む）は移行元の
   PRIVATE リポジトリにアーカイブとして残しており、以降そちらには追記しない。
 
+## 禁止パターン検査（pre-commit フック）
+
+抽象化ルールは規約なので、守り忘れれば素通りする。実際に2回すり抜けた（計画書・lessons への
+実名混入、エントリの誤爆）。公開 git 履歴は SHA 直参照・PR ref・fork ネットワーク・既存クローン・
+コード検索索引に残り、一度 push した内容は取り消せないため、規約ではなく機構で止める。
+
+`.githooks/pre-commit` が **ステージ済み差分の追加行** を検査し、禁止パターンに当たれば
+コミットをブロックする。既存行を対象にしないのは、既に履歴へ入った記述で無関係なコミットまで
+止まり続けると `--no-verify` が習慣化し、機構そのものが死ぬため。
+
+### パターン定義は2層
+
+| ファイル | 追跡 | 内容 |
+|---|---|---|
+| `.githooks/patterns-common.txt` | tracked | 内部IP・内部TLD・秘密鍵形式・ローカル絶対パス等の**構造的**パターン |
+| `.githooks/patterns-local.txt` | **untracked** | 社名・プロジェクト名・内部ホスト等の**固有名詞** |
+
+固有名詞を分離しているのは、禁止したい語そのものが機密だから。PUBLIC なこのリポジトリに
+書いた時点で目的と矛盾する。ひな形として `.githooks/patterns-local.txt.example` を追跡している。
+
+### 有効化
+
+`bash setup.sh` が `core.hooksPath` を `.githooks` に設定し、`patterns-local.txt` を
+ひな形から初期化する（既存があれば保持）。初期化直後は固有名詞が未記入なので、
+`patterns-local.txt` を編集して実際の語を追加する。
+
+`patterns-local.txt` が存在しない場合、フックは**コミットをブロックする**（fail closed）。
+黙って通すと「検査したつもり」で漏洩が素通りするため、必ず止めて復旧手順を表示する。
+有効なパターンが0件の場合は警告のみ出して続行する。
+
+### バイパス
+
+`git commit --no-verify` で回避できる。意図的な一回なら構わないが、常用するとこのフックは
+存在しないのと同じになる。
+
 ## Superpowers由来の強化
 
 [obra/superpowers](https://github.com/obra/superpowers)（MIT License）は`superpowers@claude-plugins-official`プラグインとして丸ごと導入している（`settings.json.template`の`enabledPlugins`参照）。プラグイン本体が`systematic-debugging`・`subagent-driven-development`等のスキルを提供するため、同名で重複する独自skillは置かない。

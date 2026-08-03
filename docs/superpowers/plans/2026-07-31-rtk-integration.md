@@ -108,7 +108,7 @@ Expected: バックアップファイルが作成される
 bash setup.sh
 ```
 
-Expected: `✓ settings.json を生成しました → /Users/sasakin/.claude/settings.json` が出力される。
+Expected: `✓ settings.json を生成しました → ~/.claude/settings.json` が出力される。
 既存ファイルが上書きされる場合は`setup.sh`が自動でバックアップを`~/.claude/backups/`配下に作成する
 
 - [ ] **Step 3: 生成された`~/.claude/settings.json`にrtkフックが含まれることを確認する**
