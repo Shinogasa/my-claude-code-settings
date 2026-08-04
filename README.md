@@ -1,7 +1,7 @@
 # my-claude-code-settings
 
-Claude Codeの個人設定をGit管理するリポジトリ。
-セットアップスクリプトでシンボリックリンクを作成し、`~/.claude/` と同期する。
+コーディングエージェント（Claude Code / Codex CLI）の個人設定をGit管理するリポジトリ。
+セットアップスクリプトでシンボリックリンクを作成し、各ホストの設定ディレクトリと同期する。
 
 ## セットアップ
 
@@ -45,6 +45,33 @@ bash setup.sh
 
 - 何度実行しても安全（冪等）
 - 既存ファイルは `~/.claude/backups/` に自動バックアップ
+
+### Codex CLI 向けリンク
+
+`~/.codex/` が存在する場合のみ、同じソースを Codex 向けにもリンクする（内容は二重管理しない）。
+未導入マシンでは何も作成せず、スキップした旨を表示する。
+
+| リポジトリ | リンク先 | 備考 |
+|---|---|---|
+| `skills/` | `~/.agents/skills/` | Agent Skills オープン標準。Codex はスキャン時にシンボリックリンクを追従する |
+| `commands/` | `~/.codex/prompts/` | `description` / `argument-hint` の frontmatter が同形式 |
+| `rules/` | `~/.codex/rules/` | `AGENTS.md` から `rules/...` の相対参照で辿れるよう同じ階層に置く |
+| `CLAUDE.md` | `~/.codex/AGENTS.md` | Codex のグローバル指示 |
+
+`~/.agents/` は Codex が自動生成しないため、Codex 検出時に `setup.sh` が作成する。
+
+**未対応（形式が異なる / 相当機能がない）**
+
+| 資産 | 理由 |
+|---|---|
+| `agents/` | Codex は `config.toml` の `[agents]` / `.codex/agents/` で TOML 定義 |
+| `hooks/` | 配線先が `hooks.json` / `config.toml`。スクリプト本体は流用できる見込み |
+| `output-styles/` `statusline.js` | Codex に相当機能なし |
+| `settings.json` | Codex は `~/.codex/config.toml`。キー空間が対応しない。APIキーが平文で入るためリポジトリ管理対象にしない |
+
+これらを共有ソース（`skills/` `commands/` `rules/` `CLAUDE.md`）に書くときは、
+特定ホスト固有のツール名・パスに依存させない。Codex は未対応の frontmatter キーや設定を
+**エラーにせず黙って読み飛ばす**ため、依存が残ると「リンクは成功しているのに機能だけ落ちる」状態になる。
 
 ## 認証プロファイルの切り替え
 
