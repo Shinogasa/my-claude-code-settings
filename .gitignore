@@ -4,6 +4,7 @@ settings.local.json
 .claude/settings.local.json
 .DS_Store
 *.swp
+__pycache__/
 
 # todo.md はタスクごとに使い捨てる一時ファイル (rules/task-management.md参照)。
 tasks/todo.md

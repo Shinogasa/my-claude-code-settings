@@ -47,7 +47,17 @@ def load_patterns(path):
     """1行1正規表現のファイルを読む。空行と # 始まりは無視する。
 
     戻り値は (元の行, コンパイル済み正規表現) のリスト。
-    大文字小文字は区別しない (社名等の表記ゆれを拾うため)。
+
+    re.IGNORECASE: 社名等の表記ゆれを拾うため。
+    re.ASCII: \\b を ASCII 基準にするため。既定の Unicode 基準では日本語文字も
+        「単語文字」と見なされ、`接続先は<内部IP>だった` のように和文が直接隣接すると
+        境界が成立せず一致しない。journal は日本語で書くため、この既定のままだと
+        構造的パターンが実運用で素通りする。ASCII 基準なら和文は非単語文字となり
+        境界が成立する。
+
+        なお和文リテラル自体 (例: 社名) は両側とも非単語文字になるため、
+        この指定でも \\b では一致しない。和文の固有名詞には境界を書かないこと
+        (patterns-local.txt.example 参照)。
     """
     patterns = []
     for raw in path.read_text(encoding="utf-8").splitlines():
@@ -55,7 +65,7 @@ def load_patterns(path):
         if not line or line.startswith("#"):
             continue
         try:
-            patterns.append((line, re.compile(line, re.IGNORECASE)))
+            patterns.append((line, re.compile(line, re.IGNORECASE | re.ASCII)))
         except re.error as exc:
             print(red(f"エラー: {path.name} の正規表現が不正です: {line} ({exc})"), file=sys.stderr)
             sys.exit(1)
