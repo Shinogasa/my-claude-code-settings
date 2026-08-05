@@ -27,23 +27,33 @@ Codex CLI が入っているマシンなら追加設定なしで解決できる�
 `codex plugin list --json` は `installed[]` / `available[]` を返し、各要素が `pluginId`
 （例 `superpowers@openai-curated`）を持つ。冪等判定にはこれを使う。
 
-### 2. Codex 版プラグインには hook 機構が無い（本設計の中心的な制約）
-
-`plugin.json` が持てるキーを、ローカルスナップショット上の全 bundled プラグインで確認した。
-
-| プラグイン | manifest のキー |
-|---|---|
-| superpowers | `skills` のみ |
-| browser / chrome / latex / visualize | `skills` のみ |
-| computer-use / record-and-replay | `skills` + `mcpServers` |
-
-`hooks` 相当のキーはどのプラグインにも存在しない。
+### 2. Codex 版 superpowers は hook を同梱していない（本設計の中心的な制約）
 
 Claude Code 版 superpowers は SessionStart hook で `using-superpowers` スキルの全文を
-セッション冒頭に注入し、これがスキル群の発火起点になっている。Codex 版にはこの機構が無く、
-14 個の skills は「インデックスに載るだけ」の状態になる。
+セッション冒頭に注入し、これがスキル群の発火起点になっている。Codex 版にはこれが無い。
+
+Codex のプラグイン hook 機構自体は存在する。ただし `plugin.json` のキーではなく、
+**プラグイン直下の `hooks.json`** という別ファイルで定義する（スキーマは Claude Code と同形）。
+
+```json
+{ "hooks": { "PostToolUse": [ { "matcher": "Write|Edit",
+  "hooks": [ { "type": "command", "command": "./scripts/..." } ] } ] } }
+```
+
+マーケットプレイススナップショット全体を走査した結果:
+
+- `hooks.json` を持つプラグイン: `figma` `replayio`（実在する。機構は生きている）
+- `plugin.json` に `hooks` 系キーを持つプラグイン: **ゼロ**（定義場所が別ファイルのため）
+- `superpowers` の導入実体（`~/.codex/plugins/cache/openai-curated/superpowers/<hash>/`）:
+  `skills/` `assets/` `.codex-plugin/` のみ。**`hooks.json` は無い**
+
+つまり「Codex に hook 機構が無い」のではなく「**superpowers の Codex 配布物が hook を
+使っていない**」。結論は変わらず、14 個の skills は「インデックスに載るだけ」になる。
 
 **インストールしただけでは実質的に使われない。** 発火の配線を別途用意する必要がある。
+
+なお hook を自前で足す道は取らない。プラグインキャッシュは Codex が管理する領域で、
+更新時に上書きされるうえ、hook の実行には信頼承認が要る。リポジトリが保持できる状態でもない。
 
 ### 3. バージョン差
 
@@ -150,8 +160,14 @@ hook 差分により発火方式が異なることを追記する。
    現れること
 3. `bash setup.sh` を再実行し、2 回目が「導入済み」としてスキップされること（冪等）
 4. `grep -c superpowers ~/.codex/AGENTS.md` が 1 以上を返すこと（リンク経由で節が届いている）
-5. `codex exec "superpowers の brainstorming スキルの冒頭 3 行を引用して"` が
-   スキル本文を返すこと（スキルが実際に解決可能な状態にあることの確認）
+5. `~/.codex/plugins/cache/openai-curated/superpowers/<hash>/skills/` に skills が
+   展開されていること（Codex がスキャンする位置に実体があることの確認）
+
+### 検証結果（2026-08-05 実施）
+
+1〜5 すべて通過。5 は当初 `codex exec` による実機 1 ターンで確認する手順にしていたが、
+LLM ゲートウェイの予算上限超過（HTTP 429）で実行できず、展開先の構造確認に差し替えた。
+本変更とは無関係な外部要因のため、実機ターンでの動作確認は予算回復後の宿題として残る。
 
 ## スコープ外
 

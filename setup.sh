@@ -127,6 +127,70 @@ for target in "${TARGETS[@]}"; do
   green "✓ $src_rel → $dest （新規作成）"
 done
 
+# === Codex プラグイン導入 ===
+# superpowers は Codex 公式マーケットプレイス (openai-curated) から入れる。
+# openai-curated は Codex 自身が同期するスナップショットで、config.toml への marketplace
+# 登録は不要 (codex plugin marketplace list に自動で現れる)。
+#
+# インストール先は ~/.codex/config.toml だが、このファイルはモデルプロバイダの認証ヘッダを
+# 平文で持つためリポジトリ管理下に置けない。よって「リポジトリが状態を持つ」のではなく
+# 「冪等なコマンドを setup.sh が叩く」形にする。
+#
+# なお Codex 版プラグインは skills のみを提供し、Claude Code 版のような SessionStart hook を
+# 持たない (manifest に hooks 相当のキーが存在しない)。入れただけでは skills が発火しないため、
+# 発火の指示は CLAUDE.md (= ~/.codex/AGENTS.md) の superpowers 節が担う。
+echo ""
+echo "=== Codex プラグイン導入 ==="
+
+CODEX_PLUGINS=(
+  "superpowers@openai-curated"
+)
+
+setup_codex_plugins() {
+  if [ ! -d "$CODEX_DIR" ]; then
+    yellow "スキップ: $CODEX_DIR がないため Codex プラグインは導入しません"
+    return
+  fi
+  if ! command -v codex > /dev/null 2>&1; then
+    yellow "スキップ: codex コマンドが PATH にありません"
+    return
+  fi
+
+  # 導入済み一覧を1回だけ取得する。プラグインごとに codex を起動すると遅く、
+  # かつ途中で状態が変わる余地を作ってしまう。
+  local installed
+  if ! installed="$(codex plugin list --json 2>/dev/null)"; then
+    yellow "スキップ: codex plugin list に失敗しました (Codex のバージョンを確認してください)"
+    return
+  fi
+
+  local plugin_id
+  for plugin_id in "${CODEX_PLUGINS[@]}"; do
+    # 導入済み判定は installed[] の pluginId で行う。
+    # ユーザーが enabled = false にした場合も installed[] には残るため、ここでスキップされる。
+    # 明示的な無効化を setup.sh が握り潰さないための挙動。
+    if printf '%s' "$installed" | python3 -c "
+import json, sys
+target = sys.argv[1]
+data = json.load(sys.stdin)
+sys.exit(0 if any(p.get('pluginId') == target for p in data.get('installed', [])) else 1)
+" "$plugin_id"; then
+      green "✓ $plugin_id （導入済み）"
+      continue
+    fi
+
+    # 導入は失敗しても setup.sh 全体を止めない。このスクリプトの主責務はリンク作成であり、
+    # マーケットプレイス側の一時的な不調で設定全体の適用が落ちる方が損害が大きい。
+    if codex plugin add "$plugin_id" > /dev/null 2>&1; then
+      green "✓ $plugin_id （新規導入）"
+    else
+      red "  失敗: $plugin_id の導入に失敗しました。手動で 'codex plugin add $plugin_id' を実行してください"
+    fi
+  done
+}
+
+setup_codex_plugins
+
 # === settings.json テンプレート生成 ===
 # 共通設定(statusLine/plugins/theme等)は machine非依存のため .env の有無に
 # 関わらず常に生成する。会社PCのLiteLLM経由API利用に必要な env ブロック
