@@ -13,3 +13,11 @@ tasks/todo.md
 # 禁止したい固有名詞そのものが機密であり、PUBLIC なこのリポジトリに置くと目的と矛盾する。
 # ひな形は .githooks/patterns-local.txt.example を追跡している。
 .githooks/patterns-local.txt
+
+# superpowers の設計書・計画書はグローバル無視 (dotfiles の config/git/ignore) の
+# 対象だが、このリポジトリでは設計履歴として意図的に追跡する。
+# 「無視が既定・残すのは明示」の向きにしてあるため、ここで打ち消す。
+# negation もアンカー規則に従うので **/ が要る (!docs/superpowers/ だと
+# リポジトリ直下しか復活しない)。
+# なお .superpowers/ はプラグインの内部作業ディレクトリなので打ち消さない。
+!**/docs/superpowers/
