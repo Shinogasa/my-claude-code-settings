@@ -140,6 +140,29 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 本方式なら `ccp: command not found` で即座に気づける。既存の会社PC設定を一切変更しない点でも
 影響が小さい。
 
+**プラグインも認証 env を読む**: この切り替えは Claude Code 本体だけでなく、
+`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` を読むプラグインの LLM 呼び出しにも及ぶ。
+`ccp` では両者が空文字列になるため、そうしたプラグインは**課金先を失って起動しない**
+（security-guidance で実測確認済み）。裏を返すと素の `claude` では会社ゲートウェイに乗るので、
+プラグインが毎ターン LLM を叩く種類のものかどうかは導入時に確認する。
+
+### 機密でない機能トグルの置き場
+
+`settings.json` の `env` には2種類の値が入る。**寿命が違うので置き場を分ける。**
+
+| 種類 | 置き場 | 適用範囲 |
+|---|---|---|
+| 認証情報（マシン固有・機密） | `env.json.template` | `.env` があるマシンのみ |
+| 機能トグル（全マシン共通・非機密） | **`settings.json.template` の `env`** | 常に |
+
+トグルを `env.json.template` に置いてはいけない。`.env` の無いマシンに適用されない上、
+`settings.personal.json` は `env.json.template` のキーを**全て空文字列で潰す**設計なので、
+`"0"` で無効化するタイプのトグルが `ccp` 側で有効に戻ってしまう。
+
+`setup.sh` は `env` だけ追記マージする。トップレベルの `update` では `env` キーごと
+置換され、base 側のトグルが `.env` のあるマシンでだけ消える（会社PCでのみ設定が効かない、
+最も気づきにくい壊れ方）ため。
+
 **無効化キーの二重管理を避ける**: `settings.personal.json` は `env.json.template` のキー集合から
 `setup.sh` が導出する。テンプレートにキーを足したときの無効化漏れを構造的に防ぐため。
 

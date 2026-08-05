@@ -286,9 +286,14 @@ if [ -f "$SETTINGS_DEST" ] && [ ! -L "$SETTINGS_DEST" ]; then
   cp "$SETTINGS_DEST" "$BACKUP_DIR/settings.json"
 fi
 
-# ベーステンプレート(env抜き)を常に適用。
+# ベーステンプレートを常に適用。
 # `/model` 等のCLIコマンドがsettings.jsonに書き込む値(テンプレート未管理のキー)は
 # 上書きせず温存し、テンプレートが管理するキーだけを反映するマージ方式にする。
+#
+# base 側も env を持つ (機密でない機能トグル用)。認証情報とは寿命が違い、
+# .env の有無に関わらず全マシンへ適用したいものはこちら側に置く。
+# base の env が既存の env を置換するのは意図通り: .env を消したマシンで
+# 古い認証キーが settings.json に残り続けるのを防ぐ。
 python3 -c "
 import json, sys
 dest, template = sys.argv[1], sys.argv[2]
@@ -341,6 +346,9 @@ else
       "$ENV_JSON_TMP"
   fi
 
+  # env だけは追記マージにする。トップレベルの update だと env キーごと置換され、
+  # base 側が入れた機能トグルが .env のあるマシンでだけ消える (= 会社PCでのみ
+  # 設定が効かない、最も気づきにくい壊れ方) になるため。
   python3 -c "
 import json, sys
 dest, env_json = sys.argv[1], sys.argv[2]
@@ -348,7 +356,9 @@ with open(dest) as f:
     settings = json.load(f)
 with open(env_json) as f:
     env_block = json.load(f)
+env_values = env_block.pop('env', {})
 settings.update(env_block)
+settings.setdefault('env', {}).update(env_values)
 with open(dest, 'w') as f:
     json.dump(settings, f, indent=2, ensure_ascii=False)
     f.write('\n')
