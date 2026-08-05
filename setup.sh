@@ -10,6 +10,13 @@ CODEX_DIR="$HOME/.codex"
 AGENTS_DIR="$HOME/.agents"  # Agent Skills オープン標準のユーザースコープ
 BACKUP_DIR="$CLAUDE_DIR/backups/$(date +%Y%m%d_%H%M%S)"
 
+# テンプレート/生成先のパス。settings.json 生成セクションだけでなく、その手前の
+# プラグイン導入セクションも settings.json.template を読むため、ここでまとめて定義する。
+BASE_TEMPLATE="$SCRIPT_DIR/settings.json.template"
+ENV_TEMPLATE="$SCRIPT_DIR/env.json.template"
+SETTINGS_DEST="$CLAUDE_DIR/settings.json"
+ENV_FILE="$SCRIPT_DIR/.env"
+
 # シンボリックリンク対象の定義
 # 形式: "リポジトリ内パス:リンク先パス"
 # 同一ソースを複数ホストへ配る場合はエントリを分けて列挙する。
@@ -127,6 +134,77 @@ for target in "${TARGETS[@]}"; do
   green "✓ $src_rel → $dest （新規作成）"
 done
 
+# === Claude Code プラグイン導入 ===
+# settings.json.template の enabledPlugins は「有効にしろ」という宣言でしかなく、実体の取得は
+# しない。実体 (~/.claude/plugins/cache/) と installed_plugins.json はマシンローカルかつ
+# 絶対パス込みのため、このリポジトリでは同期できない。
+#
+# その結果、新しいマシンでは「enabled なのに not cached」になり、プラグインが黙って機能しない
+# (実際に別環境で発生した)。宣言と実体の乖離をここで埋める。
+#
+# 導入対象は settings.json.template から導出する。setup.sh に専用の配列を持つと二重管理になり、
+# 「enabledPlugins に足したが導入リストに足し忘れた」が起きる。しかもその状態は、実体が既に
+# あるマシンでは何も壊れないため気づけず、別マシンで初めて発症する。
+# settings.personal.json のキーを env.json.template から導出しているのと同じ理由。
+echo ""
+echo "=== Claude Code プラグイン導入 ==="
+
+setup_claude_plugins() {
+  if ! command -v claude > /dev/null 2>&1; then
+    yellow "スキップ: claude コマンドが PATH にありません"
+    return
+  fi
+
+  local wanted
+  wanted="$(python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    plugins = json.load(f).get('enabledPlugins', {})
+# 値が false のものは意図的な無効化なので導入しない
+print('\n'.join(k for k, v in plugins.items() if v))
+" "$BASE_TEMPLATE")"
+
+  if [ -z "$wanted" ]; then
+    yellow "スキップ: settings.json.template に enabledPlugins がありません"
+    return
+  fi
+
+  local installed
+  if ! installed="$(claude plugin list --json 2>/dev/null)"; then
+    yellow "スキップ: claude plugin list に失敗しました"
+    return
+  fi
+
+  local plugin_id
+  while IFS= read -r plugin_id; do
+    [ -n "$plugin_id" ] || continue
+
+    if printf '%s' "$installed" | python3 -c "
+import json, sys
+target = sys.argv[1]
+sys.exit(0 if any(p.get('id') == target for p in json.load(sys.stdin)) else 1)
+" "$plugin_id"; then
+      green "✓ $plugin_id （導入済み）"
+      continue
+    fi
+
+    # 失敗しても setup.sh 全体は止めない。マーケットプレイス未登録が主な失敗要因のため、
+    # 復旧コマンドまで出す。黙って続けると「宣言だけあって実体がない」状態に逆戻りする。
+    if claude plugin install "$plugin_id" > /dev/null 2>&1; then
+      green "✓ $plugin_id （新規導入）"
+    else
+      red "  失敗: $plugin_id"
+      yellow "    マーケットプレイス未登録の可能性があります。次を試してください:"
+      yellow "      claude plugin marketplace add anthropics/${plugin_id##*@}"
+      yellow "      claude plugin install $plugin_id"
+    fi
+  done <<< "$wanted"
+
+  yellow "  ※ 導入内容は次回の Claude Code 起動時から有効になります"
+}
+
+setup_claude_plugins
+
 # === Codex プラグイン導入 ===
 # superpowers は Codex 公式マーケットプレイス (openai-curated) から入れる。
 # openai-curated は Codex 自身が同期するスナップショットで、config.toml への marketplace
@@ -197,11 +275,6 @@ setup_codex_plugins
 # (ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN等)は .env がある場合のみ追加マージする。
 echo ""
 echo "=== settings.json 生成 ==="
-
-BASE_TEMPLATE="$SCRIPT_DIR/settings.json.template"
-ENV_TEMPLATE="$SCRIPT_DIR/env.json.template"
-SETTINGS_DEST="$CLAUDE_DIR/settings.json"
-ENV_FILE="$SCRIPT_DIR/.env"
 
 # 既存 settings.json のバックアップ(生成物ではない実ファイルの場合のみ)
 if [ -f "$SETTINGS_DEST" ] && [ ! -L "$SETTINGS_DEST" ]; then

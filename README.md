@@ -60,6 +60,21 @@ bash setup.sh
 
 `~/.agents/` は Codex が自動生成しないため、Codex 検出時に `setup.sh` が作成する。
 
+### Claude Code 向けプラグイン
+
+`settings.json` の `enabledPlugins` は「有効にしろ」という**宣言**でしかなく、実体の取得はしない。
+実体（`~/.claude/plugins/cache/`）と `installed_plugins.json` はマシンローカルかつ絶対パス込みの
+ため、このリポジトリでは同期できない。
+
+そのため新しいマシンでは「enabled なのに not cached」となり、**プラグインが黙って機能しない**。
+`setup.sh` はこの乖離を埋めるため、`enabledPlugins` に列挙されたプラグインを冪等に導入する。
+
+導入対象は `settings.json.template` から導出している。専用リストを別に持つと
+「`enabledPlugins` に足したが導入リストに足し忘れた」が起き、しかも**実体が既にあるマシンでは
+何も壊れないため気づけず、別マシンで初めて発症する**。
+
+導入内容は次回の Claude Code 起動時から有効になる。
+
 ### Codex CLI 向けプラグイン
 
 `setup.sh` は Codex 公式マーケットプレイス（`openai-curated`）から以下を冪等に導入する。
