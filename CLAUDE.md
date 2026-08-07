@@ -22,6 +22,15 @@ skills / commands / rules / CLAUDE.md は単一ソースを両ホストへリン
 | Claude Code | `~/.claude/rules/` | される（本文がコンテキストに展開される） |
 | Codex CLI | `~/.codex/rules/` | **されない。参照が必要になった時点で自分で読むこと** |
 
+## superpowers
+
+skills の発火方式がホストで異なる。
+
+| ホスト | 発火方式 |
+|---|---|
+| Claude Code | プラグインの SessionStart hook が `using-superpowers` を自動注入する。追加操作は不要 |
+| Codex CLI | 配布物が hook を同梱しない。**応答を始める前に `superpowers:using-superpowers` を自分で読むこと** |
+
 ## 言語
 
 - 日本語でコミュニケーションする

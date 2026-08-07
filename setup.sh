@@ -10,6 +10,13 @@ CODEX_DIR="$HOME/.codex"
 AGENTS_DIR="$HOME/.agents"  # Agent Skills オープン標準のユーザースコープ
 BACKUP_DIR="$CLAUDE_DIR/backups/$(date +%Y%m%d_%H%M%S)"
 
+# テンプレート/生成先のパス。settings.json 生成セクションだけでなく、その手前の
+# プラグイン導入セクションも settings.json.template を読むため、ここでまとめて定義する。
+BASE_TEMPLATE="$SCRIPT_DIR/settings.json.template"
+ENV_TEMPLATE="$SCRIPT_DIR/env.json.template"
+SETTINGS_DEST="$CLAUDE_DIR/settings.json"
+ENV_FILE="$SCRIPT_DIR/.env"
+
 # シンボリックリンク対象の定義
 # 形式: "リポジトリ内パス:リンク先パス"
 # 同一ソースを複数ホストへ配る場合はエントリを分けて列挙する。
@@ -127,17 +134,147 @@ for target in "${TARGETS[@]}"; do
   green "✓ $src_rel → $dest （新規作成）"
 done
 
+# === Claude Code プラグイン導入 ===
+# settings.json.template の enabledPlugins は「有効にしろ」という宣言でしかなく、実体の取得は
+# しない。実体 (~/.claude/plugins/cache/) と installed_plugins.json はマシンローカルかつ
+# 絶対パス込みのため、このリポジトリでは同期できない。
+#
+# その結果、新しいマシンでは「enabled なのに not cached」になり、プラグインが黙って機能しない
+# (実際に別環境で発生した)。宣言と実体の乖離をここで埋める。
+#
+# 導入対象は settings.json.template から導出する。setup.sh に専用の配列を持つと二重管理になり、
+# 「enabledPlugins に足したが導入リストに足し忘れた」が起きる。しかもその状態は、実体が既に
+# あるマシンでは何も壊れないため気づけず、別マシンで初めて発症する。
+# settings.personal.json のキーを env.json.template から導出しているのと同じ理由。
+echo ""
+echo "=== Claude Code プラグイン導入 ==="
+
+setup_claude_plugins() {
+  if ! command -v claude > /dev/null 2>&1; then
+    yellow "スキップ: claude コマンドが PATH にありません"
+    return
+  fi
+
+  local wanted
+  wanted="$(python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    plugins = json.load(f).get('enabledPlugins', {})
+# 値が false のものは意図的な無効化なので導入しない
+print('\n'.join(k for k, v in plugins.items() if v))
+" "$BASE_TEMPLATE")"
+
+  if [ -z "$wanted" ]; then
+    yellow "スキップ: settings.json.template に enabledPlugins がありません"
+    return
+  fi
+
+  local installed
+  if ! installed="$(claude plugin list --json 2>/dev/null)"; then
+    yellow "スキップ: claude plugin list に失敗しました"
+    return
+  fi
+
+  local plugin_id
+  while IFS= read -r plugin_id; do
+    [ -n "$plugin_id" ] || continue
+
+    if printf '%s' "$installed" | python3 -c "
+import json, sys
+target = sys.argv[1]
+sys.exit(0 if any(p.get('id') == target for p in json.load(sys.stdin)) else 1)
+" "$plugin_id"; then
+      green "✓ $plugin_id （導入済み）"
+      continue
+    fi
+
+    # 失敗しても setup.sh 全体は止めない。マーケットプレイス未登録が主な失敗要因のため、
+    # 復旧コマンドまで出す。黙って続けると「宣言だけあって実体がない」状態に逆戻りする。
+    if claude plugin install "$plugin_id" > /dev/null 2>&1; then
+      green "✓ $plugin_id （新規導入）"
+    else
+      red "  失敗: $plugin_id"
+      yellow "    マーケットプレイス未登録の可能性があります。次を試してください:"
+      yellow "      claude plugin marketplace add anthropics/${plugin_id##*@}"
+      yellow "      claude plugin install $plugin_id"
+    fi
+  done <<< "$wanted"
+
+  yellow "  ※ 導入内容は次回の Claude Code 起動時から有効になります"
+}
+
+setup_claude_plugins
+
+# === Codex プラグイン導入 ===
+# superpowers は Codex 公式マーケットプレイス (openai-curated) から入れる。
+# openai-curated は Codex 自身が同期するスナップショットで、config.toml への marketplace
+# 登録は不要 (codex plugin marketplace list に自動で現れる)。
+#
+# インストール先は ~/.codex/config.toml だが、このファイルはモデルプロバイダの認証ヘッダを
+# 平文で持つためリポジトリ管理下に置けない。よって「リポジトリが状態を持つ」のではなく
+# 「冪等なコマンドを setup.sh が叩く」形にする。
+#
+# なお Codex 版プラグインは skills のみを提供し、Claude Code 版のような SessionStart hook を
+# 持たない (manifest に hooks 相当のキーが存在しない)。入れただけでは skills が発火しないため、
+# 発火の指示は CLAUDE.md (= ~/.codex/AGENTS.md) の superpowers 節が担う。
+echo ""
+echo "=== Codex プラグイン導入 ==="
+
+CODEX_PLUGINS=(
+  "superpowers@openai-curated"
+)
+
+setup_codex_plugins() {
+  if [ ! -d "$CODEX_DIR" ]; then
+    yellow "スキップ: $CODEX_DIR がないため Codex プラグインは導入しません"
+    return
+  fi
+  if ! command -v codex > /dev/null 2>&1; then
+    yellow "スキップ: codex コマンドが PATH にありません"
+    return
+  fi
+
+  # 導入済み一覧を1回だけ取得する。プラグインごとに codex を起動すると遅く、
+  # かつ途中で状態が変わる余地を作ってしまう。
+  local installed
+  if ! installed="$(codex plugin list --json 2>/dev/null)"; then
+    yellow "スキップ: codex plugin list に失敗しました (Codex のバージョンを確認してください)"
+    return
+  fi
+
+  local plugin_id
+  for plugin_id in "${CODEX_PLUGINS[@]}"; do
+    # 導入済み判定は installed[] の pluginId で行う。
+    # ユーザーが enabled = false にした場合も installed[] には残るため、ここでスキップされる。
+    # 明示的な無効化を setup.sh が握り潰さないための挙動。
+    if printf '%s' "$installed" | python3 -c "
+import json, sys
+target = sys.argv[1]
+data = json.load(sys.stdin)
+sys.exit(0 if any(p.get('pluginId') == target for p in data.get('installed', [])) else 1)
+" "$plugin_id"; then
+      green "✓ $plugin_id （導入済み）"
+      continue
+    fi
+
+    # 導入は失敗しても setup.sh 全体を止めない。このスクリプトの主責務はリンク作成であり、
+    # マーケットプレイス側の一時的な不調で設定全体の適用が落ちる方が損害が大きい。
+    if codex plugin add "$plugin_id" > /dev/null 2>&1; then
+      green "✓ $plugin_id （新規導入）"
+    else
+      red "  失敗: $plugin_id の導入に失敗しました。手動で 'codex plugin add $plugin_id' を実行してください"
+    fi
+  done
+}
+
+setup_codex_plugins
+
 # === settings.json テンプレート生成 ===
 # 共通設定(statusLine/plugins/theme等)は machine非依存のため .env の有無に
 # 関わらず常に生成する。会社PCのLiteLLM経由API利用に必要な env ブロック
 # (ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN等)は .env がある場合のみ追加マージする。
 echo ""
 echo "=== settings.json 生成 ==="
-
-BASE_TEMPLATE="$SCRIPT_DIR/settings.json.template"
-ENV_TEMPLATE="$SCRIPT_DIR/env.json.template"
-SETTINGS_DEST="$CLAUDE_DIR/settings.json"
-ENV_FILE="$SCRIPT_DIR/.env"
 
 # 既存 settings.json のバックアップ(生成物ではない実ファイルの場合のみ)
 if [ -f "$SETTINGS_DEST" ] && [ ! -L "$SETTINGS_DEST" ]; then
@@ -149,9 +286,14 @@ if [ -f "$SETTINGS_DEST" ] && [ ! -L "$SETTINGS_DEST" ]; then
   cp "$SETTINGS_DEST" "$BACKUP_DIR/settings.json"
 fi
 
-# ベーステンプレート(env抜き)を常に適用。
+# ベーステンプレートを常に適用。
 # `/model` 等のCLIコマンドがsettings.jsonに書き込む値(テンプレート未管理のキー)は
 # 上書きせず温存し、テンプレートが管理するキーだけを反映するマージ方式にする。
+#
+# base 側も env を持つ (機密でない機能トグル用)。認証情報とは寿命が違い、
+# .env の有無に関わらず全マシンへ適用したいものはこちら側に置く。
+# base の env が既存の env を置換するのは意図通り: .env を消したマシンで
+# 古い認証キーが settings.json に残り続けるのを防ぐ。
 python3 -c "
 import json, sys
 dest, template = sys.argv[1], sys.argv[2]
@@ -204,6 +346,9 @@ else
       "$ENV_JSON_TMP"
   fi
 
+  # env だけは追記マージにする。トップレベルの update だと env キーごと置換され、
+  # base 側が入れた機能トグルが .env のあるマシンでだけ消える (= 会社PCでのみ
+  # 設定が効かない、最も気づきにくい壊れ方) になるため。
   python3 -c "
 import json, sys
 dest, env_json = sys.argv[1], sys.argv[2]
@@ -211,7 +356,9 @@ with open(dest) as f:
     settings = json.load(f)
 with open(env_json) as f:
     env_block = json.load(f)
+env_values = env_block.pop('env', {})
 settings.update(env_block)
+settings.setdefault('env', {}).update(env_values)
 with open(dest, 'w') as f:
     json.dump(settings, f, indent=2, ensure_ascii=False)
     f.write('\n')

@@ -60,6 +60,40 @@ bash setup.sh
 
 `~/.agents/` は Codex が自動生成しないため、Codex 検出時に `setup.sh` が作成する。
 
+### Claude Code 向けプラグイン
+
+`settings.json` の `enabledPlugins` は「有効にしろ」という**宣言**でしかなく、実体の取得はしない。
+実体（`~/.claude/plugins/cache/`）と `installed_plugins.json` はマシンローカルかつ絶対パス込みの
+ため、このリポジトリでは同期できない。
+
+そのため新しいマシンでは「enabled なのに not cached」となり、**プラグインが黙って機能しない**。
+`setup.sh` はこの乖離を埋めるため、`enabledPlugins` に列挙されたプラグインを冪等に導入する。
+
+導入対象は `settings.json.template` から導出している。専用リストを別に持つと
+「`enabledPlugins` に足したが導入リストに足し忘れた」が起き、しかも**実体が既にあるマシンでは
+何も壊れないため気づけず、別マシンで初めて発症する**。
+
+導入内容は次回の Claude Code 起動時から有効になる。
+
+### Codex CLI 向けプラグイン
+
+`setup.sh` は Codex 公式マーケットプレイス（`openai-curated`）から以下を冪等に導入する。
+導入先は `~/.codex/config.toml` だが、同ファイルは認証情報を平文で持つためリポジトリ管理下には
+置かない。「リポジトリが状態を持つ」のではなく「冪等なコマンドを `setup.sh` が叩く」形にしている。
+
+| プラグイン | 備考 |
+|---|---|
+| `superpowers@openai-curated` | Claude Code 側は `settings.json.template` の `enabledPlugins` で管理 |
+
+導入済みのものはスキップする。ユーザーが `enabled = false` にした場合も「導入済み」と判定される
+ため、明示的な無効化を `setup.sh` が上書きすることはない。
+
+**発火方式がホストで異なる。** Claude Code 版は SessionStart hook が `using-superpowers` を
+自動注入するが、Codex 版の配布物は hook を同梱していないため、skills がインデックスに載るだけで
+自動発火しない（Codex 自体はプラグイン直下の `hooks.json` で hook を定義でき、他のプラグインは
+実際に使っている。superpowers が使っていないだけ）。この差は `CLAUDE.md` の
+`## superpowers` 節（＝ `~/.codex/AGENTS.md`）でホスト別に併記して埋めている。
+
 **未対応（形式が異なる / 相当機能がない）**
 
 | 資産 | 理由 |
@@ -105,6 +139,29 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 `claude` が**黙って個人アカウントで動く**ため、業務コードが個人契約に流れる無言の事故になる。
 本方式なら `ccp: command not found` で即座に気づける。既存の会社PC設定を一切変更しない点でも
 影響が小さい。
+
+**プラグインも認証 env を読む**: この切り替えは Claude Code 本体だけでなく、
+`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` を読むプラグインの LLM 呼び出しにも及ぶ。
+`ccp` では両者が空文字列になるため、そうしたプラグインは**課金先を失って起動しない**
+（security-guidance で実測確認済み）。裏を返すと素の `claude` では会社ゲートウェイに乗るので、
+プラグインが毎ターン LLM を叩く種類のものかどうかは導入時に確認する。
+
+### 機密でない機能トグルの置き場
+
+`settings.json` の `env` には2種類の値が入る。**寿命が違うので置き場を分ける。**
+
+| 種類 | 置き場 | 適用範囲 |
+|---|---|---|
+| 認証情報（マシン固有・機密） | `env.json.template` | `.env` があるマシンのみ |
+| 機能トグル（全マシン共通・非機密） | **`settings.json.template` の `env`** | 常に |
+
+トグルを `env.json.template` に置いてはいけない。`.env` の無いマシンに適用されない上、
+`settings.personal.json` は `env.json.template` のキーを**全て空文字列で潰す**設計なので、
+`"0"` で無効化するタイプのトグルが `ccp` 側で有効に戻ってしまう。
+
+`setup.sh` は `env` だけ追記マージする。トップレベルの `update` では `env` キーごと
+置換され、base 側のトグルが `.env` のあるマシンでだけ消える（会社PCでのみ設定が効かない、
+最も気づきにくい壊れ方）ため。
 
 **無効化キーの二重管理を避ける**: `settings.personal.json` は `env.json.template` のキー集合から
 `setup.sh` が導出する。テンプレートにキーを足したときの無効化漏れを構造的に防ぐため。
