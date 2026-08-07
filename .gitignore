@@ -1,7 +1,14 @@
 .env
 settings.json
-settings.local.json
-.claude/settings.local.json
+
+# ローカル設定はマシン固有の絶対パスや接続先を含むため追跡しない。
+# ツールが退避目的でリネームする場合 (headroom は settings.local.json を
+# _settings.local.json にして無効化した) に取りこぼさないよう glob で受ける。
+# ファイル単位で持ち込ませない防御はこの層の仕事で、pre-commit の
+# パターン検査 (中身の混入を拾う網) では代替できない。
+*settings.local.json
+.claude/*settings.local.json
+
 .DS_Store
 *.swp
 __pycache__/

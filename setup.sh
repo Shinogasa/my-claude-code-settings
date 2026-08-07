@@ -1,15 +1,18 @@
 #!/bin/bash
-# Claude Code 個人設定のシンボリックリンクセットアップ
+# Claude Code / Codex CLI 個人設定のシンボリックリンクセットアップ
 # 冪等：何度実行しても安全
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_DIR="$HOME/.claude"
+CODEX_DIR="$HOME/.codex"
+AGENTS_DIR="$HOME/.agents"  # Agent Skills オープン標準のユーザースコープ
 BACKUP_DIR="$CLAUDE_DIR/backups/$(date +%Y%m%d_%H%M%S)"
 
 # シンボリックリンク対象の定義
 # 形式: "リポジトリ内パス:リンク先パス"
+# 同一ソースを複数ホストへ配る場合はエントリを分けて列挙する。
 TARGETS=(
   "CLAUDE.md:$CLAUDE_DIR/CLAUDE.md"
   "skills:$CLAUDE_DIR/skills"
@@ -28,9 +31,8 @@ green() { printf "\033[32m%s\033[0m\n" "$1"; }
 yellow() { printf "\033[33m%s\033[0m\n" "$1"; }
 red() { printf "\033[31m%s\033[0m\n" "$1"; }
 
-echo "=== Claude Code 設定セットアップ ==="
+echo "=== Claude Code / Codex 設定セットアップ ==="
 echo "リポジトリ: $SCRIPT_DIR"
-echo "リンク先:   $CLAUDE_DIR"
 echo ""
 
 # ~/.claude/ の存在確認
@@ -38,6 +40,38 @@ if [ ! -d "$CLAUDE_DIR" ]; then
   red "エラー: $CLAUDE_DIR が存在しません。Claude Code を一度起動してください。"
   exit 1
 fi
+
+# === Codex CLI 向けリンクの追加 ===
+# skills / commands / CLAUDE.md は Claude Code と Codex で同じ形式がそのまま通る。
+#   - skills: Agent Skills オープン標準 (name + description の frontmatter)。
+#             Codex はスキャン時にシンボリックリンクを追従する
+#   - commands: Codex の custom prompts は description / argument-hint の frontmatter が同形式
+#   - CLAUDE.md: Codex のグローバル指示は ~/.codex/AGENTS.md
+#   - rules: AGENTS.md から `rules/...` の相対参照で辿れるよう同じ階層に置く
+# 内容の二重管理を避けるため、単一ソースを両ホストへリンクする。
+#
+# agents/ (Codex は config.toml の TOML 定義) と hooks/ (配線先が hooks.json)、
+# output-styles/ ・ statusline.js ・ settings.json (Codex に相当機能なし) は形式が違うため対象外。
+#
+# 導入判定は ~/.codex の有無で行う。未導入マシンに設定ファイルを先回りで生やすと
+# Codex 初回起動時の状態が読めなくなるため、無ければ何も作らない。
+# 判定結果は TARGETS 自体を伸ばして反映する。別配列に分けると、配線されなかった事実が
+# 末尾の「現在のシンボリックリンク状態」サマリーから消えて観測できなくなる。
+echo "=== Codex CLI 検出 ==="
+if [ -d "$CODEX_DIR" ]; then
+  # ~/.agents は Codex が自動生成しないため、ユーザースコープを自前で用意する
+  mkdir -p "$AGENTS_DIR"
+  TARGETS+=(
+    "skills:$AGENTS_DIR/skills"
+    "commands:$CODEX_DIR/prompts"
+    "rules:$CODEX_DIR/rules"
+    "CLAUDE.md:$CODEX_DIR/AGENTS.md"
+  )
+  green "✓ $CODEX_DIR を検出しました。Codex 向けリンクも作成します"
+else
+  yellow "スキップ: $CODEX_DIR がないため Codex 向けリンクは作成しません"
+fi
+echo ""
 
 # git submodule の初期化・更新
 echo "=== git submodule 初期化 ==="
@@ -74,13 +108,18 @@ for target in "${TARGETS[@]}"; do
       rm "$dest"
     fi
   elif [ -e "$dest" ]; then
-    # 実ファイル/ディレクトリが存在する場合はバックアップ
+    # 実ファイル/ディレクトリが存在する場合はバックアップ。
+    # 保存名はソース名ではなくリンク先パスから導出する。同一ソースを複数ホストへ配るため、
+    # ソース名を使うと ~/.claude/CLAUDE.md と ~/.codex/AGENTS.md のバックアップが
+    # どちらも $BACKUP_DIR/CLAUDE.md に落ちて、先に退避した方が黙って上書き消失する。
+    backup_path="$BACKUP_DIR/${dest#"$HOME"/}"
     if [ "$backup_created" = false ]; then
       mkdir -p "$BACKUP_DIR"
       backup_created=true
     fi
-    yellow "  バックアップ: $dest → $BACKUP_DIR/$src_rel"
-    mv "$dest" "$BACKUP_DIR/$src_rel"
+    mkdir -p "$(dirname "$backup_path")"
+    yellow "  バックアップ: $dest → $backup_path"
+    mv "$dest" "$backup_path"
   fi
 
   # シンボリックリンク作成

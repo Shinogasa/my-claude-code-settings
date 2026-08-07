@@ -6,7 +6,21 @@ Claude Code設定の作業時は `/claude-code-best-practice` スキルが自動
 
 ## リポジトリ概要
 
-Claude Codeのグローバル設定をGit管理するリポジトリ。`bash setup.sh` で `~/.claude/` にシンボリックリンクを作成する。
+コーディングエージェントのグローバル設定をGit管理するリポジトリ。`bash setup.sh` でシンボリックリンクを作成する。
+
+- Claude Code: `~/.claude/` 配下（全資産）
+- Codex CLI: `~/.agents/skills` `~/.codex/prompts` `~/.codex/rules` `~/.codex/AGENTS.md`（`~/.codex` がある場合のみ）
+
+skills / commands / rules / CLAUDE.md は単一ソースを両ホストへリンクしている。**内容を書くときは特定ホスト固有のツール名・パスに依存させない**（依存する場合はホスト別に併記する）。
+
+### このファイル内の `rules/...` の解決先
+
+以下で参照する `rules/*.md` は**作業中のリポジトリではなく、エージェントの設定ディレクトリ配下**にある。
+
+| ホスト | 実体 | 自動読み込み |
+|---|---|---|
+| Claude Code | `~/.claude/rules/` | される（本文がコンテキストに展開される） |
+| Codex CLI | `~/.codex/rules/` | **されない。参照が必要になった時点で自分で読むこと** |
 
 ## 言語
 
@@ -29,7 +43,7 @@ Claude Codeのグローバル設定をGit管理するリポジトリ。`bash set
 
 - デフォルト: **ON**（常に学習機会を探す）
 - **1タスクにつき最低1回、★ Predict（予測フェーズ）を必ず発火させる**（上限2回）
-- 予測は `AskUserQuestion` ツールで求める（散文で「停止する」と書かない）
+- 予測は応答を待つ対話ツールで求める（Claude Code では `AskUserQuestion`）。散文で「停止する」と書かない
 - 「全部やって」「任せる」「急ぎ」「予測なしで」→ **OFF**（そのタスク中のみ）
 - 1タスク完了後は自動的にONに戻る
 - 詳細仕様は `rules/learning-mode.md` を参照
