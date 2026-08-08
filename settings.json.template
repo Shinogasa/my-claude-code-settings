@@ -42,6 +42,16 @@
             "command": "rtk hook claude"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/warn-branch-behind-main.sh",
+            "timeout": 10000
+          }
+        ]
       }
     ]
   }

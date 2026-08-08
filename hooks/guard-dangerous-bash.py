@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
 """PreToolUse(Bash)フック: 確定的に危険なコマンドをブロックする。
 
-対象は2種類。
+対象は3種類。
 
   1. 状況に依存せず常にNG (rm -rf / , git push --force , git reset --hard)
-  2. 実行環境を見れば確定的に有害と判定できるもの (git の --no-verify)
+  2. 実行環境を見れば確定的に有害と判定できるもの (git の --no-verify, 保護ブランチ)
+  3. 操作自体は正当だが、エージェントが自律的に行ってよいものではないもの
+     (terraform state の書き換え)
+
+3 は 1 と意味が違う。「やってはいけない」ではなく「人間が判断して実行すべき」。
+禁止ではなく実行主体の指定なので、メッセージでは端末での実行を案内する。
+
+3 の判定だけ allowlist にしている (読み取り系を通し、残りを止める)。terraform が
+state サブコマンドを追加したとき、denylist では新しい書き換え操作が黙って通るが、
+allowlist なら新しい読み取り操作が誤ってブロックされる。前者は気づけないが
+後者は使った瞬間に分かるので、壊れ方として後者を選んだ。
 
 2 を後から追加した経緯: 本リポジトリは PUBLIC で、pre-commit フックが公開履歴への
 機密混入を止めている (README「禁止パターン検査」参照)。AI が --no-verify で自動的に
@@ -15,6 +25,17 @@
 このフックはグローバル (~/.claude/hooks/) で全プロジェクトに効くので、無条件に
 ブロックすると無関係なリポジトリで摩擦を生み、結局フックごと無効化されて逆効果になる。
 「常にNG」ではなく「環境を見れば確定」なので、判定には cwd を使う。
+
+保護ブランチ (main / master) への直接コミットも 2 に含める。CLAUDE.md に
+「作業前にブランチを切る」と書いてあったが、散文の指示は守らなくても何も起きないため
+強制力が無かった。コミット時点で止めれば作業内容は未コミットのまま残るので、
+`git switch -c` するだけで復帰できる (作業のやり直しは発生しない)。
+初回コミット (unborn branch) と detached HEAD は、切るべき作業ブランチが
+存在しない・既に名前付きブランチ上にないため対象外。
+
+既知の限界: 判定には PreToolUse が渡す cwd と `git -C` の値を使う。
+`cd other-repo && git commit` のようにコマンド内でディレクトリを移動された場合、
+移動先を追跡しないため検出できない。--no-verify 判定も同じ制約を持つ。
 
 コマンド文字列全体への正規表現マッチではなく、シェルの引用規則を
 尊重してトークン化した上で、各サブコマンドの先頭トークン(コマンド名)
@@ -41,6 +62,27 @@ GIT_GLOBAL_OPTS_WITH_VALUE = {
 }
 # 存在すれば --no-verify のスキップ対象となる検証フック
 VERIFICATION_HOOKS = ("pre-commit", "commit-msg", "prepare-commit-msg", "pre-push")
+# 直接コミットを止めるブランチ
+PROTECTED_BRANCHES = {"main", "master"}
+# state を読むだけのサブコマンド。これ以外の state 操作はエージェントに実行させない。
+# denylist ではなく allowlist にしているのは、terraform が state サブコマンドを
+# 追加したときの壊れ方を選ぶため。denylist だと新しい書き換え操作が黙って通るが、
+# allowlist なら新しい読み取り操作が誤ってブロックされる (気づける失敗になる)。
+TERRAFORM_STATE_READONLY = {"list", "show", "pull"}
+# サブコマンドごとの影響範囲。allowlist のため未知のサブコマンドも来る。
+TERRAFORM_STATE_IMPACT = {
+    "rm": "指定したリソースを state から外します。terraform の管理対象から消えるため、"
+          "次の apply で重複作成されるか、放置されて課金だけが残ります。",
+    "push": "state を丸ごと差し替えます。差分ではなく全体の置き換えなので、"
+            "取り違えると管理下の全リソースが一度に管理外になります。",
+    "mv": "state 上のアドレスを付け替えます。取り違えると、"
+          "別のリソースを指したまま apply が走ります。",
+    "replace-provider": "state 内の provider 参照を一括で書き換えます。",
+}
+TERRAFORM_STATE_DEFAULT_IMPACT = (
+    "state を書き換える可能性があります。"
+    "このガードは読み取り系 (list / show / pull) 以外を既定で止めます。"
+)
 GIT_TIMEOUT_SEC = 3
 
 RM_FLAG_RE = re.compile(r"^-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*$|^-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*$")
@@ -102,6 +144,26 @@ def is_dangerous(tokens: list) -> bool:
     return False
 
 
+def terraform_state_write(tokens: list) -> str:
+    """state を書き換える terraform 操作ならサブコマンド名を返す。該当しなければ空文字列。
+
+    terraform のグローバルオプション (-chdir=DIR 等) はサブコマンドの前に置かれ、
+    サブコマンドの引数のフラグ (-backup=PATH 等) は後ろに置かれる。
+    どちらもハイフン始まりなので、まとめて除いた残りを語の並びとして見る。
+
+    サブコマンドが無い `terraform state` は usage を出すだけなので対象外。
+    """
+    if not tokens or tokens[0] != "terraform":
+        return ""
+
+    words = [t for t in tokens[1:] if not t.startswith("-")]
+    if len(words) < 2 or words[0] != "state":
+        return ""
+
+    subcommand = words[1]
+    return "" if subcommand in TERRAFORM_STATE_READONLY else subcommand
+
+
 def extract_subcommand(tokens: list) -> tuple:
     """git のグローバルオプションを読み飛ばしてサブコマンドと残り引数を返す。
 
@@ -138,6 +200,39 @@ def is_verification_bypass(tokens: list) -> bool:
     return subcommand == "commit" and "-n" in args
 
 
+def git_dash_c_path(tokens: list) -> str:
+    """`git -C <path>` の path を返す。指定が無ければ空文字列。
+
+    サブコマンドより後ろの -C は git のグローバルオプションではないため、
+    サブコマンドに到達した時点で探索を打ち切る。
+    """
+    i = 1
+    while i < len(tokens):
+        token = tokens[i]
+        if token == "-C" and i + 1 < len(tokens):
+            return tokens[i + 1]
+        if token in GIT_GLOBAL_OPTS_WITH_VALUE:
+            i += 2
+            continue
+        if token.startswith("-"):
+            i += 1
+            continue
+        break
+    return ""
+
+
+def commit_target_dir(tokens: list, cwd: str) -> str:
+    """git commit ならブランチ判定に使うディレクトリを返す。commit でなければ空文字列。"""
+    if not tokens or tokens[0] != "git":
+        return ""
+
+    subcommand, _ = extract_subcommand(tokens)
+    if subcommand != "commit":
+        return ""
+
+    return git_dash_c_path(tokens) or cwd
+
+
 def run_git(cwd: str, *args: str) -> str:
     """git コマンドの標準出力を返す。失敗時は空文字列。"""
     try:
@@ -148,6 +243,21 @@ def run_git(cwd: str, *args: str) -> str:
     except (OSError, subprocess.SubprocessError):
         return ""
     return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def protected_branch(cwd: str) -> str:
+    """cwd が保護ブランチ上にあればその名前を返す。対象外なら空文字列。
+
+    git リポジトリでない場合と detached HEAD の場合は symbolic-ref が失敗するため
+    自然に空文字列になる。まだ1つもコミットが無いリポジトリは、そもそも作業ブランチを
+    切りようがないので対象から外す (初回コミットを止めても行き場が無い)。
+    """
+    branch = run_git(cwd, "symbolic-ref", "--short", "HEAD")
+    if branch not in PROTECTED_BRANCHES:
+        return ""
+    if not run_git(cwd, "rev-parse", "--verify", "HEAD"):
+        return ""
+    return branch
 
 
 def verification_hooks_active(cwd: str) -> bool:
@@ -189,20 +299,39 @@ def main() -> int:
         return 0
 
     executable_part = strip_heredocs(command)
+    cwd = payload.get("cwd") or os.getcwd()
 
     has_bypass = False
+    commit_dirs = []
     for line in executable_part.split("\n"):
         tokens = tokenize_line(line)
         for simple_command in split_simple_commands(tokens):
             if is_dangerous(simple_command):
                 print(f"ブロック: 確定的に危険なコマンドを検出しました: {command}", file=sys.stderr)
                 return 2
+            state_write = terraform_state_write(simple_command)
+            if state_write:
+                impact = TERRAFORM_STATE_IMPACT.get(
+                    state_write, TERRAFORM_STATE_DEFAULT_IMPACT)
+                print(f"ブロック: terraform state {state_write} は state を書き換えます。",
+                      file=sys.stderr)
+                print(f"  {impact}", file=sys.stderr)
+                print("  remote backend では自動バックアップが作られないため、backend 側に",
+                      file=sys.stderr)
+                print("  versioning が無い場合は復旧できません。", file=sys.stderr)
+                print("  操作自体は正当ですが、影響範囲の判断が要るため AI では実行しません。",
+                      file=sys.stderr)
+                print("  必要な場合は、あなた自身が端末で実行してください。", file=sys.stderr)
+                return 2
             if is_verification_bypass(simple_command):
                 has_bypass = True
+            target = commit_target_dir(simple_command, cwd)
+            if target:
+                commit_dirs.append(target)
 
     # git config の参照は毎回の Bash 呼び出しに載せたくないため、
     # 該当コマンドが実際にあったときだけリポジトリを調べる。
-    if has_bypass and verification_hooks_active(payload.get("cwd") or os.getcwd()):
+    if has_bypass and verification_hooks_active(cwd):
         print("ブロック: git の検証フックをスキップしようとしています (--no-verify)。",
               file=sys.stderr)
         print("  このリポジトリには検証フックが設定されています。", file=sys.stderr)
@@ -212,6 +341,18 @@ def main() -> int:
         print("  意図的に回避する必要がある場合は、あなた自身が端末で実行してください。",
               file=sys.stderr)
         return 2
+
+    for target in commit_dirs:
+        branch = protected_branch(target)
+        if branch:
+            print(f"ブロック: 保護ブランチ ({branch}) への直接コミットです。", file=sys.stderr)
+            print("  作業ブランチを切ってからコミットしてください:", file=sys.stderr)
+            print("      git switch -c <branch-name>", file=sys.stderr)
+            print("  未コミットの変更はブランチ作成後もそのまま引き継がれるため、", file=sys.stderr)
+            print("  作業をやり直す必要はありません。", file=sys.stderr)
+            print(f"  {branch} へ直接コミットする必要がある場合は、"
+                  "あなた自身が端末で実行してください。", file=sys.stderr)
+            return 2
 
     return 0
 
