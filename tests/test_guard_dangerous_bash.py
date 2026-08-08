@@ -34,10 +34,24 @@ def run_guard(command, cwd=None):
     return result.returncode
 
 
-def make_repo(tmpdir, with_hooks):
-    """検証フックの有無だけが異なる git リポジトリを作る。"""
+def make_repo(tmpdir, with_hooks, branch="work", with_commit=True):
+    """git リポジトリを作る。
+
+    branch の既定を main/master 以外にしているのは意図的。既存の --no-verify 判定の
+    テストは保護ブランチ判定と無関係なので、init.defaultBranch の設定値によって
+    結果が変わらないよう固定する。
+
+    with_commit=False は「まだ1つもコミットが無いリポジトリ」(unborn branch) を作る。
+    """
     repo = Path(tmpdir)
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", branch, str(repo)], check=True)
+    if with_commit:
+        subprocess.run(
+            ["git", "-C", str(repo),
+             "-c", "user.email=t@example.com", "-c", "user.name=t",
+             "commit", "-q", "--allow-empty", "-m", "init"],
+            check=True,
+        )
     if with_hooks:
         hook = repo / ".git" / "hooks" / "pre-commit"
         hook.write_text("#!/bin/sh\nexit 0\n")
@@ -135,6 +149,78 @@ class TestVerificationBypass(unittest.TestCase):
     def test_normal_commit_is_allowed(self):
         self.assertEqual(
             run_guard('git commit -m "normal"', cwd=self.repo_with_hooks), ALLOW)
+
+
+class TestProtectedBranchCommit(unittest.TestCase):
+    """保護ブランチ (main / master) への直接コミットの判定。
+
+    「作業前にブランチを切る」は CLAUDE.md の散文ルールだったが、守らなくても
+    何も起きないため強制力が無かった。コミット時点で機構的に止める。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmps = [tempfile.TemporaryDirectory() for _ in range(4)]
+        cls.on_main = make_repo(cls._tmps[0].name, with_hooks=False, branch="main")
+        cls.on_master = make_repo(cls._tmps[1].name, with_hooks=False, branch="master")
+        cls.on_feature = make_repo(cls._tmps[2].name, with_hooks=False, branch="feat/x")
+        cls.unborn_main = make_repo(
+            cls._tmps[3].name, with_hooks=False, branch="main", with_commit=False)
+
+    @classmethod
+    def tearDownClass(cls):
+        for tmp in cls._tmps:
+            tmp.cleanup()
+
+    def test_commit_on_main_is_blocked(self):
+        self.assertEqual(run_guard('git commit -m "x"', cwd=self.on_main), BLOCK)
+
+    def test_commit_on_master_is_blocked(self):
+        self.assertEqual(run_guard('git commit -m "x"', cwd=self.on_master), BLOCK)
+
+    def test_amend_on_main_is_blocked(self):
+        self.assertEqual(run_guard("git commit --amend --no-edit", cwd=self.on_main), BLOCK)
+
+    def test_heredoc_commit_on_main_is_blocked(self):
+        # ヒアドキュメント本体は取り除かれるが、実行されるのは git commit なので止める
+        command = "git commit -F - <<'EOF'\nfeat: x\nEOF"
+        self.assertEqual(run_guard(command, cwd=self.on_main), BLOCK)
+
+    def test_commit_chained_after_git_add_is_blocked(self):
+        # && で連結されていても各サブコマンドを見るので検出できる
+        self.assertEqual(
+            run_guard('git add -A && git commit -m "x"', cwd=self.on_main), BLOCK)
+
+    def test_commit_on_feature_branch_is_allowed(self):
+        self.assertEqual(run_guard('git commit -m "x"', cwd=self.on_feature), ALLOW)
+
+    def test_initial_commit_on_main_is_allowed(self):
+        # まだ1つもコミットが無いリポジトリの初回コミットはブランチを切りようがない
+        self.assertEqual(run_guard('git commit -m "init"', cwd=self.unborn_main), ALLOW)
+
+    def test_commit_outside_git_repo_is_allowed(self):
+        with tempfile.TemporaryDirectory() as plain:
+            self.assertEqual(run_guard('git commit -m "x"', cwd=plain), ALLOW)
+
+    def test_commit_on_detached_head_is_allowed(self):
+        # detached HEAD は名前付きブランチ上に無いため保護対象ではない
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(tmp, with_hooks=False, branch="main")
+            subprocess.run(["git", "-C", str(repo), "checkout", "-q", "--detach"], check=True)
+            self.assertEqual(run_guard('git commit -m "x"', cwd=repo), ALLOW)
+
+    def test_dash_c_target_repo_is_used_for_judgement(self):
+        # `git -C <main のリポジトリ>` は cwd ではなくそちらのブランチで判定する
+        with tempfile.TemporaryDirectory() as plain:
+            self.assertEqual(
+                run_guard(f'git -C {self.on_main} commit -m "x"', cwd=plain), BLOCK)
+
+    def test_push_to_main_is_not_blocked(self):
+        # 対象はコミットのみ。push は既存の --force 判定の管轄
+        self.assertEqual(run_guard("git push origin main", cwd=self.on_main), ALLOW)
+
+    def test_commit_word_in_other_command_is_allowed(self):
+        self.assertEqual(run_guard('echo "git commit -m x"', cwd=self.on_main), ALLOW)
 
 
 if __name__ == "__main__":
