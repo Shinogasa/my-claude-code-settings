@@ -85,6 +85,54 @@ class TestDangerousCommands(unittest.TestCase):
         self.assertEqual(run_guard("ls -la"), ALLOW)
 
 
+class TestTerraformStateRm(unittest.TestCase):
+    """terraform state rm の判定。
+
+    state から実在するリソースを外す操作。remote backend では自動バックアップが
+    作られないため、backend の versioning が無ければ復旧できない。
+    ブランチの遅れとは無関係に成立する事故なので、状況に依存せず止める。
+    """
+
+    def test_state_rm_is_blocked(self):
+        self.assertEqual(run_guard("terraform state rm aws_instance.web"), BLOCK)
+
+    def test_state_rm_with_chdir_is_blocked(self):
+        # terraform のグローバルオプションはサブコマンドの前に置かれる
+        self.assertEqual(
+            run_guard("terraform -chdir=infra state rm module.db"), BLOCK)
+
+    def test_state_rm_after_cd_is_blocked(self):
+        self.assertEqual(
+            run_guard("cd infra && terraform state rm aws_s3_bucket.logs"), BLOCK)
+
+    def test_state_rm_with_backup_flag_is_blocked(self):
+        # -backup を付けても remote backend では意味がないため素通ししない
+        self.assertEqual(
+            run_guard("terraform state rm -backup=b.json aws_instance.web"), BLOCK)
+
+    def test_state_list_is_allowed(self):
+        self.assertEqual(run_guard("terraform state list"), ALLOW)
+
+    def test_state_show_is_allowed(self):
+        self.assertEqual(run_guard("terraform state show aws_instance.web"), ALLOW)
+
+    def test_state_mv_is_allowed(self):
+        # 現在の境界を固定する。state mv も state を書き換えるが対象外
+        self.assertEqual(run_guard("terraform state mv a.b a.c"), ALLOW)
+
+    def test_apply_is_allowed(self):
+        # ブランチの遅れを見る判定は warn-branch-behind-main.sh の管轄
+        self.assertEqual(run_guard("terraform apply -auto-approve"), ALLOW)
+
+    def test_quoted_state_rm_is_allowed(self):
+        self.assertEqual(
+            run_guard('echo "terraform state rm は危険"'), ALLOW)
+
+    def test_state_rm_inside_heredoc_is_allowed(self):
+        command = "cat <<'EOF'\nterraform state rm aws_instance.web\nEOF"
+        self.assertEqual(run_guard(command), ALLOW)
+
+
 class TestVerificationBypass(unittest.TestCase):
     """--no-verify によるフック検証スキップの判定。
 

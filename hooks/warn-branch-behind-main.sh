@@ -16,7 +16,10 @@
 #   apply / destroy はブロックする (deny)。それ以外は警告を出すだけで実行を妨げない。
 #
 #   強度を apply / destroy に限っているのは、被害が不可逆な操作に合わせたため。
-#   ただし state / import も state を書き換えるので、この境界は再検討の余地がある。
+#
+#   state rm はこのフックの管轄外。事故の成立にブランチの遅れが要らないため、
+#   ブランチの状態を見ないガード (guard-dangerous-bash.py) 側で常時ブロックする。
+#   ここで扱うと「遅れていないときの state rm」が素通しになる。
 #
 # 制約:
 #   timeout(1) が無い環境があるため、fetch は SSH の ConnectTimeout で縛る。

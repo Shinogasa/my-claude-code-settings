@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """PreToolUse(Bash)フック: 確定的に危険なコマンドをブロックする。
 
-対象は2種類。
+対象は3種類。
 
   1. 状況に依存せず常にNG (rm -rf / , git push --force , git reset --hard)
-  2. 実行環境を見れば確定的に有害と判定できるもの (git の --no-verify)
+  2. 実行環境を見れば確定的に有害と判定できるもの (git の --no-verify, 保護ブランチ)
+  3. 操作自体は正当だが、エージェントが自律的に行ってよいものではないもの
+     (terraform state rm)
+
+3 は 1 と意味が違う。「やってはいけない」ではなく「人間が判断して実行すべき」。
+禁止ではなく実行主体の指定なので、メッセージでは端末での実行を案内する。
 
 2 を後から追加した経緯: 本リポジトリは PUBLIC で、pre-commit フックが公開履歴への
 機密混入を止めている (README「禁止パターン検査」参照)。AI が --no-verify で自動的に
@@ -54,6 +59,8 @@ GIT_GLOBAL_OPTS_WITH_VALUE = {
 VERIFICATION_HOOKS = ("pre-commit", "commit-msg", "prepare-commit-msg", "pre-push")
 # 直接コミットを止めるブランチ
 PROTECTED_BRANCHES = {"main", "master"}
+# エージェントに実行させない terraform のサブコマンド (先頭2トークンで一致を見る)
+TERRAFORM_HUMAN_ONLY = ("state", "rm")
 GIT_TIMEOUT_SEC = 3
 
 RM_FLAG_RE = re.compile(r"^-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*$|^-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*$")
@@ -113,6 +120,20 @@ def is_dangerous(tokens: list) -> bool:
             return True
 
     return False
+
+
+def is_terraform_human_only(tokens: list) -> bool:
+    """エージェントに実行させない terraform 操作か判定する。
+
+    terraform のグローバルオプション (-chdir=DIR 等) はサブコマンドの前に置かれ、
+    サブコマンドの引数のフラグ (-backup=PATH 等) は後ろに置かれる。
+    どちらもハイフン始まりなので、まとめて除いた残りの先頭2語で判定する。
+    """
+    if not tokens or tokens[0] != "terraform":
+        return False
+
+    words = [t for t in tokens[1:] if not t.startswith("-")]
+    return tuple(words[:2]) == TERRAFORM_HUMAN_ONLY
 
 
 def extract_subcommand(tokens: list) -> tuple:
@@ -259,6 +280,19 @@ def main() -> int:
         for simple_command in split_simple_commands(tokens):
             if is_dangerous(simple_command):
                 print(f"ブロック: 確定的に危険なコマンドを検出しました: {command}", file=sys.stderr)
+                return 2
+            if is_terraform_human_only(simple_command):
+                print("ブロック: terraform state rm は state から実在するリソースを外します。",
+                      file=sys.stderr)
+                print("  外れたリソースは terraform の管理対象から消えるため、次の apply で",
+                      file=sys.stderr)
+                print("  重複作成されるか、放置されて課金だけが残ります。", file=sys.stderr)
+                print("  remote backend では自動バックアップが作られないため、backend 側に",
+                      file=sys.stderr)
+                print("  versioning が無い場合は復旧できません。", file=sys.stderr)
+                print("  操作自体は正当ですが、影響範囲の判断が要るため AI では実行しません。",
+                      file=sys.stderr)
+                print("  必要な場合は、あなた自身が端末で実行してください。", file=sys.stderr)
                 return 2
             if is_verification_bypass(simple_command):
                 has_bypass = True
