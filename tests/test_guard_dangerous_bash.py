@@ -20,18 +20,22 @@ ALLOW = 0
 BLOCK = 2
 
 
-def run_guard(command, cwd=None):
-    """フックを実行して終了コードを返す。"""
+def run_guard_output(command, cwd=None):
+    """フックを実行して CompletedProcess を返す。メッセージ内容を見たいとき用。"""
     payload = {"tool_name": "Bash", "tool_input": {"command": command}}
     if cwd is not None:
         payload["cwd"] = str(cwd)
-    result = subprocess.run(
+    return subprocess.run(
         [sys.executable, str(GUARD)],
         input=json.dumps(payload),
         capture_output=True,
         text=True,
     )
-    return result.returncode
+
+
+def run_guard(command, cwd=None):
+    """フックを実行して終了コードを返す。"""
+    return run_guard_output(command, cwd).returncode
 
 
 def make_repo(tmpdir, with_hooks, branch="work", with_commit=True):
@@ -85,23 +89,42 @@ class TestDangerousCommands(unittest.TestCase):
         self.assertEqual(run_guard("ls -la"), ALLOW)
 
 
-class TestTerraformStateRm(unittest.TestCase):
-    """terraform state rm の判定。
+class TestTerraformStateWrite(unittest.TestCase):
+    """terraform state の書き換え操作の判定。
 
-    state から実在するリソースを外す操作。remote backend では自動バックアップが
-    作られないため、backend の versioning が無ければ復旧できない。
-    ブランチの遅れとは無関係に成立する事故なので、状況に依存せず止める。
+    state を書き換える操作は、実在するリソースと設定の対応を壊す。remote backend
+    では自動バックアップが作られないため、backend の versioning が無ければ
+    復旧できない。ブランチの遅れとは無関係に成立する事故なので、状況に依存せず止める。
+
+    判定は allowlist（読み取り系だけ通す）。denylist にすると terraform が
+    state サブコマンドを追加したとき、新しい書き換え操作が黙って通る。
     """
 
     def test_state_rm_is_blocked(self):
         self.assertEqual(run_guard("terraform state rm aws_instance.web"), BLOCK)
 
-    def test_state_rm_with_chdir_is_blocked(self):
+    def test_state_push_is_blocked(self):
+        # state 全体の差し替え。rm より影響範囲が大きい
+        self.assertEqual(run_guard("terraform state push new.tfstate"), BLOCK)
+
+    def test_state_mv_is_blocked(self):
+        self.assertEqual(run_guard("terraform state mv a.b a.c"), BLOCK)
+
+    def test_state_replace_provider_is_blocked(self):
+        self.assertEqual(
+            run_guard("terraform state replace-provider hashicorp/aws registry/aws"), BLOCK)
+
+    def test_unknown_state_subcommand_is_blocked(self):
+        # allowlist にしている理由そのもの。将来 terraform が追加する
+        # 書き換え操作も、名前を知らないまま守る側に入る
+        self.assertEqual(run_guard("terraform state frobnicate x"), BLOCK)
+
+    def test_state_write_with_chdir_is_blocked(self):
         # terraform のグローバルオプションはサブコマンドの前に置かれる
         self.assertEqual(
             run_guard("terraform -chdir=infra state rm module.db"), BLOCK)
 
-    def test_state_rm_after_cd_is_blocked(self):
+    def test_state_write_after_cd_is_blocked(self):
         self.assertEqual(
             run_guard("cd infra && terraform state rm aws_s3_bucket.logs"), BLOCK)
 
@@ -110,15 +133,23 @@ class TestTerraformStateRm(unittest.TestCase):
         self.assertEqual(
             run_guard("terraform state rm -backup=b.json aws_instance.web"), BLOCK)
 
+    def test_push_message_names_the_whole_state(self):
+        # サブコマンドごとに影響範囲が違うため、メッセージも分ける
+        result = run_guard_output("terraform state push new.tfstate")
+        self.assertIn("丸ごと", result.stderr)
+
     def test_state_list_is_allowed(self):
         self.assertEqual(run_guard("terraform state list"), ALLOW)
 
     def test_state_show_is_allowed(self):
         self.assertEqual(run_guard("terraform state show aws_instance.web"), ALLOW)
 
-    def test_state_mv_is_allowed(self):
-        # 現在の境界を固定する。state mv も state を書き換えるが対象外
-        self.assertEqual(run_guard("terraform state mv a.b a.c"), ALLOW)
+    def test_state_pull_is_allowed(self):
+        self.assertEqual(run_guard("terraform state pull"), ALLOW)
+
+    def test_bare_state_is_allowed(self):
+        # サブコマンド無しは usage を出すだけで state を変えない
+        self.assertEqual(run_guard("terraform state"), ALLOW)
 
     def test_apply_is_allowed(self):
         # ブランチの遅れを見る判定は warn-branch-behind-main.sh の管轄

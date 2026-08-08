@@ -6,10 +6,15 @@
   1. 状況に依存せず常にNG (rm -rf / , git push --force , git reset --hard)
   2. 実行環境を見れば確定的に有害と判定できるもの (git の --no-verify, 保護ブランチ)
   3. 操作自体は正当だが、エージェントが自律的に行ってよいものではないもの
-     (terraform state rm)
+     (terraform state の書き換え)
 
 3 は 1 と意味が違う。「やってはいけない」ではなく「人間が判断して実行すべき」。
 禁止ではなく実行主体の指定なので、メッセージでは端末での実行を案内する。
+
+3 の判定だけ allowlist にしている (読み取り系を通し、残りを止める)。terraform が
+state サブコマンドを追加したとき、denylist では新しい書き換え操作が黙って通るが、
+allowlist なら新しい読み取り操作が誤ってブロックされる。前者は気づけないが
+後者は使った瞬間に分かるので、壊れ方として後者を選んだ。
 
 2 を後から追加した経緯: 本リポジトリは PUBLIC で、pre-commit フックが公開履歴への
 機密混入を止めている (README「禁止パターン検査」参照)。AI が --no-verify で自動的に
@@ -59,8 +64,25 @@ GIT_GLOBAL_OPTS_WITH_VALUE = {
 VERIFICATION_HOOKS = ("pre-commit", "commit-msg", "prepare-commit-msg", "pre-push")
 # 直接コミットを止めるブランチ
 PROTECTED_BRANCHES = {"main", "master"}
-# エージェントに実行させない terraform のサブコマンド (先頭2トークンで一致を見る)
-TERRAFORM_HUMAN_ONLY = ("state", "rm")
+# state を読むだけのサブコマンド。これ以外の state 操作はエージェントに実行させない。
+# denylist ではなく allowlist にしているのは、terraform が state サブコマンドを
+# 追加したときの壊れ方を選ぶため。denylist だと新しい書き換え操作が黙って通るが、
+# allowlist なら新しい読み取り操作が誤ってブロックされる (気づける失敗になる)。
+TERRAFORM_STATE_READONLY = {"list", "show", "pull"}
+# サブコマンドごとの影響範囲。allowlist のため未知のサブコマンドも来る。
+TERRAFORM_STATE_IMPACT = {
+    "rm": "指定したリソースを state から外します。terraform の管理対象から消えるため、"
+          "次の apply で重複作成されるか、放置されて課金だけが残ります。",
+    "push": "state を丸ごと差し替えます。差分ではなく全体の置き換えなので、"
+            "取り違えると管理下の全リソースが一度に管理外になります。",
+    "mv": "state 上のアドレスを付け替えます。取り違えると、"
+          "別のリソースを指したまま apply が走ります。",
+    "replace-provider": "state 内の provider 参照を一括で書き換えます。",
+}
+TERRAFORM_STATE_DEFAULT_IMPACT = (
+    "state を書き換える可能性があります。"
+    "このガードは読み取り系 (list / show / pull) 以外を既定で止めます。"
+)
 GIT_TIMEOUT_SEC = 3
 
 RM_FLAG_RE = re.compile(r"^-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*$|^-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*$")
@@ -122,18 +144,24 @@ def is_dangerous(tokens: list) -> bool:
     return False
 
 
-def is_terraform_human_only(tokens: list) -> bool:
-    """エージェントに実行させない terraform 操作か判定する。
+def terraform_state_write(tokens: list) -> str:
+    """state を書き換える terraform 操作ならサブコマンド名を返す。該当しなければ空文字列。
 
     terraform のグローバルオプション (-chdir=DIR 等) はサブコマンドの前に置かれ、
     サブコマンドの引数のフラグ (-backup=PATH 等) は後ろに置かれる。
-    どちらもハイフン始まりなので、まとめて除いた残りの先頭2語で判定する。
+    どちらもハイフン始まりなので、まとめて除いた残りを語の並びとして見る。
+
+    サブコマンドが無い `terraform state` は usage を出すだけなので対象外。
     """
     if not tokens or tokens[0] != "terraform":
-        return False
+        return ""
 
     words = [t for t in tokens[1:] if not t.startswith("-")]
-    return tuple(words[:2]) == TERRAFORM_HUMAN_ONLY
+    if len(words) < 2 or words[0] != "state":
+        return ""
+
+    subcommand = words[1]
+    return "" if subcommand in TERRAFORM_STATE_READONLY else subcommand
 
 
 def extract_subcommand(tokens: list) -> tuple:
@@ -281,12 +309,13 @@ def main() -> int:
             if is_dangerous(simple_command):
                 print(f"ブロック: 確定的に危険なコマンドを検出しました: {command}", file=sys.stderr)
                 return 2
-            if is_terraform_human_only(simple_command):
-                print("ブロック: terraform state rm は state から実在するリソースを外します。",
+            state_write = terraform_state_write(simple_command)
+            if state_write:
+                impact = TERRAFORM_STATE_IMPACT.get(
+                    state_write, TERRAFORM_STATE_DEFAULT_IMPACT)
+                print(f"ブロック: terraform state {state_write} は state を書き換えます。",
                       file=sys.stderr)
-                print("  外れたリソースは terraform の管理対象から消えるため、次の apply で",
-                      file=sys.stderr)
-                print("  重複作成されるか、放置されて課金だけが残ります。", file=sys.stderr)
+                print(f"  {impact}", file=sys.stderr)
                 print("  remote backend では自動バックアップが作られないため、backend 側に",
                       file=sys.stderr)
                 print("  versioning が無い場合は復旧できません。", file=sys.stderr)
