@@ -13,8 +13,10 @@
 #
 # 挙動:
 #   terraform の plan/apply/destroy/import/refresh/state のみ対象。
-#   apply / destroy は許可プロンプトを出して一旦止める。
-#   それ以外は警告を出すだけで実行を妨げない。
+#   apply / destroy はブロックする (deny)。それ以外は警告を出すだけで実行を妨げない。
+#
+#   強度を apply / destroy に限っているのは、被害が不可逆な操作に合わせたため。
+#   ただし state / import も state を書き換えるので、この境界は再検討の余地がある。
 #
 # 制約:
 #   timeout(1) が無い環境があるため、fetch は SSH の ConnectTimeout で縛る。
@@ -68,13 +70,24 @@ ${default_ref} に入っている変更がこのブランチには無いため�
 
 確認: git merge origin/${remote_branch}  で取り込んでから plan を取り直してください。"
 
-# apply / destroy は取り返しがつかないため許可を求める。
-# それ以外（plan 等）は読み取りのみなので警告に留める。
+# apply / destroy は取り返しがつかないためブロックする。
+#
+# ask ではなく deny にしている理由: ask のプロンプトが出るのは「plan を見て
+# 問題ないと判断した後」であり、判断済みの流れの中で確認を求めても覆りにくい。
+# 偽陽性の destroy を見抜けなかった人に、同じ情報でもう一度尋ねることになる。
+# deny なら判断ではなく状態の変更 (main を取り込んで plan を取り直す) を要求できる。
+#
+# それ以外（plan 等）は読み取りのみなので警告に留める。plan はむしろ
+# 偽陽性に気づくための経路なので、止めると発見が遅れる。
 if printf '%s' "$command" | grep -Eq "${tf_prefix}(apply|destroy)\b"; then
-  jq -n --arg reason "$detail" '{
+  jq -n --arg reason "${detail}
+
+このブランチのまま apply することはできません。次のいずれかで解消してください:
+  1. git merge origin/${remote_branch} で取り込み、plan を取り直す
+  2. 遅れを承知の上で実行する場合は、あなた自身が端末で実行する" '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      permissionDecision: "ask",
+      permissionDecision: "deny",
       permissionDecisionReason: $reason
     }
   }'
