@@ -6,7 +6,7 @@
   1. 状況に依存せず常にNG (rm -rf / , git push --force , git reset --hard)
   2. 実行環境を見れば確定的に有害と判定できるもの (git の --no-verify, 保護ブランチ)
   3. 操作自体は正当だが、エージェントが自律的に行ってよいものではないもの
-     (terraform state の書き換え)
+     (terraform state の書き換え、state の中身を平文で出す操作)
 
 3 は 1 と意味が違う。「やってはいけない」ではなく「人間が判断して実行すべき」。
 禁止ではなく実行主体の指定なので、メッセージでは端末での実行を案内する。
@@ -83,6 +83,20 @@ TERRAFORM_STATE_DEFAULT_IMPACT = (
     "state を書き換える可能性があります。"
     "このガードは読み取り系 (list / show / pull) 以外を既定で止めます。"
 )
+
+# state の中身を平文で出力する state サブコマンド。state を壊さないため
+# 書き換え判定では拾えないが、出力はファイル・ターミナル・会話ログに
+# 複製として残るため、実行主体は同じく人間にする。
+TERRAFORM_STATE_EXPOSING = {"pull"}
+# サブコマンドごとの「付いていても機微な値を出さない」フラグ。
+# -json / -raw を止める denylist にすると、terraform が新しい出力形式を
+# 追加したとき黙って通る。allowlist なら新しいフラグは止まる側に入る。
+TERRAFORM_SAFE_FLAGS = {
+    "output": {"no-color", "state"},
+    "show": {"no-color"},
+}
+# terraform 自体のグローバルオプション。サブコマンドのフラグと混同しない。
+TERRAFORM_GLOBAL_FLAGS = {"chdir", "help", "version"}
 GIT_TIMEOUT_SEC = 3
 
 RM_FLAG_RE = re.compile(r"^-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*$|^-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*$")
@@ -162,6 +176,41 @@ def terraform_state_write(tokens: list) -> str:
 
     subcommand = words[1]
     return "" if subcommand in TERRAFORM_STATE_READONLY else subcommand
+
+
+def terraform_flag_names(tokens: list) -> set:
+    """フラグ名を取り出す。-json / --json / -state=path を同じ名前として扱う。"""
+    return {
+        token.lstrip("-").split("=", 1)[0]
+        for token in tokens if token.startswith("-")
+    }
+
+
+def terraform_secret_exposure(tokens: list) -> str:
+    """state の中身を平文で出す terraform 操作なら、その形を返す。該当しなければ空文字列。
+
+    state を書き換えないので terraform_state_write では拾えないが、
+    機密性の観点では読み取りの方が危害そのものになる。
+    """
+    if not tokens or tokens[0] != "terraform":
+        return ""
+
+    words = [t for t in tokens[1:] if not t.startswith("-")]
+    if not words:
+        return ""
+
+    if words[0] == "state":
+        subcommand = words[1] if len(words) > 1 else ""
+        return f"state {subcommand}" if subcommand in TERRAFORM_STATE_EXPOSING else ""
+
+    safe_flags = TERRAFORM_SAFE_FLAGS.get(words[0])
+    if safe_flags is None:
+        return ""
+
+    unsafe = terraform_flag_names(tokens[1:]) - safe_flags - TERRAFORM_GLOBAL_FLAGS
+    if not unsafe:
+        return ""
+    return words[0] + " " + " ".join("-" + name for name in sorted(unsafe))
 
 
 def extract_subcommand(tokens: list) -> tuple:
@@ -321,6 +370,18 @@ def main() -> int:
                 print("  versioning が無い場合は復旧できません。", file=sys.stderr)
                 print("  操作自体は正当ですが、影響範囲の判断が要るため AI では実行しません。",
                       file=sys.stderr)
+                print("  必要な場合は、あなた自身が端末で実行してください。", file=sys.stderr)
+                return 2
+            exposure = terraform_secret_exposure(simple_command)
+            if exposure:
+                print(f"ブロック: terraform {exposure} は state の中身を平文で出力します。",
+                      file=sys.stderr)
+                print("  state は DB パスワード・秘密鍵・トークンを平文で保持します",
+                      file=sys.stderr)
+                print("  (sensitive = true は表示の抑制であって、state の暗号化ではありません)。",
+                      file=sys.stderr)
+                print("  出力はファイル・ターミナル・会話ログに複製として残り、", file=sys.stderr)
+                print("  消しても複製が残る場所があります。", file=sys.stderr)
                 print("  必要な場合は、あなた自身が端末で実行してください。", file=sys.stderr)
                 return 2
             if is_verification_bypass(simple_command):

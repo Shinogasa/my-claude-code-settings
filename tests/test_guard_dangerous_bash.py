@@ -144,9 +144,6 @@ class TestTerraformStateWrite(unittest.TestCase):
     def test_state_show_is_allowed(self):
         self.assertEqual(run_guard("terraform state show aws_instance.web"), ALLOW)
 
-    def test_state_pull_is_allowed(self):
-        self.assertEqual(run_guard("terraform state pull"), ALLOW)
-
     def test_bare_state_is_allowed(self):
         # サブコマンド無しは usage を出すだけで state を変えない
         self.assertEqual(run_guard("terraform state"), ALLOW)
@@ -162,6 +159,70 @@ class TestTerraformStateWrite(unittest.TestCase):
     def test_state_rm_inside_heredoc_is_allowed(self):
         command = "cat <<'EOF'\nterraform state rm aws_instance.web\nEOF"
         self.assertEqual(run_guard(command), ALLOW)
+
+
+class TestTerraformSecretExposure(unittest.TestCase):
+    """state の中身を平文で出す terraform 操作の判定。
+
+    terraform の state は DB パスワード・秘密鍵・トークンを平文で保持する
+    (sensitive = true は表示の抑制であって state の暗号化ではない)。
+    state を壊さないため書き換え側の判定では拾えないが、出力は
+    ファイル・ターミナル・会話ログに複製として残るため、実行主体は人間にする。
+
+    フラグの判定も allowlist。denylist にすると terraform が新しい出力フラグを
+    追加したとき黙って通る。
+    """
+
+    def test_state_pull_is_blocked(self):
+        # state を1バイトも変えないが、中身を丸ごと出力する
+        self.assertEqual(run_guard("terraform state pull"), BLOCK)
+
+    def test_output_json_is_blocked(self):
+        self.assertEqual(run_guard("terraform output -json"), BLOCK)
+
+    def test_output_raw_is_blocked(self):
+        self.assertEqual(run_guard("terraform output -raw db_password"), BLOCK)
+
+    def test_output_double_dash_json_is_blocked(self):
+        # Go のフラグは -json と --json の両方を受け付ける
+        self.assertEqual(run_guard("terraform output --json"), BLOCK)
+
+    def test_show_json_is_blocked(self):
+        self.assertEqual(run_guard("terraform show -json"), BLOCK)
+
+    def test_unknown_output_flag_is_blocked(self):
+        # allowlist にしている理由。将来 terraform が追加する出力形式も止まる
+        self.assertEqual(run_guard("terraform output -yaml"), BLOCK)
+
+    def test_output_json_with_chdir_is_blocked(self):
+        self.assertEqual(run_guard("terraform -chdir=infra output -json"), BLOCK)
+
+    def test_exposure_message_explains_plaintext(self):
+        result = run_guard_output("terraform state pull")
+        self.assertIn("平文", result.stderr)
+
+    def test_bare_output_is_allowed(self):
+        # sensitive な値は <sensitive> に伏せられる
+        self.assertEqual(run_guard("terraform output"), ALLOW)
+
+    def test_named_output_is_allowed(self):
+        self.assertEqual(run_guard("terraform output db_url"), ALLOW)
+
+    def test_output_no_color_is_allowed(self):
+        self.assertEqual(run_guard("terraform output -no-color"), ALLOW)
+
+    def test_output_with_chdir_only_is_allowed(self):
+        # グローバルオプションをサブコマンドのフラグと取り違えない
+        self.assertEqual(run_guard("terraform -chdir=infra output"), ALLOW)
+
+    def test_bare_show_is_allowed(self):
+        self.assertEqual(run_guard("terraform show"), ALLOW)
+
+    def test_state_list_is_still_allowed(self):
+        self.assertEqual(run_guard("terraform state list"), ALLOW)
+
+    def test_quoted_output_json_is_allowed(self):
+        self.assertEqual(run_guard('echo "terraform output -json"'), ALLOW)
 
 
 class TestVerificationBypass(unittest.TestCase):
