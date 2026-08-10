@@ -209,6 +209,7 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 │   └── silent-failure-hunter.md #   サイレント障害検出
 ├── rules/                       # 常時適用ルール
 │   ├── learning-mode.md         #   学習モード詳細仕様
+│   ├── proving-absence.md       #   「無い」と主張するときの形式
 │   ├── output-formatting.md     #   URL表示フォーマット
 │   ├── task-management.md       #   タスク管理手順
 │   ├── ecc-coding-style.md      #   コーディングスタイル
