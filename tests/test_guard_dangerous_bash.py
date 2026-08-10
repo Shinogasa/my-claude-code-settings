@@ -6,6 +6,7 @@
 
 実行: python3 tests/test_guard_dangerous_bash.py
 """
+import atexit
 import json
 import subprocess
 import sys
@@ -19,18 +20,40 @@ GUARD = REPO_ROOT / "hooks" / "guard-dangerous-bash.py"
 ALLOW = 0
 BLOCK = 2
 
+# cwd を渡さないテストが、このリポジトリの git 状態に左右されないようにする。
+#
+# 保護ブランチ判定を入れたとき、cwd 無しの `git commit` を使うテストが
+# チェックアウト中のブランチ次第で結果を変える問題が実際に起きた
+# (feature ブランチでは通り、main では落ちた)。
+# 既定を git 管理外のディレクトリにして、判定材料をコマンド文字列だけに絞る。
+_NEUTRAL = tempfile.TemporaryDirectory(prefix="guard-test-neutral-")
+atexit.register(_NEUTRAL.cleanup)
+NEUTRAL_DIR = _NEUTRAL.name
+
 
 def run_guard_output(command, cwd=None):
     """フックを実行して CompletedProcess を返す。メッセージ内容を見たいとき用。"""
-    payload = {"tool_name": "Bash", "tool_input": {"command": command}}
-    if cwd is not None:
-        payload["cwd"] = str(cwd)
+    target = str(cwd) if cwd is not None else NEUTRAL_DIR
+    payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": target}
     return subprocess.run(
         [sys.executable, str(GUARD)],
         input=json.dumps(payload),
         capture_output=True,
         text=True,
+        cwd=target,
     )
+
+
+def run_guard_without_cwd(command, process_cwd):
+    """payload に cwd を載せずに実行する。os.getcwd() フォールバックの検証用。"""
+    payload = {"tool_name": "Bash", "tool_input": {"command": command}}
+    return subprocess.run(
+        [sys.executable, str(GUARD)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        cwd=str(process_cwd),
+    ).returncode
 
 
 def run_guard(command, cwd=None):
@@ -223,6 +246,42 @@ class TestTerraformSecretExposure(unittest.TestCase):
 
     def test_quoted_output_json_is_allowed(self):
         self.assertEqual(run_guard('echo "terraform output -json"'), ALLOW)
+
+
+class TestMissingCwdFallback(unittest.TestCase):
+    """payload に cwd が無いときの挙動を固定する。
+
+    ホストは通常 cwd を渡すが、フックは無ければ os.getcwd() へフォールバックする。
+    この経路は「フックプロセスがたまたま居るディレクトリ」で判定するため、
+    無関係なリポジトリのブランチを見る可能性がある。
+
+    既定 cwd を中立化した結果、この経路を通るテストが1つも無くなった。
+    再発防止と引き換えに観測窓を塞がないよう、ここで明示的に固定する。
+    フォールバックの是非は tasks/backlog.md に課題として登録した。
+    """
+
+    def test_falls_back_to_process_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(tmp, with_hooks=False, branch="main")
+            self.assertEqual(run_guard_without_cwd('git commit -m "x"', repo), BLOCK)
+
+    def test_fallback_outside_git_repo_allows(self):
+        with tempfile.TemporaryDirectory() as plain:
+            self.assertEqual(run_guard_without_cwd('git commit -m "x"', plain), ALLOW)
+
+
+class TestEnvironmentIndependence(unittest.TestCase):
+    """cwd を渡さないテストが、このリポジトリの git 状態に影響されないこと。"""
+
+    def test_default_cwd_is_not_a_git_repo(self):
+        result = subprocess.run(
+            ["git", "-C", NEUTRAL_DIR, "rev-parse", "--is-inside-work-tree"],
+            capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_commit_without_explicit_cwd_is_allowed_on_any_branch(self):
+        # main をチェックアウトした状態でも結果が変わらないこと
+        self.assertEqual(run_guard('git commit -m "x"'), ALLOW)
 
 
 class TestVerificationBypass(unittest.TestCase):
