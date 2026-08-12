@@ -143,5 +143,37 @@ class TestMissingTools(unittest.TestCase):
             self.assertEqual(json.loads(result.stdout or "[]"), [])
 
 
+class TestMalformedArguments(unittest.TestCase):
+    """不正な引数でもハングせず fail-open で終わる。
+
+    値の無い --self-pid は、引数を1つずつ落とす実装でなければ無限ループになる。
+    """
+
+    def _run(self, *args):
+        with tempfile.TemporaryDirectory() as base:
+            repo = make_repo(base, "repo")
+            env = dict(os.environ)
+            env["DETECT_PARALLEL_SESSIONS_FIXTURE"] = os.devnull
+            return subprocess.run(
+                ["bash", str(DETECT), *args],
+                capture_output=True, text=True, cwd=str(repo), env=env,
+                timeout=10,
+            )
+
+    def test_self_pid_without_value_terminates(self):
+        result = self._run("--self-pid")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout or "[]"), [])
+
+    def test_no_arguments_terminates(self):
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unknown_argument_is_ignored(self):
+        result = self._run("--unknown", "--self-pid", "999")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout or "[]"), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

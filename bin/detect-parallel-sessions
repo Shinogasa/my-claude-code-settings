@@ -23,7 +23,9 @@ set -uo pipefail
 self_pid=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --self-pid) self_pid="${2:-}"; shift 2 ;;
+    # shift 2 は残り引数が1つのとき失敗し、同じ分岐に入り続けて無限ループになる。
+    # 1つずつ落とすことで、値の無い --self-pid でも必ず抜ける。
+    --self-pid) shift; self_pid="${1:-}"; [ $# -gt 0 ] && shift ;;
     *)          shift ;;
   esac
 done
