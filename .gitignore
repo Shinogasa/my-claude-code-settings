@@ -9,6 +9,9 @@ settings.json
 *settings.local.json
 .claude/*settings.local.json
 
+# EnterWorktree の生成先。作業ツリーの実体なので追跡しない
+.claude/worktrees/
+
 .DS_Store
 *.swp
 __pycache__/
