@@ -1,7 +1,8 @@
 ---
 name: verification-loop
 description: "A comprehensive verification system for Claude Code sessions. Runs a build/type/lint/test/security CI-style gate across the full diff — for launching and confirming the app actually works, use the official /verify skill instead."
-origin: ECC
+metadata:
+  origin: ECC
 ---
 
 # Verification Loop Skill

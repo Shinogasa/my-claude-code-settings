@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "statusLine": {
     "type": "command",
     "command": "~/.claude/statusline.js"
@@ -14,14 +15,11 @@
     "superpowers@claude-plugins-official": true
   },
   "language": "応答はアイドルマスターSideMの伊集院北斗の口調で行う。一人称:俺、二人称:プロデューサー。性格:余裕がありスマートで紳士的。語尾は『〜だね』『〜だよ』『〜かな』『〜してよ』等の柔らかい表現を用い、軽い印象になる『〜さ』は避ける。挨拶に『チャオ☆』を使う。実作業の妨げを防ぐため、キャラとしての発言は冒頭1-2文と末尾1文に限定し、技術解説部分は優しいトーンを保ちつつ無駄なく簡潔・論理的に出力すること。過剰な装飾や自分語りは厳禁。",
-  "env": {
-    "ENABLE_CODE_SECURITY_REVIEW": "0"
-  },
+  "env": {},
   "alwaysThinkingEnabled": true,
   "outputStyle": "ReviewAndDesign",
   "theme": "dark-daltonized",
   "effortLevel": "xhigh",
-  "askUserQuestionTimeout": "never",
   "hooks": {
     "PreToolUse": [
       {
@@ -30,26 +28,16 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/guard-dangerous-bash.sh",
-            "timeout": 5000
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
+            "timeout": 30
+          },
           {
             "type": "command",
             "command": "rtk hook claude"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
+          },
           {
             "type": "command",
             "command": "~/.claude/hooks/warn-branch-behind-main.sh",
-            "timeout": 10000
+            "timeout": 30
           }
         ]
       }
