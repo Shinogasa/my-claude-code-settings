@@ -17,6 +17,9 @@
 #   pgrep / lsof / git / jq のいずれかが使えない、値が取れない場合は [] を返して
 #   正常終了する。検出できないことより、検出処理がセッション開始を妨げることの方が
 #   高くつく。
+#
+#   --path-format=absolute は git 2.31 以降が必要。これより古いと rev-parse が
+#   失敗し、fail-open がそれを飲み込むため機能が黙って無効になる。
 
 set -uo pipefail
 
@@ -55,24 +58,22 @@ enumerate() {
   done
 }
 
-# 自分自身の pid。--self-pid が無ければ祖先をたどって claude プロセスを探す。
-# フックは claude の子として起動されるため、祖先に必ず現れる。
-if [ -z "$self_pid" ]; then
-  p=$$
-  while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null; do
-    if [ "$(basename "$(ps -o comm= -p "$p" 2>/dev/null)" 2>/dev/null)" = "claude" ]; then
-      self_pid="$p"
-      break
-    fi
-    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
-  done
-fi
+# 自分自身と祖先の pid 集合を作る。
+# comm 名の一致に依存しないため claude が node 等で動いていても効き、
+# pgrep が祖先を返すかどうかにも依存しない。
+ancestors=" $$ "
+p=$$
+while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null; do
+  p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+  [ -n "$p" ] && ancestors="${ancestors}${p} "
+done
 
 first=1
 printf '['
 while IFS=$'\t' read -r pid cwd; do
   [ -n "${pid:-}" ] && [ -n "${cwd:-}" ] || continue
   [ "$pid" = "$self_pid" ] && continue
+  case "$ancestors" in *" $pid "*) continue ;; esac
   [ -d "$cwd" ] || continue
 
   common=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || continue

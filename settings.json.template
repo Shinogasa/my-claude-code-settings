@@ -60,7 +60,7 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/detect-parallel-sessions.sh",
-            "timeout": 10000
+            "timeout": 10
           }
         ]
       }

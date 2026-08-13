@@ -127,7 +127,7 @@ class TestMissingTools(unittest.TestCase):
             # 必要な道具だけを見せる PATH を作り、lsof と pgrep を隠す
             bindir = Path(base) / "bin"
             bindir.mkdir()
-            for tool in ("bash", "git", "jq", "ps", "basename",
+            for tool in ("bash", "git", "jq", "ps", "basename", "pgrep",
                          "grep", "cut", "cat", "tr"):
                 found = shutil.which(tool)
                 if found:
@@ -173,6 +173,30 @@ class TestMalformedArguments(unittest.TestCase):
         result = self._run("--unknown", "--self-pid", "999")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout or "[]"), [])
+
+
+class TestProductionSelfExclusion(unittest.TestCase):
+    """--self-pid を渡さない本番経路で、自分自身が除外されることを確認する。
+
+    フックは検出コマンドを引数なしで呼ぶため、この経路が本番で通る唯一の経路。
+    テストプロセスの pid は bash スクリプトから見て祖先にあたるので、
+    祖先集合による除外が効いていれば必ず空配列になる。
+    """
+
+    def test_own_process_tree_is_excluded(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo = make_repo(base, "repo")
+            fixture = Path(base) / "fixture.tsv"
+            fixture.write_text(f"{os.getpid()}\t{repo}\n")
+            env = dict(os.environ)
+            env["DETECT_PARALLEL_SESSIONS_FIXTURE"] = str(fixture)
+            result = subprocess.run(
+                ["bash", str(DETECT)],          # --self-pid を渡さない
+                capture_output=True, text=True, cwd=str(repo), env=env,
+                timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout or "[]"), [])
 
 
 if __name__ == "__main__":
