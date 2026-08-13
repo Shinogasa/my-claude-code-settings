@@ -330,3 +330,12 @@ Python や Markdown だけを触る作業中も常に効いている。
 
 **着手条件**: 指示が守られない事例が実際に出たとき、または CLAUDE.md と rules の
 合計がさらに増えたとき。
+
+### ホスト実ファイルの掃除 → `cw-workspace-local` へ移管済み
+
+`~/.claude/settings.json` に残る `askUserQuestionTimeout` の掃除は、ホスト実ファイルの
+管理範囲のため `cw-workspace-local/tasks/backlog.md` へ移した。本リポジトリ側の
+テンプレート修正は完了しており、ここでは追跡しない（二重管理を避ける）。
+
+なお `setup.sh` の「テンプレートに無いキーは温存する」マージ方式は、`/model` などが
+書き込んだ値を保護するための意図的な設計であり、**変更しない**。
