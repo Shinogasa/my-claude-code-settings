@@ -81,8 +81,8 @@ skills の発火方式がホストで異なる。
 - **バグ修正**: バグレポートを受けたらログ・テストから自律的に修正する
 - **学習アウトプット**: ★ Delta を返したら `learning/entries/` に1エントリ1ファイルで作成する（運用は `learning/README.md`）。このリポジトリは PUBLIC のため、業務固有情報を抽象化してから書く（`rules/learning-mode.md` の抽象化ルール参照）
 - **並列作業**: 複数エージェントが同一リポジトリで動くときは worktree で分離する。
-  サブエージェント起動時は `isolation: "worktree"` を既定とする。詳細は
-  `rules/parallel-worktree.md` を参照
+  サブエージェント起動時は `isolation: "worktree"` を既定とする。ただし本リポジトリ
+  自身は対象外（理由は同ファイル参照）。詳細は `rules/parallel-worktree.md` を参照
 
 ## タスク管理
 
