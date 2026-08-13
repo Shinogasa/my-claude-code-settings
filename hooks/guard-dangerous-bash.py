@@ -109,9 +109,17 @@ def strip_heredocs(command: str) -> str:
     return HEREDOC_RE.sub("", command)
 
 
-def tokenize_line(line: str) -> list:
-    """シェルの引用規則を尊重してトークン化する。パース不能なら空リスト。"""
-    lexer = shlex.shlex(line, posix=True, punctuation_chars="|&;()<>")
+def tokenize_command(command: str) -> list:
+    """シェルの引用規則を尊重してコマンド全体をトークン化する。パース不能なら空リスト。
+
+    改行を whitespace から外して punctuation_chars に回すことで、裸の改行
+    (クォート外・コマンド置換の外にあるもの) を独立トークンとして残す。
+    行ごとに shlex へ渡すと、ヒアドキュメントを取り除いた結果クォートや
+    コマンド置換の閉じ括弧が次の行に落ちるケース (`"$(cat <<'EOF' ... EOF\n)"` 等)
+    で引用符が閉じないままパース不能になり、コマンド全体の検査が素通りしていた。
+    """
+    lexer = shlex.shlex(command, posix=True, punctuation_chars="|&;()<>\n")
+    lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     try:
         return list(lexer)
@@ -120,11 +128,11 @@ def tokenize_line(line: str) -> list:
 
 
 def split_simple_commands(tokens: list) -> list:
-    """制御演算子(; && || | &)でトークン列を単純コマンド列に分割する。"""
+    """制御演算子(; && || | & および裸の改行)でトークン列を単純コマンド列に分割する。"""
     commands = []
     current = []
     for tok in tokens:
-        if tok in CONTROL_TOKENS:
+        if tok in CONTROL_TOKENS or (tok and set(tok) <= {"\n"}):
             if current:
                 commands.append(current)
             current = []
@@ -352,43 +360,42 @@ def main() -> int:
 
     has_bypass = False
     commit_dirs = []
-    for line in executable_part.split("\n"):
-        tokens = tokenize_line(line)
-        for simple_command in split_simple_commands(tokens):
-            if is_dangerous(simple_command):
-                print(f"ブロック: 確定的に危険なコマンドを検出しました: {command}", file=sys.stderr)
-                return 2
-            state_write = terraform_state_write(simple_command)
-            if state_write:
-                impact = TERRAFORM_STATE_IMPACT.get(
-                    state_write, TERRAFORM_STATE_DEFAULT_IMPACT)
-                print(f"ブロック: terraform state {state_write} は state を書き換えます。",
-                      file=sys.stderr)
-                print(f"  {impact}", file=sys.stderr)
-                print("  remote backend では自動バックアップが作られないため、backend 側に",
-                      file=sys.stderr)
-                print("  versioning が無い場合は復旧できません。", file=sys.stderr)
-                print("  操作自体は正当ですが、影響範囲の判断が要るため AI では実行しません。",
-                      file=sys.stderr)
-                print("  必要な場合は、あなた自身が端末で実行してください。", file=sys.stderr)
-                return 2
-            exposure = terraform_secret_exposure(simple_command)
-            if exposure:
-                print(f"ブロック: terraform {exposure} は state の中身を平文で出力します。",
-                      file=sys.stderr)
-                print("  state は DB パスワード・秘密鍵・トークンを平文で保持します",
-                      file=sys.stderr)
-                print("  (sensitive = true は表示の抑制であって、state の暗号化ではありません)。",
-                      file=sys.stderr)
-                print("  出力はファイル・ターミナル・会話ログに複製として残り、", file=sys.stderr)
-                print("  消しても複製が残る場所があります。", file=sys.stderr)
-                print("  必要な場合は、あなた自身が端末で実行してください。", file=sys.stderr)
-                return 2
-            if is_verification_bypass(simple_command):
-                has_bypass = True
-            target = commit_target_dir(simple_command, cwd)
-            if target:
-                commit_dirs.append(target)
+    tokens = tokenize_command(executable_part)
+    for simple_command in split_simple_commands(tokens):
+        if is_dangerous(simple_command):
+            print(f"ブロック: 確定的に危険なコマンドを検出しました: {command}", file=sys.stderr)
+            return 2
+        state_write = terraform_state_write(simple_command)
+        if state_write:
+            impact = TERRAFORM_STATE_IMPACT.get(
+                state_write, TERRAFORM_STATE_DEFAULT_IMPACT)
+            print(f"ブロック: terraform state {state_write} は state を書き換えます。",
+                  file=sys.stderr)
+            print(f"  {impact}", file=sys.stderr)
+            print("  remote backend では自動バックアップが作られないため、backend 側に",
+                  file=sys.stderr)
+            print("  versioning が無い場合は復旧できません。", file=sys.stderr)
+            print("  操作自体は正当ですが、影響範囲の判断が要るため AI では実行しません。",
+                  file=sys.stderr)
+            print("  必要な場合は、あなた自身が端末で実行してください。", file=sys.stderr)
+            return 2
+        exposure = terraform_secret_exposure(simple_command)
+        if exposure:
+            print(f"ブロック: terraform {exposure} は state の中身を平文で出力します。",
+                  file=sys.stderr)
+            print("  state は DB パスワード・秘密鍵・トークンを平文で保持します",
+                  file=sys.stderr)
+            print("  (sensitive = true は表示の抑制であって、state の暗号化ではありません)。",
+                  file=sys.stderr)
+            print("  出力はファイル・ターミナル・会話ログに複製として残り、", file=sys.stderr)
+            print("  消しても複製が残る場所があります。", file=sys.stderr)
+            print("  必要な場合は、あなた自身が端末で実行してください。", file=sys.stderr)
+            return 2
+        if is_verification_bypass(simple_command):
+            has_bypass = True
+        target = commit_target_dir(simple_command, cwd)
+        if target:
+            commit_dirs.append(target)
 
     # git config の参照は毎回の Bash 呼び出しに載せたくないため、
     # 該当コマンドが実際にあったときだけリポジトリを調べる。
