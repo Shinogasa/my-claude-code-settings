@@ -19,8 +19,11 @@ skills / commands / rules / CLAUDE.md は単一ソースを両ホストへリン
 
 | ホスト | 実体 | 自動読み込み |
 |---|---|---|
-| Claude Code | `~/.claude/rules/` | される（本文がコンテキストに展開される） |
+| Claude Code | `~/.claude/rules/` | `paths:` frontmatter が**無い**ものだけ毎セッション展開される。`paths:` があるものはマッチするファイルを読んだときに読み込まれる |
 | Codex CLI | `~/.codex/rules/` | **されない。参照が必要になった時点で自分で読むこと** |
+
+`paths:` を付けるとコンテキストは減るが、**`/compact` 後に再注入されない**（次にマッチする
+ファイルを読むまで復帰しない）。常に効いている必要がある規約に付けてはいけない。
 
 ## superpowers
 
