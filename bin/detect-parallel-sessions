@@ -1,0 +1,89 @@
+#!/bin/bash
+# 同一リポジトリ・同一作業ディレクトリで動いている他の Claude セッションを検出する。
+#
+# 出力: JSON 配列。検出ゼロなら []
+#   [{"pid":1234,"cwd":"/path/to/repo"}]
+#
+# 判定:
+#   git の common-dir が一致し、かつ作業ディレクトリも一致するものだけを衝突とみなす。
+#   common-dir が一致して作業ディレクトリが違う場合は worktree で分離済みなので出さない。
+#   common-dir は worktree から呼んでも本体と同じ値を返すため、同一リポジトリの
+#   判定キーとして使える。
+#
+#   出力を同一リポジトリのセッションに絞るのは、無関係な他プロジェクトの絶対パスを
+#   コンテキストへ漏らさないため。lsof は全セッションの作業ディレクトリを取れてしまう。
+#
+# fail-open:
+#   pgrep / lsof / git / jq のいずれかが使えない、値が取れない場合は [] を返して
+#   正常終了する。検出できないことより、検出処理がセッション開始を妨げることの方が
+#   高くつく。
+#
+#   --path-format=absolute は git 2.31 以降が必要。これより古いと rev-parse が
+#   失敗し、fail-open がそれを飲み込むため機能が黙って無効になる。
+
+set -uo pipefail
+
+self_pid=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    # shift 2 は残り引数が1つのとき失敗し、同じ分岐に入り続けて無限ループになる。
+    # 1つずつ落とすことで、値の無い --self-pid でも必ず抜ける。
+    --self-pid) shift; self_pid="${1:-}"; [ $# -gt 0 ] && shift ;;
+    *)          shift ;;
+  esac
+done
+
+emit_empty() { printf '[]\n'; exit 0; }
+
+command -v git >/dev/null 2>&1 || emit_empty
+command -v jq  >/dev/null 2>&1 || emit_empty
+
+my_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || emit_empty
+[ -n "$my_common" ] || emit_empty
+my_cwd=$(pwd -P)
+
+# セッションの列挙。テストから差し替えられるようファイル経由の差し込み口を持つ。
+# eval を使わないのは、環境変数の中身をコマンドとして実行しないため。
+enumerate() {
+  if [ -n "${DETECT_PARALLEL_SESSIONS_FIXTURE:-}" ]; then
+    cat "$DETECT_PARALLEL_SESSIONS_FIXTURE" 2>/dev/null
+    return
+  fi
+  command -v pgrep >/dev/null 2>&1 || return
+  command -v lsof  >/dev/null 2>&1 || return
+  local p c
+  for p in $(pgrep -x claude 2>/dev/null); do
+    c=$(lsof -a -p "$p" -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2-)
+    [ -n "$c" ] && printf '%s\t%s\n' "$p" "$c"
+  done
+}
+
+# 自分自身と祖先の pid 集合を作る。
+# comm 名の一致に依存しないため claude が node 等で動いていても効き、
+# pgrep が祖先を返すかどうかにも依存しない。
+ancestors=" $$ "
+p=$$
+while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null; do
+  p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+  [ -n "$p" ] && ancestors="${ancestors}${p} "
+done
+
+first=1
+printf '['
+while IFS=$'\t' read -r pid cwd; do
+  [ -n "${pid:-}" ] && [ -n "${cwd:-}" ] || continue
+  [ "$pid" = "$self_pid" ] && continue
+  case "$ancestors" in *" $pid "*) continue ;; esac
+  [ -d "$cwd" ] || continue
+
+  common=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || continue
+  [ "$common" = "$my_common" ] || continue
+
+  real=$(cd "$cwd" 2>/dev/null && pwd -P) || continue
+  [ "$real" = "$my_cwd" ] || continue
+
+  [ $first -eq 1 ] || printf ','
+  first=0
+  printf '{"pid":%s,"cwd":%s}' "$pid" "$(printf '%s' "$real" | jq -R .)"
+done < <(enumerate)
+printf ']\n'

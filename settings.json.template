@@ -53,6 +53,17 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/detect-parallel-sessions.sh",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
