@@ -109,6 +109,18 @@ def strip_heredocs(command: str) -> str:
     return HEREDOC_RE.sub("", command)
 
 
+def strip_line_continuations(command: str) -> str:
+    """バックスラッシュ+改行 (シェルの行継続) を除去し、論理行を1行にまとめる。
+
+    shlex の posix モードは `\\<改行>` を「エスケープされた改行文字」として
+    次のトークンにそのまま含めてしまい (`git` が `'\\ngit'` のように壊れる)、
+    シェルの「行継続 = 何も無かったことにする」という意味論と食い違う。
+    このズレにより `git ... && \\\n git commit ...` のような複数行コマンドで
+    先頭トークンが `git` と一致しなくなり、以降の判定全体が素通りしていた。
+    """
+    return command.replace("\\\n", "")
+
+
 def tokenize_command(command: str) -> list:
     """シェルの引用規則を尊重してコマンド全体をトークン化する。パース不能なら空リスト。
 
@@ -118,7 +130,8 @@ def tokenize_command(command: str) -> list:
     コマンド置換の閉じ括弧が次の行に落ちるケース (`"$(cat <<'EOF' ... EOF\n)"` 等)
     で引用符が閉じないままパース不能になり、コマンド全体の検査が素通りしていた。
     """
-    lexer = shlex.shlex(command, posix=True, punctuation_chars="|&;()<>\n")
+    lexer = shlex.shlex(
+        strip_line_continuations(command), posix=True, punctuation_chars="|&;()<>\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     try:

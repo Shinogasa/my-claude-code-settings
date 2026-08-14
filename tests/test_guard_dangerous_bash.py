@@ -115,6 +115,10 @@ class TestDangerousCommands(unittest.TestCase):
         # ; や && を介さず、裸の改行だけで区切られた2つ目のコマンドも検出する
         self.assertEqual(run_guard("echo hello\nrm -rf /"), BLOCK)
 
+    def test_rm_rf_root_after_line_continuation_is_blocked(self):
+        # `\` + 改行 (行継続) を挟んでも先頭トークンが壊れず検出できる
+        self.assertEqual(run_guard("echo hello && \\\nrm -rf /"), BLOCK)
+
     def test_multiline_commit_message_with_quoted_newline_is_allowed(self):
         # クォート内の改行はコマンド区切りではなくメッセージの一部として扱う
         self.assertEqual(run_guard('git commit -m "line1\nline2"'), ALLOW)
@@ -412,6 +416,19 @@ class TestProtectedBranchCommit(unittest.TestCase):
         # && で連結されていても各サブコマンドを見るので検出できる
         self.assertEqual(
             run_guard('git add -A && git commit -m "x"', cwd=self.on_main), BLOCK)
+
+    def test_commit_chained_with_line_continuation_is_blocked(self):
+        # 実際に踏んだ形: `&& \` の行継続 + `-C` + ヒアドキュメントネストの組み合わせ。
+        # 行継続を素通しすると `\ngit` のような壊れたトークンになり検出をすり抜けていた。
+        command = (
+            'echo x >> f && \\\n'
+            f'git -C {self.on_main} add f && \\\n'
+            f'git -C {self.on_main} commit -m "$(cat <<\'EOF\'\n'
+            'feat: x\n'
+            'EOF\n'
+            ')"'
+        )
+        self.assertEqual(run_guard(command), BLOCK)
 
     def test_commit_on_feature_branch_is_allowed(self):
         self.assertEqual(run_guard('git commit -m "x"', cwd=self.on_feature), ALLOW)
