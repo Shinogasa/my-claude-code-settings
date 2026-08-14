@@ -1,5 +1,9 @@
 # 学習ループ再設計 Implementation Plan
 
+> **⚠ 実装済み。ただし一部は 2026-08-14 に置き換えられた。当時の記録として残している。**
+> 現行仕様は `rules/learning-mode.md`、変更の理由は
+> `docs/adr/0001-learning-mode-prediction-format.md` を参照。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** `learning-mode` と `protege-output` の2機構を、★ Predict / ★ Delta の単一ループに統合し、実際に発火して蓄積される状態にする。

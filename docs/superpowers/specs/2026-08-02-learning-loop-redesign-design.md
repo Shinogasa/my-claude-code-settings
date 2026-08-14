@@ -1,5 +1,12 @@
 # 学習ループ再設計（learning-mode / protege-output の統合）
 
+> **⚠ 一部は 2026-08-14 に置き換えられた。当時の記録として残している。**
+> 現行仕様は `rules/learning-mode.md`、変更の理由は
+> `docs/adr/0001-learning-mode-prediction-format.md` を参照。
+>
+> 置き換えられた箇所: 発火の下限（1タスク最低1回）／選択肢に判断基準を置く設計／
+> `（推奨）` の明示／`[MISS]` を優先再出題の母集団とする「段階2」構想。
+
 - 日付: 2026-08-02
 - 対象: `rules/learning-mode.md`, `rules/protege-output.md`, `CLAUDE.md`, `output-styles/review-and-design.md`, `setup.sh`, `.gitignore`, `README.md`
 - 目的: ユーザー（ミドルエンジニア → シニア/スタッフ/テックリード志望）のスキルアップ機構を、実際に発火し学習効果を生む形に作り直す
