@@ -111,6 +111,18 @@ class TestDangerousCommands(unittest.TestCase):
     def test_plain_command_is_allowed(self):
         self.assertEqual(run_guard("ls -la"), ALLOW)
 
+    def test_rm_rf_root_on_bare_second_line_is_blocked(self):
+        # ; や && を介さず、裸の改行だけで区切られた2つ目のコマンドも検出する
+        self.assertEqual(run_guard("echo hello\nrm -rf /"), BLOCK)
+
+    def test_rm_rf_root_after_line_continuation_is_blocked(self):
+        # `\` + 改行 (行継続) を挟んでも先頭トークンが壊れず検出できる
+        self.assertEqual(run_guard("echo hello && \\\nrm -rf /"), BLOCK)
+
+    def test_multiline_commit_message_with_quoted_newline_is_allowed(self):
+        # クォート内の改行はコマンド区切りではなくメッセージの一部として扱う
+        self.assertEqual(run_guard('git commit -m "line1\nline2"'), ALLOW)
+
 
 class TestTerraformStateWrite(unittest.TestCase):
     """terraform state の書き換え操作の判定。
@@ -385,10 +397,38 @@ class TestProtectedBranchCommit(unittest.TestCase):
         command = "git commit -F - <<'EOF'\nfeat: x\nEOF"
         self.assertEqual(run_guard(command, cwd=self.on_main), BLOCK)
 
+    def test_heredoc_nested_in_command_substitution_on_main_is_blocked(self):
+        # CLAUDE.md が指定する `git commit -m "$(cat <<'EOF' ... EOF)"` の形。
+        # ヒアドキュメント終端の直後にコマンド置換の閉じ括弧 `)"` が別行に落ちるため、
+        # 行ごとに shlex へ渡す実装では引用符が閉じずパース不能になり、
+        # コマンド全体の検査(保護ブランチ判定含む)が素通りしていた。
+        command = (
+            "git add foo && git commit -m \"$(cat <<'EOF'\n"
+            "feat: x\n"
+            "\n"
+            "Co-Authored-By: t <t@example.com>\n"
+            "EOF\n"
+            ")\""
+        )
+        self.assertEqual(run_guard(command, cwd=self.on_main), BLOCK)
+
     def test_commit_chained_after_git_add_is_blocked(self):
         # && で連結されていても各サブコマンドを見るので検出できる
         self.assertEqual(
             run_guard('git add -A && git commit -m "x"', cwd=self.on_main), BLOCK)
+
+    def test_commit_chained_with_line_continuation_is_blocked(self):
+        # 実際に踏んだ形: `&& \` の行継続 + `-C` + ヒアドキュメントネストの組み合わせ。
+        # 行継続を素通しすると `\ngit` のような壊れたトークンになり検出をすり抜けていた。
+        command = (
+            'echo x >> f && \\\n'
+            f'git -C {self.on_main} add f && \\\n'
+            f'git -C {self.on_main} commit -m "$(cat <<\'EOF\'\n'
+            'feat: x\n'
+            'EOF\n'
+            ')"'
+        )
+        self.assertEqual(run_guard(command), BLOCK)
 
     def test_commit_on_feature_branch_is_allowed(self):
         self.assertEqual(run_guard('git commit -m "x"', cwd=self.on_feature), ALLOW)
