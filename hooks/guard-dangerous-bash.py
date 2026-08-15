@@ -3,7 +3,7 @@
 
 対象は3種類。
 
-  1. 状況に依存せず常にNG (rm -rf / , git push --force , git reset --hard)
+  1. 状況に依存せず常にNG (rm -rf / , git push の force 系 , git reset --hard)
   2. 実行環境を見れば確定的に有害と判定できるもの (git の --no-verify, 保護ブランチ)
   3. 操作自体は正当だが、エージェントが自律的に行ってよいものではないもの
      (terraform state の書き換え、state の中身を平文で出す操作)
@@ -102,6 +102,11 @@ GIT_TIMEOUT_SEC = 3
 RM_FLAG_RE = re.compile(r"^-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*$|^-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*$")
 RM_TARGET_RE = re.compile(r"^(/|~)$|^/\*$")
 DEV_TARGET_RE = re.compile(r"^/dev/sd[a-z]")
+# force push を表すフラグ。完全一致で "--force" と "-f" だけを見ていた頃は、
+# --force-with-lease / --force-with-lease=<ref>:<oid> / -uf が素通りしていた。
+# git が force 系のオプションを増やしても拾えるよう、長い方は接頭辞で判定する。
+# 誤ってブロックする側の失敗は使った瞬間に気づけるが、素通しは気づけない。
+FORCE_PUSH_FLAG_RE = re.compile(r"^--force|^-[a-zA-Z]*f[a-zA-Z]*$")
 
 
 def strip_heredocs(command: str) -> str:
@@ -167,9 +172,13 @@ def is_dangerous(tokens: list) -> bool:
             return True
 
     if tokens[0] == "git":
-        if len(tokens) >= 2 and tokens[1] == "push" and ("--force" in tokens or "-f" in tokens):
+        # tokens[1] の直接比較ではなく extract_subcommand を通す。
+        # `git -C path push --force` のようにグローバルオプションを挟まれると
+        # 直接比較では素通りするため。
+        subcommand, args = extract_subcommand(tokens)
+        if subcommand == "push" and any(FORCE_PUSH_FLAG_RE.match(a) for a in args):
             return True
-        if len(tokens) >= 2 and tokens[1] == "reset" and "--hard" in tokens:
+        if subcommand == "reset" and "--hard" in args:
             return True
 
     for i, tok in enumerate(tokens[:-1]):

@@ -124,6 +124,59 @@ class TestDangerousCommands(unittest.TestCase):
         self.assertEqual(run_guard('git commit -m "line1\nline2"'), ALLOW)
 
 
+class TestForcePushVariants(unittest.TestCase):
+    """force push の綴り違いを塞ぐ判定。
+
+    当初の実装は `"--force" in tokens or "-f" in tokens` という完全一致だったため、
+    --force-with-lease / -uf / `git -C path push --force` が素通りしていた。
+    「禁止は能力を消さず経路を変えるだけ」の実例なので、
+    force 系は接頭辞で拾い、サブコマンド探索はグローバルオプションを読み飛ばす。
+    """
+
+    def test_force_with_lease_is_blocked(self):
+        self.assertEqual(
+            run_guard("git push --force-with-lease origin feature"), BLOCK
+        )
+
+    def test_force_with_lease_with_expected_oid_is_blocked(self):
+        self.assertEqual(
+            run_guard("git push --force-with-lease=main:abc123 origin main"), BLOCK
+        )
+
+    def test_force_if_includes_is_blocked(self):
+        # 単体では no-op だが、force 系の綴りとして一律に止める。
+        # 誤ってブロックする側の失敗は使った瞬間に気づけるため安全。
+        self.assertEqual(
+            run_guard("git push --force-if-includes origin feature"), BLOCK
+        )
+
+    def test_bundled_short_force_flag_is_blocked(self):
+        self.assertEqual(run_guard("git push -uf origin main"), BLOCK)
+
+    def test_force_after_global_option_is_blocked(self):
+        self.assertEqual(
+            run_guard("git -C /tmp/repo push --force origin main"), BLOCK
+        )
+
+    def test_plain_push_is_allowed(self):
+        self.assertEqual(run_guard("git push origin main"), ALLOW)
+
+    def test_set_upstream_without_force_is_allowed(self):
+        self.assertEqual(run_guard("git push -u origin feature"), ALLOW)
+
+    def test_dry_run_is_allowed(self):
+        self.assertEqual(run_guard("git push --dry-run origin main"), ALLOW)
+
+    def test_follow_tags_is_allowed(self):
+        # `--f` で始まるが force ではないオプションを誤検知しない
+        self.assertEqual(run_guard("git push --follow-tags origin main"), ALLOW)
+
+    def test_force_spelling_inside_commit_message_is_allowed(self):
+        self.assertEqual(
+            run_guard('git commit -m "avoid --force-with-lease"'), ALLOW
+        )
+
+
 class TestTerraformStateWrite(unittest.TestCase):
     """terraform state の書き換え操作の判定。
 
