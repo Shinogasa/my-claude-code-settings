@@ -5,7 +5,8 @@
 
   1. 状況に依存せず常にNG (rm -rf / , git reset --hard)
   2. 実行環境を見れば確定的に有害と判定できるもの
-     (git の --no-verify, 保護ブランチへの直接コミット, 保護ブランチへの force push)
+     (git の --no-verify, 保護ブランチへの直接コミット,
+      保護ブランチへの force push と削除)
   3. 操作自体は正当だが、エージェントが自律的に行ってよいものではないもの
      (terraform state の書き換え、state の中身を平文で出す操作)
 
@@ -116,6 +117,9 @@ FORCE_PUSH_FLAG_RE = re.compile(r"^--force|^-[a-zA-Z]*f[a-zA-Z]*$")
 GIT_PUSH_OPTS_WITH_VALUE = {"-o", "--push-option", "--receive-pack", "--exec", "--repo"}
 # 対象 ref を1つに絞れないフラグ。保護ブランチを含みうるため特定不能として扱う。
 GIT_PUSH_BROADCAST_FLAGS = {"--all", "--branches", "--mirror"}
+# ref の削除を表すフラグ。短縮形は他のフラグと束ねられる (-du) ため綴りで拾う。
+# 削除も refspec 側に別経路がある (`git push origin :main`)。
+REF_DELETE_FLAG_RE = re.compile(r"^--delete$|^-[a-zA-Z]*d[a-zA-Z]*$")
 
 
 def strip_heredocs(command: str) -> str:
@@ -402,29 +406,50 @@ def push_target_branches(args: list, cwd: str) -> list:
     return targets
 
 
-def force_push_block_reason(tokens: list, cwd: str) -> str:
-    """ブロックすべき force push なら理由を返す。許可する場合は空文字列。
+def is_ref_deletion(args: list) -> bool:
+    """push の引数がリモート ref の削除を含むか。フラグと `:dst` 形式の両方を見る。"""
+    if any(REF_DELETE_FLAG_RE.match(a) for a in args):
+        return True
+    # 位置引数の先頭は remote。refspec はその後ろ。
+    return any(spec.startswith(":") for spec in push_positional_args(args)[1:])
 
-    保護ブランチ以外への force push は通す。未マージの自ブランチを rebase / amend
-    してから上書きする用途は正当で、塞ぐと「履歴に残したくないものが残る」方へ倒れる。
-    リモートの保護ブランチは、上書きされると他人のコミットが失われ、
-    reflog も上書きした本人の手元にしか無いため復旧経路が無い。
+
+def destructive_push(tokens: list, cwd: str) -> tuple:
+    """リモートの ref を破壊的に動かす push なら (種別, 理由) を返す。該当しなければ ("", "")。
+
+    種別は "force" / "delete"。どちらも ref を fast-forward 以外の方向へ動かす点で
+    同じ危険度を持つため、判定と方針を揃える。
+
+    保護ブランチ以外は通す。未マージの自ブランチを rebase / amend してから上書きする
+    用途や、マージ済みブランチを片付ける用途は正当で、塞ぐと
+    「履歴に残したくないものが残る」「作業ブランチが溜まり続ける」方へ倒れる。
+    保護ブランチは、上書き・削除されると他人のコミットが失われ、
+    reflog も操作した本人の手元にしか無いため復旧経路が無い。
     """
     if not tokens or tokens[0] != "git":
-        return ""
+        return "", ""
 
     subcommand, args = extract_subcommand(tokens)
-    if subcommand != "push" or not is_force_push(args):
-        return ""
+    if subcommand != "push":
+        return "", ""
+
+    # 削除を先に見る。`git push --delete` は force フラグを伴わないことが多いが、
+    # 併用された場合も削除として扱うのが実際の影響に近い。
+    if is_ref_deletion(args):
+        kind = "delete"
+    elif is_force_push(args):
+        kind = "force"
+    else:
+        return "", ""
 
     targets = push_target_branches(args, cwd)
     if targets is None:
-        return "書き換え先のブランチを特定できません"
+        return kind, "対象のブランチを特定できません"
 
     protected = sorted({t for t in targets if t in PROTECTED_BRANCHES})
     if protected:
-        return f"保護ブランチ ({', '.join(protected)}) を上書きします"
-    return ""
+        return kind, f"保護ブランチ ({', '.join(protected)}) が対象です"
+    return "", ""
 
 
 def verification_hooks_active(cwd: str) -> bool:
@@ -501,16 +526,25 @@ def main() -> int:
             print("  消しても複製が残る場所があります。", file=sys.stderr)
             print("  必要な場合は、あなた自身が端末で実行してください。", file=sys.stderr)
             return 2
-        force_reason = force_push_block_reason(simple_command, cwd)
-        if force_reason:
-            print(f"ブロック: この force push は{force_reason}。", file=sys.stderr)
-            print("  上書きされたコミットは、上書きした本人の reflog にしか残りません。",
-                  file=sys.stderr)
-            print("  保護ブランチ以外への force push は通ります。対象を明示してください:",
-                  file=sys.stderr)
-            print("      git push --force-with-lease origin <feature-branch>",
-                  file=sys.stderr)
-            print("  保護ブランチを上書きする必要がある場合は、"
+        kind, reason = destructive_push(simple_command, cwd)
+        if kind:
+            label = "リモートブランチの削除" if kind == "delete" else "force push"
+            print(f"ブロック: この{label}は{reason}。", file=sys.stderr)
+            if kind == "delete":
+                print("  削除された ref はリモートに残りません。復旧できるのは、"
+                      "同じコミットを持つ手元のクローンがある場合だけです。",
+                      file=sys.stderr)
+                print("  保護ブランチ以外の削除は通ります。対象を明示してください:",
+                      file=sys.stderr)
+                print("      git push origin --delete <feature-branch>", file=sys.stderr)
+            else:
+                print("  上書きされたコミットは、上書きした本人の reflog にしか残りません。",
+                      file=sys.stderr)
+                print(f"  保護ブランチ以外への{label}は通ります。対象を明示してください:",
+                      file=sys.stderr)
+                print("      git push --force-with-lease origin <feature-branch>",
+                      file=sys.stderr)
+            print(f"  保護ブランチを対象にする必要がある場合は、"
                   "あなた自身が端末で実行してください。", file=sys.stderr)
             return 2
         if is_verification_bypass(simple_command):

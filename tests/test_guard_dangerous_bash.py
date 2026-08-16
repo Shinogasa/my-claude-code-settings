@@ -239,6 +239,57 @@ class TestForcePushTarget(unittest.TestCase):
         )
 
 
+class TestRefDeletion(unittest.TestCase):
+    """リモート ref の削除は force push と同じ方針で判定する。
+
+    force push だけを見ていた頃は `git push origin --delete main` /
+    `git push origin :main` が素通りしていた。どちらも ref を
+    fast-forward 以外の方向へ動かすので、危険度は同じ。
+
+    削除された ref はリモートに残らない。force push の「本人の reflog には残る」
+    より復旧経路が狭いが、マージ済みブランチの片付けは日常操作なので、
+    保護ブランチ以外は通す方針を揃える。
+    """
+
+    def test_delete_flag_on_protected_branch_is_blocked(self):
+        self.assertEqual(run_guard("git push origin --delete main"), BLOCK)
+
+    def test_short_delete_flag_on_protected_branch_is_blocked(self):
+        self.assertEqual(run_guard("git push origin -d master"), BLOCK)
+
+    def test_colon_refspec_on_protected_branch_is_blocked(self):
+        # フラグを使わない削除。--delete を塞いでも残る経路
+        self.assertEqual(run_guard("git push origin :main"), BLOCK)
+
+    def test_fully_qualified_delete_is_blocked(self):
+        self.assertEqual(run_guard("git push origin :refs/heads/main"), BLOCK)
+
+    def test_delete_after_global_option_is_blocked(self):
+        self.assertEqual(
+            run_guard("git -C /tmp/repo push origin --delete main"), BLOCK
+        )
+
+    def test_delete_feature_branch_is_allowed(self):
+        self.assertEqual(run_guard("git push origin --delete feature"), ALLOW)
+
+    def test_colon_refspec_on_feature_branch_is_allowed(self):
+        self.assertEqual(run_guard("git push origin :feature"), ALLOW)
+
+    def test_delete_multiple_blocks_if_any_is_protected(self):
+        self.assertEqual(
+            run_guard("git push origin --delete feature main"), BLOCK
+        )
+
+    def test_delete_without_target_is_blocked(self):
+        # 対象を特定できない形は「安全」ではなく「検査できなかった」として止める
+        self.assertEqual(run_guard("git push origin --delete"), BLOCK)
+
+    def test_normal_push_with_d_in_argument_is_allowed(self):
+        # `-d` を含まないブランチ名や、d で始まる長いオプションを誤検知しない
+        self.assertEqual(run_guard("git push origin docs/foo"), ALLOW)
+        self.assertEqual(run_guard("git push --dry-run origin main"), ALLOW)
+
+
 class TestTerraformStateWrite(unittest.TestCase):
     """terraform state の書き換え操作の判定。
 
