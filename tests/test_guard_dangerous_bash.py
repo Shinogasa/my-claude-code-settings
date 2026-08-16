@@ -124,39 +124,45 @@ class TestDangerousCommands(unittest.TestCase):
         self.assertEqual(run_guard('git commit -m "line1\nline2"'), ALLOW)
 
 
-class TestForcePushVariants(unittest.TestCase):
-    """force push の綴り違いを塞ぐ判定。
+class TestForcePushDetection(unittest.TestCase):
+    """force push の綴り違いを漏れなく拾えるか。
 
     当初の実装は `"--force" in tokens or "-f" in tokens` という完全一致だったため、
     --force-with-lease / -uf / `git -C path push --force` が素通りしていた。
-    「禁止は能力を消さず経路を変えるだけ」の実例なので、
-    force 系は接頭辞で拾い、サブコマンド探索はグローバルオプションを読み飛ばす。
+    フラグを接頭辞で拾う形に変えた後も、refspec の "+" (`git push origin +main`) が
+    残っていた。「禁止は能力を消さず経路を変えるだけ」がそのまま出た経路。
+
+    ここでは「force push だと認識できるか」だけを見る。対象 ref による許可/拒否は
+    TestForcePushTarget を参照。保護ブランチ (main) を対象にして、
+    検出できなければ ALLOW に落ちることを利用している。
     """
 
-    def test_force_with_lease_is_blocked(self):
-        self.assertEqual(
-            run_guard("git push --force-with-lease origin feature"), BLOCK
-        )
+    def test_force_with_lease_is_detected(self):
+        self.assertEqual(run_guard("git push --force-with-lease origin main"), BLOCK)
 
-    def test_force_with_lease_with_expected_oid_is_blocked(self):
+    def test_force_with_lease_with_expected_oid_is_detected(self):
         self.assertEqual(
             run_guard("git push --force-with-lease=main:abc123 origin main"), BLOCK
         )
 
-    def test_force_if_includes_is_blocked(self):
-        # 単体では no-op だが、force 系の綴りとして一律に止める。
-        # 誤ってブロックする側の失敗は使った瞬間に気づけるため安全。
-        self.assertEqual(
-            run_guard("git push --force-if-includes origin feature"), BLOCK
-        )
+    def test_force_if_includes_is_detected(self):
+        self.assertEqual(run_guard("git push --force-if-includes origin main"), BLOCK)
 
-    def test_bundled_short_force_flag_is_blocked(self):
+    def test_bundled_short_force_flag_is_detected(self):
         self.assertEqual(run_guard("git push -uf origin main"), BLOCK)
 
-    def test_force_after_global_option_is_blocked(self):
-        self.assertEqual(
-            run_guard("git -C /tmp/repo push --force origin main"), BLOCK
-        )
+    def test_force_after_global_option_is_detected(self):
+        self.assertEqual(run_guard("git -C /tmp/repo push --force origin main"), BLOCK)
+
+    def test_flag_after_refspec_is_detected(self):
+        self.assertEqual(run_guard("git push origin main --force"), BLOCK)
+
+    def test_plus_refspec_is_detected(self):
+        # フラグを一切使わない force update。ここが最後まで空いていた。
+        self.assertEqual(run_guard("git push origin +main"), BLOCK)
+
+    def test_plus_refspec_with_source_is_detected(self):
+        self.assertEqual(run_guard("git push origin +HEAD:main"), BLOCK)
 
     def test_plain_push_is_allowed(self):
         self.assertEqual(run_guard("git push origin main"), ALLOW)
@@ -174,6 +180,62 @@ class TestForcePushVariants(unittest.TestCase):
     def test_force_spelling_inside_commit_message_is_allowed(self):
         self.assertEqual(
             run_guard('git commit -m "avoid --force-with-lease"'), ALLOW
+        )
+
+
+class TestForcePushTarget(unittest.TestCase):
+    """force push は対象 ref で許可/拒否を分ける。
+
+    未マージの自ブランチを rebase / amend して上書きする用途は正当であり、
+    塞ぐと「履歴に残したくないものが残る」方へ倒れる。
+    一方リモートの保護ブランチは、上書きすると他人のコミットが失われ、
+    reflog は上書きした本人の手元にしか無いため復旧経路が無い。
+
+    対象を特定できない形は「安全」ではなく「検査できなかった」として止める。
+    """
+
+    def test_feature_branch_is_allowed(self):
+        self.assertEqual(
+            run_guard("git push --force-with-lease origin feature"), ALLOW
+        )
+
+    def test_feature_branch_with_plain_force_is_allowed(self):
+        self.assertEqual(run_guard("git push --force origin feature"), ALLOW)
+
+    def test_plus_refspec_to_feature_branch_is_allowed(self):
+        self.assertEqual(run_guard("git push origin +feature"), ALLOW)
+
+    def test_master_is_blocked(self):
+        self.assertEqual(run_guard("git push --force origin master"), BLOCK)
+
+    def test_fully_qualified_protected_ref_is_blocked(self):
+        self.assertEqual(
+            run_guard("git push --force origin refs/heads/main"), BLOCK
+        )
+
+    def test_head_to_protected_ref_is_blocked(self):
+        self.assertEqual(run_guard("git push --force origin HEAD:main"), BLOCK)
+
+    def test_multiple_refspecs_block_if_any_is_protected(self):
+        self.assertEqual(
+            run_guard("git push --force origin feature main"), BLOCK
+        )
+
+    def test_omitted_refspec_outside_repo_is_blocked(self):
+        # 宛先が現在のブランチ依存になる形。git 管理外では特定できないため止める。
+        self.assertEqual(run_guard("git push --force"), BLOCK)
+
+    def test_broadcast_flag_is_blocked(self):
+        # --all / --mirror は対象を1つに絞れない (保護ブランチを含みうる)
+        self.assertEqual(run_guard("git push --force --all origin"), BLOCK)
+        self.assertEqual(run_guard("git push --mirror origin"), ALLOW)
+        self.assertEqual(run_guard("git push --force --mirror origin"), BLOCK)
+
+    def test_option_value_is_not_read_as_refspec(self):
+        # `--receive-pack main` の値を refspec と誤読すると、対象が特定できたことに
+        # なってしまう。正しく読み飛ばせば refspec 省略形として止まる。
+        self.assertEqual(
+            run_guard("git push --force --receive-pack main origin"), BLOCK
         )
 
 

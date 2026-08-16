@@ -3,8 +3,9 @@
 
 対象は3種類。
 
-  1. 状況に依存せず常にNG (rm -rf / , git push の force 系 , git reset --hard)
-  2. 実行環境を見れば確定的に有害と判定できるもの (git の --no-verify, 保護ブランチ)
+  1. 状況に依存せず常にNG (rm -rf / , git reset --hard)
+  2. 実行環境を見れば確定的に有害と判定できるもの
+     (git の --no-verify, 保護ブランチへの直接コミット, 保護ブランチへの force push)
   3. 操作自体は正当だが、エージェントが自律的に行ってよいものではないもの
      (terraform state の書き換え、state の中身を平文で出す操作)
 
@@ -106,7 +107,15 @@ DEV_TARGET_RE = re.compile(r"^/dev/sd[a-z]")
 # --force-with-lease / --force-with-lease=<ref>:<oid> / -uf が素通りしていた。
 # git が force 系のオプションを増やしても拾えるよう、長い方は接頭辞で判定する。
 # 誤ってブロックする側の失敗は使った瞬間に気づけるが、素通しは気づけない。
+#
+# フラグを見るだけでは足りない。refspec の先頭 "+" (git push origin +main) も
+# force update であり、フラグを一切使わずに保護ブランチを上書きできる。
 FORCE_PUSH_FLAG_RE = re.compile(r"^--force|^-[a-zA-Z]*f[a-zA-Z]*$")
+# push のフラグのうち値を次のトークンに取るもの。読み飛ばさないと
+# 値 (`-o main`) を refspec と取り違えて判定対象を誤る。
+GIT_PUSH_OPTS_WITH_VALUE = {"-o", "--push-option", "--receive-pack", "--exec", "--repo"}
+# 対象 ref を1つに絞れないフラグ。保護ブランチを含みうるため特定不能として扱う。
+GIT_PUSH_BROADCAST_FLAGS = {"--all", "--branches", "--mirror"}
 
 
 def strip_heredocs(command: str) -> str:
@@ -173,11 +182,9 @@ def is_dangerous(tokens: list) -> bool:
 
     if tokens[0] == "git":
         # tokens[1] の直接比較ではなく extract_subcommand を通す。
-        # `git -C path push --force` のようにグローバルオプションを挟まれると
+        # `git -C path reset --hard` のようにグローバルオプションを挟まれると
         # 直接比較では素通りするため。
         subcommand, args = extract_subcommand(tokens)
-        if subcommand == "push" and any(FORCE_PUSH_FLAG_RE.match(a) for a in args):
-            return True
         if subcommand == "reset" and "--hard" in args:
             return True
 
@@ -339,6 +346,87 @@ def protected_branch(cwd: str) -> str:
     return branch
 
 
+def push_positional_args(args: list) -> list:
+    """push のフラグを読み飛ばして位置引数 (remote, refspec...) を返す。"""
+    positional = []
+    i = 0
+    while i < len(args):
+        token = args[i]
+        if token in GIT_PUSH_OPTS_WITH_VALUE:
+            i += 2
+            continue
+        if token.startswith("-"):
+            i += 1
+            continue
+        positional.append(token)
+        i += 1
+    return positional
+
+
+def is_force_push(args: list) -> bool:
+    """push の引数が force update を含むか。フラグと refspec の "+" の両方を見る。"""
+    if any(FORCE_PUSH_FLAG_RE.match(a) for a in args):
+        return True
+    # 位置引数の先頭は remote。refspec はその後ろ。
+    return any(spec.startswith("+") for spec in push_positional_args(args)[1:])
+
+
+def push_target_branches(args: list, cwd: str) -> list:
+    """push が書き換えるリモート側のブランチ名を返す。特定できなければ None。
+
+    None は「安全」ではなく「検査できなかった」を表す。呼び出し側でブロックへ倒す。
+    """
+    if any(a in GIT_PUSH_BROADCAST_FLAGS for a in args):
+        return None
+
+    refspecs = push_positional_args(args)[1:]
+    if not refspecs:
+        # refspec 省略時の宛先は push.default 依存だが、既定 (simple/current) では
+        # 同名のブランチ。detached HEAD や git 管理外では特定できない。
+        branch = run_git(cwd, "symbolic-ref", "--short", "HEAD")
+        return [branch] if branch else None
+
+    targets = []
+    for spec in refspecs:
+        dst = spec.lstrip("+")
+        if ":" in dst:
+            dst = dst.split(":", 1)[1]
+        if dst.startswith("refs/heads/"):
+            dst = dst[len("refs/heads/"):]
+        if dst in ("", "HEAD"):
+            branch = run_git(cwd, "symbolic-ref", "--short", "HEAD")
+            if not branch:
+                return None
+            dst = branch
+        targets.append(dst)
+    return targets
+
+
+def force_push_block_reason(tokens: list, cwd: str) -> str:
+    """ブロックすべき force push なら理由を返す。許可する場合は空文字列。
+
+    保護ブランチ以外への force push は通す。未マージの自ブランチを rebase / amend
+    してから上書きする用途は正当で、塞ぐと「履歴に残したくないものが残る」方へ倒れる。
+    リモートの保護ブランチは、上書きされると他人のコミットが失われ、
+    reflog も上書きした本人の手元にしか無いため復旧経路が無い。
+    """
+    if not tokens or tokens[0] != "git":
+        return ""
+
+    subcommand, args = extract_subcommand(tokens)
+    if subcommand != "push" or not is_force_push(args):
+        return ""
+
+    targets = push_target_branches(args, cwd)
+    if targets is None:
+        return "書き換え先のブランチを特定できません"
+
+    protected = sorted({t for t in targets if t in PROTECTED_BRANCHES})
+    if protected:
+        return f"保護ブランチ ({', '.join(protected)}) を上書きします"
+    return ""
+
+
 def verification_hooks_active(cwd: str) -> bool:
     """cwd の git リポジトリに、実際にスキップ対象となる検証フックがあるか。
 
@@ -412,6 +500,18 @@ def main() -> int:
             print("  出力はファイル・ターミナル・会話ログに複製として残り、", file=sys.stderr)
             print("  消しても複製が残る場所があります。", file=sys.stderr)
             print("  必要な場合は、あなた自身が端末で実行してください。", file=sys.stderr)
+            return 2
+        force_reason = force_push_block_reason(simple_command, cwd)
+        if force_reason:
+            print(f"ブロック: この force push は{force_reason}。", file=sys.stderr)
+            print("  上書きされたコミットは、上書きした本人の reflog にしか残りません。",
+                  file=sys.stderr)
+            print("  保護ブランチ以外への force push は通ります。対象を明示してください:",
+                  file=sys.stderr)
+            print("      git push --force-with-lease origin <feature-branch>",
+                  file=sys.stderr)
+            print("  保護ブランチを上書きする必要がある場合は、"
+                  "あなた自身が端末で実行してください。", file=sys.stderr)
             return 2
         if is_verification_bypass(simple_command):
             has_bypass = True
