@@ -37,6 +37,9 @@ Codex が同じキーかは実機で確認が必要。ここが違うと**フッ
 
 `~/.claude` がないと `exit 1` する。現状そのようなマシンはないため見送り。
 
+**着手条件**: Codex CLI だけを入れたマシン（`~/.claude` が無い環境）に
+この設定を展開する必要が出たとき。
+
 ### superpowers が Codex 実機で発火するか未確認
 
 導入と配線は完了（`docs/superpowers/specs/2026-08-05-codex-superpowers-design.md`）。
