@@ -10,13 +10,31 @@
 
 ## Codex CLI 対応の続き
 
-### `agents/` を Codex 向けに移植する
+### `agents/` の Codex 移植 → 完了（2026-08-18）
 
-Claude Code は Markdown + frontmatter、Codex は `config.toml` の `[agents]` / `.codex/agents/` で
-TOML 定義。8ファイルの書き直しが必要。
+**この項目は closed。** `agents/*.md` から `codex/agents/*.toml` を生成し、
+`setup.sh` が `~/.codex/agents` へリンクする。
 
-**保留理由**: Codex 側のサブエージェント粒度が固まっていない。先に移植すると使わない設定が残る。
-**着手条件**: Codex でサブエージェントを実際に使う場面が出てきたとき。
+写像で失われたもの（Codex 側に対応物が無い）。
+
+| Claude Code | Codex | 扱い |
+|---|---|---|
+| `tools: [Read, Write, ...]` | `sandbox_mode`（2値のみ） | 書き込み系ツールの有無で read-only / workspace-write に粗く写す |
+| `model: sonnet / opus` | 世代名のみ（別名が無い） | `gpt-5.6-luna` / `gpt-5.6-sol` に固定。**新世代が出たら表を更新する** |
+| `effort` | `model_reasoning_effort` | そのまま |
+| `color` | 無し | 捨てる |
+
+**モデル別名が無いことは実測済み**（`codex debug models` の `alias` が全件 null）。
+Claude 側は `sonnet` / `opus` が別名なので世代交代で壊れないが、
+**Codex 側だけ世代交代のたびに書き換えが要る**。更新箇所は
+`bin/generate-codex-agents.py` の `MODEL_MAP` 1箇所。
+
+**未検証**: 実機で spawn して定義が実際に適用されるか。
+`~/.codex/agents/*.toml` が適用されない不具合（openai/codex#26868）は
+2026-06-09 に closed だが、手元の 0.147.0 で確認したわけではない。
+
+**着手条件**: Codex でサブエージェントを実際に使うとき。1回 spawn して
+`sandbox_mode` と `model` が効いているかを見る。
 
 ### Codex 側のフック → 実機で検証済み（2026-08-18）
 

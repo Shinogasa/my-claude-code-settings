@@ -62,6 +62,9 @@ fi
 #            参照先を ~/.claude 側にすると Codex 単独マシンで壊れるため、~/.codex 配下に置く
 #   - codex/hooks.json: フックの定義そのもの。ユーザーレベルに置くとプロジェクトの
 #            trust 状態から独立して効く (プロジェクト配下だと新規リポジトリが無防備で始まる)
+#   - codex/agents: サブエージェント定義。Codex は TOML (~/.codex/agents/*.toml) を読む。
+#            agents/*.md から bin/generate-codex-agents.py で生成した成果物で、
+#            乖離は tests/test_codex_agents.py が検出する
 #
 # agents/ (Codex は config.toml の TOML 定義)、output-styles/ ・ statusline.js ・
 # settings.json (Codex に相当機能なし) は形式が違うため対象外。
@@ -81,6 +84,7 @@ if [ -d "$CODEX_DIR" ]; then
     "CLAUDE.md:$CODEX_DIR/AGENTS.md"
     "hooks:$CODEX_DIR/hooks"
     "codex/hooks.json:$CODEX_DIR/hooks.json"
+    "codex/agents:$CODEX_DIR/agents"
   )
   green "✓ $CODEX_DIR を検出しました。Codex 向けリンクも作成します"
   # Codex はフック定義のハッシュに対して trust を記録する。未承認のフックは
