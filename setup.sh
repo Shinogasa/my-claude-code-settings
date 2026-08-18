@@ -62,6 +62,9 @@ fi
 #            参照先を ~/.claude 側にすると Codex 単独マシンで壊れるため、~/.codex 配下に置く
 #   - codex/hooks.json: フックの定義そのもの。ユーザーレベルに置くとプロジェクトの
 #            trust 状態から独立して効く (プロジェクト配下だと新規リポジトリが無防備で始まる)
+#   - codex/agents: サブエージェント定義。Codex は TOML (~/.codex/agents/*.toml) を読む。
+#            agents/*.md から bin/generate-codex-agents.py で生成した成果物で、
+#            乖離は tests/test_codex_agents.py が検出する
 #
 # agents/ (Codex は config.toml の TOML 定義)、output-styles/ ・ statusline.js ・
 # settings.json (Codex に相当機能なし) は形式が違うため対象外。
@@ -81,6 +84,7 @@ if [ -d "$CODEX_DIR" ]; then
     "CLAUDE.md:$CODEX_DIR/AGENTS.md"
     "hooks:$CODEX_DIR/hooks"
     "codex/hooks.json:$CODEX_DIR/hooks.json"
+    "codex/agents:$CODEX_DIR/agents"
   )
   green "✓ $CODEX_DIR を検出しました。Codex 向けリンクも作成します"
   # Codex はフック定義のハッシュに対して trust を記録する。未承認のフックは
@@ -279,6 +283,41 @@ sys.exit(0 if any(p.get('pluginId') == target for p in data.get('installed', [])
       red "  失敗: $plugin_id の導入に失敗しました。手動で 'codex plugin add $plugin_id' を実行してください"
     fi
   done
+
+  remove_duplicate_codex_plugins "$installed"
+}
+
+# Codex は起動時に Claude Code の設定を取り込む (external agent migration)。
+# ~/.claude/settings.json で有効なプラグインは claude-plugins-official 版として
+# Codex 側にも入るため、CODEX_PLUGINS と同名のものが2経路から供給される。
+# 同じスキル名が2つ並ぶとどちらが使われるかが不定になるので、同名の別マーケット版を外す。
+#
+# 対象は「CODEX_PLUGINS に載っている名前」に限る。無関係なプラグインには触らない。
+remove_duplicate_codex_plugins() {
+  local installed="$1"
+  local duplicates
+  duplicates="$(printf '%s' "$installed" | python3 -c "
+import json, sys
+wanted = set(sys.argv[1:])
+names = {pid.split('@', 1)[0] for pid in wanted}
+data = json.load(sys.stdin)
+for p in data.get('installed', []):
+    pid = p.get('pluginId', '')
+    if pid not in wanted and pid.split('@', 1)[0] in names:
+        print(pid)
+" "${CODEX_PLUGINS[@]}")"
+
+  [ -z "$duplicates" ] && return
+
+  local dup
+  while IFS= read -r dup; do
+    [ -z "$dup" ] && continue
+    if codex plugin remove "$dup" > /dev/null 2>&1; then
+      yellow "  重複を削除: $dup （同名のプラグインが2経路から入っていました）"
+    else
+      red "  失敗: $dup の削除に失敗しました。手動で 'codex plugin remove $dup' を実行してください"
+    fi
+  done <<< "$duplicates"
 }
 
 setup_codex_plugins

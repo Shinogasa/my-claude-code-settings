@@ -10,41 +10,56 @@
 
 ## Codex CLI 対応の続き
 
-### `agents/` を Codex 向けに移植する
+### `agents/` の Codex 移植 → 完了（2026-08-18）
 
-Claude Code は Markdown + frontmatter、Codex は `config.toml` の `[agents]` / `.codex/agents/` で
-TOML 定義。8ファイルの書き直しが必要。
+**この項目は closed。** `agents/*.md` から `codex/agents/*.toml` を生成し、
+`setup.sh` が `~/.codex/agents` へリンクする。
 
-**保留理由**: Codex 側のサブエージェント粒度が固まっていない。先に移植すると使わない設定が残る。
-**着手条件**: Codex でサブエージェントを実際に使う場面が出てきたとき。
+写像で失われたもの（Codex 側に対応物が無い）。
 
-### Codex 側のフック → 実機で検証済み（2026-08-18）
+| Claude Code | Codex | 扱い |
+|---|---|---|
+| `tools: [Read, Write, ...]` | `sandbox_mode`（2値のみ） | 書き込み系ツールの有無で read-only / workspace-write に粗く写す |
+| `model: sonnet / opus` | 世代名のみ（別名が無い） | `gpt-5.6-luna` / `gpt-5.6-sol` に固定。**新世代が出たら表を更新する** |
+| `effort` | `model_reasoning_effort` | そのまま |
+| `color` | 無し | 捨てる |
 
-**この項目は closed。** `codex exec` から `git push --force origin main` を実行させ、
-`PreToolUse` フックがブロックすることを確認した。
+**モデル別名が無いことは実測済み**（`codex debug models` の `alias` が全件 null）。
+Claude 側は `sonnet` / `opus` が別名なので世代交代で壊れないが、
+**Codex 側だけ世代交代のたびに書き換えが要る**。更新箇所は
+`bin/generate-codex-agents.py` の `MODEL_MAP` 1箇所。
 
-```
-error=Command blocked by PreToolUse hook: ブロック: このforce pushは保護ブランチ (main) が対象です。
-Command: git push --force origin main
-```
+**未検証**: 実機で spawn して定義が実際に適用されるか。
+`~/.codex/agents/*.toml` が適用されない不具合（openai/codex#26868）は
+2026-06-09 に closed だが、手元の 0.147.0 で確認したわけではない。
 
-確認できたこと。
+**2026-08-18 の試行**: `codex exec` で spawn を1回試したが**結論は出ていない**。
+`agent_type` を指定した spawn は「Full-history forked agents inherit the parent
+agent type」で拒否され、指定を外して再試行した直後に**ゲートウェイが高負荷で落ちた**。
+拒否の文面はエージェント定義の不在ではなく fork の使い方に関するものなので、
+「定義が読まれていない」証拠にはならない。**再試行が必要**。
 
-- `PreToolUse` は Codex で発火する
-- payload は互換。ガードが対象 ref を `main` と解決してブロックしている
-- 終了コード2 + stderr でツール呼び出しが止まり、stderr はそのままユーザーに表示される
-- 配線は `~/.codex/hooks.json` → `codex/hooks.json` のシンボリックリンク（`setup.sh`）
+**着手条件**: Codex でサブエージェントを実際に使うとき。1回 spawn して
+`sandbox_mode` と `model` が効いているかを見る。read-only の確認は
+「ファイルを1つ作らせて失敗すること」まで見ると確実。
 
-**trust のハッシュ対象が確定した**: リンク方式へ切り替えたとき、
-`pre_tool_use:0`（guard）と `pre_tool_use:2`（warn-branch-behind-main）の
-`trusted_hash` は変わったが、`pre_tool_use:1`（`rtk hook claude`）は**変わらなかった**。
-定義文字列が変わったものだけがハッシュを変える。
-→ **呼び出し先スクリプトを編集しても再承認は不要。`hooks.json` を書き換えたときだけ必要。**
+### Codex 実行時のフック失敗 → SessionStart の空出力契約を修正（2026-08-18）
 
-**運用上の注意（残る）**: 未承認のフックはエラーにならずスキップされる。
-`codex/hooks.json` を編集した後は `/hooks` での再承認が要る。
-承認状態は `~/.codex/config.toml` の `[hooks.state]` にあり、**リポジトリには入らない**。
-新しい端末では設定は届くが承認は届かない。
+`PreToolUse hook returned updatedInput without permissionDecision:allow` は、
+`rtk hook claude` の出力が Codex の契約に合わないことが原因で、`codex/hooks.json`
+から rtk を外した対応を維持する。
+
+`hook returned invalid session start JSON output` は、いったん「無出力が invalid」と
+誤診して `{}` を返す修正を入れたが、Codex 0.147.0 で再現した。公式の Hooks 契約では
+SessionStart は**終了コード0 + 無出力が成功**であり、空オブジェクト `{}` は有効な
+SessionStart 応答として扱われない。`detect-parallel-sessions.sh` の早期 return を
+無出力へ戻し、回帰テスト6件で固定した。
+
+**教訓**: Claude Code と Codex で共通化するフックは、イベントごとの出力契約を
+推測せず、対象ホストの公式仕様と実機の最小再現で確認する。
+
+**rtk について**: Codex 側では書き換えが効かないまま失敗ログだけが出る状態だった。
+Claude Code 側（`settings.json`）は従来どおり有効で、そちらの挙動は変えていない。
 
 ### `setup.sh` が Codex 専用マシンで動かない
 
@@ -53,18 +68,46 @@ Command: git push --force origin main
 **着手条件**: Codex CLI だけを入れたマシン（`~/.claude` が無い環境）に
 この設定を展開する必要が出たとき。
 
-### superpowers が Codex 実機で発火するか未確認
+### superpowers の実機発火 → 確認済み（2026-08-18）
 
-導入と配線は完了（`docs/superpowers/specs/2026-08-05-codex-superpowers-design.md`）。
-構造的な検証（プラグイン展開先・`AGENTS.md` への到達）は通っているが、
-**実機で 1 ターン回して skills が実際に参照されるかは未確認**。
-検証時に LLM ゲートウェイが予算上限超過（HTTP 429）で実行できなかったため。
+**この項目は closed。** `codex exec` の1ターンで、Codex が応答前に
+`using-superpowers` の SKILL.md を自分で読みに行くことを観測した。
 
-**確認すること**: `AGENTS.md` の `## superpowers` 節だけで発火が成立するか。
-成立しないなら、指示の強度を上げるか（`<IMPORTANT>` 相当の明示）、
-別の配線を検討する。
+```
+codex
+`superpowers:using-superpowers` を先に確認し、このセッションのスキル適用ルールに従います。
+exec /bin/zsh -lc "sed -n '1,240p' .../superpowers/11c74d6b/skills/using-superpowers/SKILL.md"
+```
 
-**着手条件**: ゲートウェイの予算が回復し次第。
+`AGENTS.md` の `## superpowers` 節（「応答を始める前に自分で読むこと」）だけで
+発火が成立している。指示の強度を上げる必要は現時点では無い。
+
+**限界**: 観測は1ターンのみ。毎ターン・毎セッション成立するかは未確認。
+散文指示に依存している以上、**守られなかったことを検知する手段が無い**。
+
+### superpowers の自動注入をプラグイン同梱フックで賄えるか → 決めること
+
+Codex は**プラグイン同梱の `hooks/hooks.json` を読む**（実測: `[hooks.state]` に
+`security-guidance@claude-plugins-official:hooks/hooks.json` と
+`learning-output-style@claude-plugins-official:hooks/hooks.json` のエントリがある）。
+
+一方、採用している `superpowers@openai-curated` は**配布物に `hooks/` を含まない**
+（`assets` / `CODE_OF_CONDUCT.md` / `LICENSE` / `README.md` / `skills` のみ）。
+`superpowers@claude-plugins-official` の方は `hooks/hooks.json` を同梱し、
+`SessionStart` で `run-hook.cmd session-start` を呼ぶ形になっていた。
+
+つまり **Claude 版を採ればフックによる自動注入が成立した可能性がある**。
+ただし当該プラグインの trust エントリは存在しなかったため、
+**Codex 上で実際に発火したかは未確認**（matcher が `startup|clear|compact` である点が
+関係する可能性がある）。2026-08-18 に重複解消のため Claude 版は削除済み。
+
+**決めること**: 散文指示のままにするか、自動注入の機構を作るか。
+機構にするなら (a) `codex/hooks.json` の `SessionStart` で
+`using-superpowers` を読ませる、(b) Claude 版を再導入して同梱フックに任せる、
+のどちらか。(b) は重複が復活するため `setup.sh` の重複削除と衝突する。
+
+**着手条件**: 散文指示が守られなかった事例を観測したとき、または
+Codex を主ホストとして使う頻度が上がったとき。
 
 ---
 

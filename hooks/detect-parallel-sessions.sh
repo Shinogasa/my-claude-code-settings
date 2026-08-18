@@ -22,30 +22,37 @@ set -uo pipefail
 
 cat >/dev/null   # payload は使わないが読み捨てる
 
+# 通知が無いときは何も出力しない。
+# Codex は SessionStart の終了コード0 + 無出力を成功として扱い、
+# Claude Code も「何もしない」として扱うため、両ホストで同じスクリプトが使える。
+quiet_exit() {
+  exit 0
+}
+
 DETECT="${PARALLEL_SESSIONS_DETECT_CMD:-$HOME/.claude/bin/detect-parallel-sessions}"
 EXCLUDE_PATH="${PARALLEL_SESSIONS_EXCLUDE_PATH:-$HOME/.claude/rules}"
 
-[ -x "$DETECT" ] || exit 0
-command -v git >/dev/null 2>&1 || exit 0
-command -v jq  >/dev/null 2>&1 || exit 0
+[ -x "$DETECT" ] || quiet_exit
+command -v git >/dev/null 2>&1 || quiet_exit
+command -v jq  >/dev/null 2>&1 || quiet_exit
 
-my_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
-[ -n "$my_common" ] || exit 0
+my_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || quiet_exit
+[ -n "$my_common" ] || quiet_exit
 
 # 対象外判定。リンクの実体からリポジトリを導出するため、別名で配置しても効く。
 if [ -e "$EXCLUDE_PATH" ]; then
   exclude_real=$(cd "$EXCLUDE_PATH" 2>/dev/null && pwd -P)
   if [ -n "${exclude_real:-}" ]; then
     exclude_common=$(git -C "$exclude_real" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
-    [ "${exclude_common:-}" = "$my_common" ] && exit 0
+    [ "${exclude_common:-}" = "$my_common" ] && quiet_exit
   fi
 fi
 
-sessions=$("$DETECT" 2>/dev/null) || exit 0
-count=$(printf '%s' "$sessions" | jq 'length' 2>/dev/null) || exit 0
-[ "${count:-0}" -gt 0 ] 2>/dev/null || exit 0
+sessions=$("$DETECT" 2>/dev/null) || quiet_exit
+count=$(printf '%s' "$sessions" | jq 'length' 2>/dev/null) || quiet_exit
+[ "${count:-0}" -gt 0 ] 2>/dev/null || quiet_exit
 
-pids=$(printf '%s' "$sessions" | jq -r '[.[].pid] | join(", ")' 2>/dev/null) || exit 0
+pids=$(printf '%s' "$sessions" | jq -r '[.[].pid] | join(", ")' 2>/dev/null) || quiet_exit
 cwd=$(pwd -P)
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
 

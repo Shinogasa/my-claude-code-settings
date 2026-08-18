@@ -58,6 +58,11 @@ def run_hook(cwd, detect_cmd, exclude_path):
     return result.stdout.strip()
 
 
+# 通知が無いときは stdout に何も出さない。
+# Codex は SessionStart の終了コード0 + 無出力を成功として扱う。
+QUIET = ""
+
+
 class TestHook(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -88,19 +93,19 @@ class TestHook(unittest.TestCase):
         self.assertIn("111", ctx)
 
     def test_silent_when_no_collision(self):
-        self.assertEqual(run_hook(self.repo, self.none, self.settings_repo), "")
+        self.assertEqual(run_hook(self.repo, self.none, self.settings_repo), QUIET)
 
     def test_silent_in_excluded_repository(self):
         # 対象外リポジトリ (~/.claude/rules の実体) では検出ありでも黙る
-        self.assertEqual(run_hook(self.settings_repo, self.found, self.settings_repo), "")
+        self.assertEqual(run_hook(self.settings_repo, self.found, self.settings_repo), QUIET)
 
     def test_silent_outside_git_repo(self):
         with tempfile.TemporaryDirectory() as plain:
-            self.assertEqual(run_hook(plain, self.found, self.settings_repo), "")
+            self.assertEqual(run_hook(plain, self.found, self.settings_repo), QUIET)
 
     def test_silent_when_detect_command_missing(self):
         missing = Path(self._tmp.name) / "no-such-command"
-        self.assertEqual(run_hook(self.repo, missing, self.settings_repo), "")
+        self.assertEqual(run_hook(self.repo, missing, self.settings_repo), QUIET)
 
 
 if __name__ == "__main__":
