@@ -53,18 +53,46 @@ Command: git push --force origin main
 **着手条件**: Codex CLI だけを入れたマシン（`~/.claude` が無い環境）に
 この設定を展開する必要が出たとき。
 
-### superpowers が Codex 実機で発火するか未確認
+### superpowers の実機発火 → 確認済み（2026-08-18）
 
-導入と配線は完了（`docs/superpowers/specs/2026-08-05-codex-superpowers-design.md`）。
-構造的な検証（プラグイン展開先・`AGENTS.md` への到達）は通っているが、
-**実機で 1 ターン回して skills が実際に参照されるかは未確認**。
-検証時に LLM ゲートウェイが予算上限超過（HTTP 429）で実行できなかったため。
+**この項目は closed。** `codex exec` の1ターンで、Codex が応答前に
+`using-superpowers` の SKILL.md を自分で読みに行くことを観測した。
 
-**確認すること**: `AGENTS.md` の `## superpowers` 節だけで発火が成立するか。
-成立しないなら、指示の強度を上げるか（`<IMPORTANT>` 相当の明示）、
-別の配線を検討する。
+```
+codex
+`superpowers:using-superpowers` を先に確認し、このセッションのスキル適用ルールに従います。
+exec /bin/zsh -lc "sed -n '1,240p' .../superpowers/11c74d6b/skills/using-superpowers/SKILL.md"
+```
 
-**着手条件**: ゲートウェイの予算が回復し次第。
+`AGENTS.md` の `## superpowers` 節（「応答を始める前に自分で読むこと」）だけで
+発火が成立している。指示の強度を上げる必要は現時点では無い。
+
+**限界**: 観測は1ターンのみ。毎ターン・毎セッション成立するかは未確認。
+散文指示に依存している以上、**守られなかったことを検知する手段が無い**。
+
+### superpowers の自動注入をプラグイン同梱フックで賄えるか → 決めること
+
+Codex は**プラグイン同梱の `hooks/hooks.json` を読む**（実測: `[hooks.state]` に
+`security-guidance@claude-plugins-official:hooks/hooks.json` と
+`learning-output-style@claude-plugins-official:hooks/hooks.json` のエントリがある）。
+
+一方、採用している `superpowers@openai-curated` は**配布物に `hooks/` を含まない**
+（`assets` / `CODE_OF_CONDUCT.md` / `LICENSE` / `README.md` / `skills` のみ）。
+`superpowers@claude-plugins-official` の方は `hooks/hooks.json` を同梱し、
+`SessionStart` で `run-hook.cmd session-start` を呼ぶ形になっていた。
+
+つまり **Claude 版を採ればフックによる自動注入が成立した可能性がある**。
+ただし当該プラグインの trust エントリは存在しなかったため、
+**Codex 上で実際に発火したかは未確認**（matcher が `startup|clear|compact` である点が
+関係する可能性がある）。2026-08-18 に重複解消のため Claude 版は削除済み。
+
+**決めること**: 散文指示のままにするか、自動注入の機構を作るか。
+機構にするなら (a) `codex/hooks.json` の `SessionStart` で
+`using-superpowers` を読ませる、(b) Claude 版を再導入して同梱フックに任せる、
+のどちらか。(b) は重複が復活するため `setup.sh` の重複削除と衝突する。
+
+**着手条件**: 散文指示が守られなかった事例を観測したとき、または
+Codex を主ホストとして使う頻度が上がったとき。
 
 ---
 

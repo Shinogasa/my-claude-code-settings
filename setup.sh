@@ -279,6 +279,41 @@ sys.exit(0 if any(p.get('pluginId') == target for p in data.get('installed', [])
       red "  失敗: $plugin_id の導入に失敗しました。手動で 'codex plugin add $plugin_id' を実行してください"
     fi
   done
+
+  remove_duplicate_codex_plugins "$installed"
+}
+
+# Codex は起動時に Claude Code の設定を取り込む (external agent migration)。
+# ~/.claude/settings.json で有効なプラグインは claude-plugins-official 版として
+# Codex 側にも入るため、CODEX_PLUGINS と同名のものが2経路から供給される。
+# 同じスキル名が2つ並ぶとどちらが使われるかが不定になるので、同名の別マーケット版を外す。
+#
+# 対象は「CODEX_PLUGINS に載っている名前」に限る。無関係なプラグインには触らない。
+remove_duplicate_codex_plugins() {
+  local installed="$1"
+  local duplicates
+  duplicates="$(printf '%s' "$installed" | python3 -c "
+import json, sys
+wanted = set(sys.argv[1:])
+names = {pid.split('@', 1)[0] for pid in wanted}
+data = json.load(sys.stdin)
+for p in data.get('installed', []):
+    pid = p.get('pluginId', '')
+    if pid not in wanted and pid.split('@', 1)[0] in names:
+        print(pid)
+" "${CODEX_PLUGINS[@]}")"
+
+  [ -z "$duplicates" ] && return
+
+  local dup
+  while IFS= read -r dup; do
+    [ -z "$dup" ] && continue
+    if codex plugin remove "$dup" > /dev/null 2>&1; then
+      yellow "  重複を削除: $dup （同名のプラグインが2経路から入っていました）"
+    else
+      red "  失敗: $dup の削除に失敗しました。手動で 'codex plugin remove $dup' を実行してください"
+    fi
+  done <<< "$duplicates"
 }
 
 setup_codex_plugins
