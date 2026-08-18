@@ -33,8 +33,41 @@ Claude 側は `sonnet` / `opus` が別名なので世代交代で壊れないが
 `~/.codex/agents/*.toml` が適用されない不具合（openai/codex#26868）は
 2026-06-09 に closed だが、手元の 0.147.0 で確認したわけではない。
 
+**2026-08-18 の試行**: `codex exec` で spawn を1回試したが**結論は出ていない**。
+`agent_type` を指定した spawn は「Full-history forked agents inherit the parent
+agent type」で拒否され、指定を外して再試行した直後に**ゲートウェイが高負荷で落ちた**。
+拒否の文面はエージェント定義の不在ではなく fork の使い方に関するものなので、
+「定義が読まれていない」証拠にはならない。**再試行が必要**。
+
 **着手条件**: Codex でサブエージェントを実際に使うとき。1回 spawn して
-`sandbox_mode` と `model` が効いているかを見る。
+`sandbox_mode` と `model` が効いているかを見る。read-only の確認は
+「ファイルを1つ作らせて失敗すること」まで見ると確実。
+
+### Codex 実行時に一部のフックが Failed になる → 原因未特定
+
+2026-08-18 の `codex exec` で `SessionStart Failed` と `PreToolUse Failed` が
+1件ずつ出た（他は Completed）。**どのフックが失敗したかは特定できていない。**
+
+調べた範囲と結果。
+
+| 対象 | 方法 | 結果 |
+|---|---|---|
+| 自前の4フック | Codex 形式の payload を直接流す | 全て exit=0 |
+| `learning-output-style` | `CLAUDE_PLUGIN_ROOT` を設定して実行 | exit=0（未設定だと 127） |
+| `security-guidance` | 同上 | 正常に JSON を返す |
+| Codex のログ DB | `logs_2.sqlite` を hook + ERROR/WARN で検索 | 該当なし |
+
+**反証条件**: この「自前のフックではない」が誤りなら、payload の形が
+実際の Codex のものと違っていたか、タイムアウトなど payload 以外の要因で
+落ちていることになる。どちらもこの調べ方では検出できない。
+
+**注意**: 当該実行では `--dangerously-bypass-hook-trust` が有効だった
+（警告が2回出ている）。**trust 承認済みの状態での挙動を見たことにはならない。**
+
+**着手条件**: 失敗が繰り返し観測されたとき、または Codex のフックログを
+取り出す手段が分かったとき。
+
+
 
 ### Codex 側のフック → 実機で検証済み（2026-08-18）
 
