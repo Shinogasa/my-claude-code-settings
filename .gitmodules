@@ -1,3 +1,6 @@
 [submodule "claude-code-best-practice"]
 	path = claude-code-best-practice
 	url = git@github.com:shanraisshan/claude-code-best-practice.git
+[submodule "codex-cli-best-practice"]
+	path = codex-cli-best-practice
+	url = git@github.com:shanraisshan/codex-cli-best-practice.git
