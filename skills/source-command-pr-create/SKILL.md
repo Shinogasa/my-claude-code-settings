@@ -1,0 +1,26 @@
+---
+name: "source-command-pr-create"
+description: "現在のブランチの変更内容を確認し、GitHub PRの作成を支援する"
+---
+
+# source-command-pr-create
+
+Use this skill when the user asks to run the migrated source command `pr-create`.
+
+## Command Template
+
+現在のブランチの変更内容を確認し、GitHub CLIを使ってPR作成を支援してください。
+
+1. git diff を使って変更内容を確認
+2. PR説明文の生成
+
+   以下の項目を含めてください：
+   - 変更の概要
+   - 変更の理由/背景
+   - 主な変更点（箇条書き）
+   - テスト方法
+   - 関連Issue
+
+3. PRの作成
+
+わかりやすく、レビュアーが理解しやすい説明文を作成してください。

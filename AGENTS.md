@@ -2,16 +2,16 @@
 
 ## ベストプラクティス
 
-Claude Code設定の作業時は `/claude-code-best-practice` スキルが自動参照される（git submodule）
+Codex設定の作業時は `/Codex-best-practice` スキルが自動参照される（git submodule）
 
 ## リポジトリ概要
 
 コーディングエージェントのグローバル設定をGit管理するリポジトリ。`bash setup.sh` でシンボリックリンクを作成する。
 
-- Claude Code: `~/.claude/` 配下（全資産）
-- Codex CLI: `~/.agents/skills` `~/.codex/prompts` `~/.codex/rules` `~/.codex/AGENTS.md` `~/.codex/hooks` `~/.codex/hooks.json`（`~/.codex` がある場合のみ）
+- Codex: `~/.Codex/` 配下（全資産）
+- Codex CLI: `~/.agents/skills` `~/.codex/prompts` `~/.codex/rules` `~/.codex/AGENTS.md`（`~/.codex` がある場合のみ）
 
-skills / commands / rules / CLAUDE.md は単一ソースを両ホストへリンクしている。**内容を書くときは特定ホスト固有のツール名・パスに依存させない**（依存する場合はホスト別に併記する）。
+skills / commands / rules / AGENTS.md は単一ソースを両ホストへリンクしている。**内容を書くときは特定ホスト固有のツール名・パスに依存させない**（依存する場合はホスト別に併記する）。
 
 ### このファイル内の `rules/...` の解決先
 
@@ -19,7 +19,7 @@ skills / commands / rules / CLAUDE.md は単一ソースを両ホストへリン
 
 | ホスト | 実体 | 自動読み込み |
 |---|---|---|
-| Claude Code | `~/.claude/rules/` | `paths:` frontmatter が**無い**ものだけ毎セッション展開される。`paths:` があるものはマッチするファイルを読んだときに読み込まれる |
+| Codex | `~/.Codex/rules/` | `paths:` frontmatter が**無い**ものだけ毎セッション展開される。`paths:` があるものはマッチするファイルを読んだときに読み込まれる |
 | Codex CLI | `~/.codex/rules/` | **されない。参照が必要になった時点で自分で読むこと** |
 
 `paths:` を付けるとコンテキストは減るが、**`/compact` 後に再注入されない**（次にマッチする
@@ -31,7 +31,7 @@ skills の発火方式がホストで異なる。
 
 | ホスト | 発火方式 |
 |---|---|
-| Claude Code | プラグインの SessionStart hook が `using-superpowers` を自動注入する。追加操作は不要 |
+| Codex | プラグインの SessionStart hook が `using-superpowers` を自動注入する。追加操作は不要 |
 | Codex CLI | 配布物が hook を同梱しない。**応答を始める前に `superpowers:using-superpowers` を自分で読むこと** |
 
 ## 言語
@@ -55,8 +55,8 @@ skills の発火方式がホストで異なる。
 
 | ホスト | 強制の有無 |
 |---|---|
-| Claude Code | `hooks/guard-dangerous-bash.py` が PreToolUse でブロックする |
-| Codex CLI | `codex/hooks.json` が PreToolUse で同じスクリプトを呼ぶ。**ただし Codex 側で `/hooks` の承認が要る。未承認のフックは黙ってスキップされる** |
+| Codex | `hooks/guard-dangerous-bash.py` が PreToolUse でブロックする |
+| Codex CLI | **未配線。フックが無いので、上のルールを自分で守ること**（`tasks/backlog.md` 参照） |
 
 初回コミット（コミットが1つも無いリポジトリ）と detached HEAD は対象外。
 意図的に直接コミットする場合はユーザー自身が端末で実行する。
@@ -73,7 +73,7 @@ skills の発火方式がホストで異なる。
 - **選ばせるのは結論、書かせるのが判断基準。** 選択肢のラベルや説明に判断基準を書かない。
   `（推奨）` も付けない（予測前に正解を渡すことになる）
 - 選択の直後に「なぜそれを選んだか」を自由記述で問い、**そのメッセージを終える**
-- 予測は応答を待つ対話ツールで求める（Claude Code では `AskUserQuestion`）。散文で「停止する」と書かない
+- 予測は応答を待つ対話ツールで求める（Codex では `AskUserQuestion`）。散文で「停止する」と書かない
 - 「全部やって」「任せる」「急ぎ」「予測なしで」→ **OFF**（そのタスク中のみ）
 - 1タスク完了後は自動的にONに戻る
 - 詳細仕様は `rules/learning-mode.md`、設計の経緯は `docs/adr/0001-learning-mode-prediction-format.md` を参照

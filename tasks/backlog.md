@@ -18,20 +18,39 @@ TOML 定義。8ファイルの書き直しが必要。
 **保留理由**: Codex 側のサブエージェント粒度が固まっていない。先に移植すると使わない設定が残る。
 **着手条件**: Codex でサブエージェントを実際に使う場面が出てきたとき。
 
-### `hooks/` を Codex に配線する
+### Codex 側のフックが実機で発火するか未確認
 
-`guard-dangerous-bash.py` のロジック本体は流用できる見込み。イベント名（`PreToolUse` 等）は
-Claude Code と共通。配線先が `settings.json` → `config.toml` / `hooks.json` に変わる。
+2026-08-18 に配線した（`codex/hooks.json` → `~/.codex/hooks.json`、
+PreToolUse で `guard-dangerous-bash.sh` を呼ぶ）。根拠は一次ドキュメントと
+payload 互換テストで、**実機で1ターン回した確認は取れていない**。
 
-**未検証**: フックが受け取る標準入力の payload キー。Claude Code は `tool_input.command`。
-Codex が同じキーかは実機で確認が必要。ここが違うと**フックは起動するがコマンドを読めず、
-何もブロックしないまま正常終了する**（危険コマンド防御が黙って無効化される）。
+一次ドキュメントで確認済み（→ https://developers.openai.com/codex/hooks）
 
-**着手条件**: Codex で破壊的コマンドを扱う作業が発生する前。
+- payload のキーは Claude Code と同一（`tool_name` / `tool_input.command` / `cwd`）
+- ブロックは終了コード2 + stderr で共通
+- `~/.codex/hooks.json` はユーザーレベルとして読まれ、プロジェクトの trust から独立
 
-**対象が増えた（2026-08-08）**: このフックは危険コマンド防御に加えて
-**main / master への直接コミットのブロック**も担うようになった。Codex 側では
-どちらも効いていないため、配線の価値が上がっている。
+**未確認**: 実際に `PreToolUse` が発火し、ブロックが効くか。
+検証は `codex exec` を1回走らせれば済むが、このセッションでは
+Claude Code 側の分類器が別エージェント CLI の起動をブロックしたため実施できなかった。
+ユーザーが端末で直接実行する必要がある。
+
+**trust の fail-open に注意**: 未承認のフックはエラーにならず**スキップ**される。
+`hooks.json` を書き換えるたびに承認が外れる（呼び出し先スクリプトの編集では外れない。
+`[hooks.state]` の `trusted_hash` が2つの異なるパスで一致したことから、
+ハッシュ対象はフック定義の文字列だと判断した）。
+
+**着手条件**: 次に Codex を使うとき。`codex exec "echo test"` 相当を1回流し、
+`/hooks` で承認済みであることと、危険コマンドが実際に止まることを確認する。
+
+**手元の実測（2026-08-18）**: `~/.codex/hooks.json` は既に手動で作られていた
+（スクリプトはリポジトリからのコピー）。しかし `config.toml` の `[hooks.state]` に
+**このファイルの trust エントリが無い**。ドキュメントどおりなら、
+配線は存在するが**スキップされている**。「設定ファイルがある」ことを
+「防御が効いている」と読み替えてはいけない実例。
+
+**判定に使える指標**: `[hooks.state]` に `/Users/<user>/.codex/hooks.json:*` の
+エントリがあり `enabled = true` であること。無ければ未承認。
 
 ### `setup.sh` が Codex 専用マシンで動かない
 

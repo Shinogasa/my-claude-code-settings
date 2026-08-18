@@ -290,6 +290,66 @@ class TestRefDeletion(unittest.TestCase):
         self.assertEqual(run_guard("git push --dry-run origin main"), ALLOW)
 
 
+class TestCodexPayloadCompatibility(unittest.TestCase):
+    """Codex CLI の PreToolUse payload でも同じ判定になること。
+
+    Codex の payload は Claude Code と同じキー (tool_name / tool_input.command / cwd) を
+    持ち、hook_event_name・tool_use_id・turn_id・permission_mode が追加される
+    (一次ドキュメント: https://developers.openai.com/codex/hooks)。
+
+    このテストが守るのは「知らないキーが増えても壊れない」こと。
+    キーが違えばフックは起動するがコマンドを読めず、
+    何もブロックしないまま正常終了する (防御が黙って無効化される)。
+    """
+
+    def run_codex_guard(self, command, cwd=None):
+        target = str(cwd) if cwd is not None else NEUTRAL_DIR
+        payload = {
+            "session_id": "sess-1",
+            "turn_id": "turn-1",
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_use_id": "call-1",
+            "tool_input": {"command": command},
+            "permission_mode": "default",
+            "cwd": target,
+        }
+        return subprocess.run(
+            [sys.executable, str(GUARD)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            cwd=target,
+        ).returncode
+
+    def test_dangerous_command_is_blocked(self):
+        self.assertEqual(self.run_codex_guard("rm -rf /"), BLOCK)
+
+    def test_protected_force_push_is_blocked(self):
+        self.assertEqual(self.run_codex_guard("git push --force origin main"), BLOCK)
+
+    def test_safe_command_is_allowed(self):
+        self.assertEqual(self.run_codex_guard("ls -la"), ALLOW)
+
+    def test_unknown_extra_keys_do_not_break_parsing(self):
+        # Codex 側が将来キーを増やしても、既知のキーだけで判定できること
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "rm -rf /", "unknown_field": "x"},
+            "cwd": NEUTRAL_DIR,
+            "future_field": {"nested": [1, 2, 3]},
+        }
+        result = subprocess.run(
+            [sys.executable, str(GUARD)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            cwd=NEUTRAL_DIR,
+        )
+        self.assertEqual(result.returncode, BLOCK)
+
+
 class TestTerraformStateWrite(unittest.TestCase):
     """terraform state の書き換え操作の判定。
 
