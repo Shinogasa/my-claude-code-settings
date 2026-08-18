@@ -57,8 +57,14 @@ fi
 #   - rules: AGENTS.md から `rules/...` の相対参照で辿れるよう同じ階層に置く
 # 内容の二重管理を避けるため、単一ソースを両ホストへリンクする。
 #
-# agents/ (Codex は config.toml の TOML 定義) と hooks/ (配線先が hooks.json)、
-# output-styles/ ・ statusline.js ・ settings.json (Codex に相当機能なし) は形式が違うため対象外。
+#   - hooks: PreToolUse の payload が Claude Code と同一 (tool_name / tool_input.command / cwd)
+#            で、ブロック手段も終了コード2 + stderr で共通。スクリプトをそのまま共有する。
+#            参照先を ~/.claude 側にすると Codex 単独マシンで壊れるため、~/.codex 配下に置く
+#   - codex/hooks.json: フックの定義そのもの。ユーザーレベルに置くとプロジェクトの
+#            trust 状態から独立して効く (プロジェクト配下だと新規リポジトリが無防備で始まる)
+#
+# agents/ (Codex は config.toml の TOML 定義)、output-styles/ ・ statusline.js ・
+# settings.json (Codex に相当機能なし) は形式が違うため対象外。
 #
 # 導入判定は ~/.codex の有無で行う。未導入マシンに設定ファイルを先回りで生やすと
 # Codex 初回起動時の状態が読めなくなるため、無ければ何も作らない。
@@ -73,8 +79,16 @@ if [ -d "$CODEX_DIR" ]; then
     "commands:$CODEX_DIR/prompts"
     "rules:$CODEX_DIR/rules"
     "CLAUDE.md:$CODEX_DIR/AGENTS.md"
+    "hooks:$CODEX_DIR/hooks"
+    "codex/hooks.json:$CODEX_DIR/hooks.json"
   )
   green "✓ $CODEX_DIR を検出しました。Codex 向けリンクも作成します"
+  # Codex はフック定義のハッシュに対して trust を記録する。未承認のフックは
+  # エラーにならず「スキップ」される (fail-open)。hooks.json を書き換えた直後は
+  # 承認が外れた状態になるため、リンクを張っただけでは防御が効かない。
+  # 呼び出し先スクリプト (guard-dangerous-bash.py) の編集ではハッシュは変わらない。
+  yellow "  注意: Codex 側で /hooks を開き、ガードフックを承認してください"
+  yellow "        未承認のフックは黙ってスキップされます (エラーになりません)"
 else
   yellow "スキップ: $CODEX_DIR がないため Codex 向けリンクは作成しません"
 fi
