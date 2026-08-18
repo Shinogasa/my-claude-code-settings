@@ -58,11 +58,9 @@ def run_hook(cwd, detect_cmd, exclude_path):
     return result.stdout.strip()
 
 
-# 通知が無いときの出力。空文字列ではなく空 JSON を返す。
-# Codex は SessionStart の stdout を JSON として解釈し、無出力を
-# "invalid session start JSON output" として失敗扱いにするため (2026-08-18 に実測)。
-# Claude Code は空 JSON を無視するので、両ホストでこのスクリプトを共有できる。
-QUIET = "{}"
+# 通知が無いときは stdout に何も出さない。
+# Codex は SessionStart の終了コード0 + 無出力を成功として扱う。
+QUIET = ""
 
 
 class TestHook(unittest.TestCase):

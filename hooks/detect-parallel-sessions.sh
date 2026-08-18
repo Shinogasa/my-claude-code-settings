@@ -22,12 +22,10 @@ set -uo pipefail
 
 cat >/dev/null   # payload は使わないが読み捨てる
 
-# 通知が無いときも空文字列ではなく空の JSON を返す。
-# Codex は SessionStart の stdout を JSON として解釈するため、無出力は
-# "invalid session start JSON output" として失敗扱いになる (実測)。
-# Claude Code は空 JSON を無視するので、両ホストで同じスクリプトが使える。
+# 通知が無いときは何も出力しない。
+# Codex は SessionStart の終了コード0 + 無出力を成功として扱い、
+# Claude Code も「何もしない」として扱うため、両ホストで同じスクリプトが使える。
 quiet_exit() {
-  printf '{}\n'
   exit 0
 }
 

@@ -43,18 +43,20 @@ agent type」で拒否され、指定を外して再試行した直後に**ゲ�
 `sandbox_mode` と `model` が効いているかを見る。read-only の確認は
 「ファイルを1つ作らせて失敗すること」まで見ると確実。
 
-### Codex 実行時のフック失敗 → 特定して修正済み（2026-08-18）
+### Codex 実行時のフック失敗 → SessionStart の空出力契約を修正（2026-08-18）
 
-**この項目は closed。** 2件とも原因が判明し、どちらもこちらの配線が原因だった。
+`PreToolUse hook returned updatedInput without permissionDecision:allow` は、
+`rtk hook claude` の出力が Codex の契約に合わないことが原因で、`codex/hooks.json`
+から rtk を外した対応を維持する。
 
-| 失敗 | 原因 | 対応 |
-|---|---|---|
-| `PreToolUse hook returned updatedInput without permissionDecision:allow` | `rtk hook claude` の出力が `updatedInput` を返すのに `permissionDecision: "allow"` を含まない。Claude Code は通すが Codex は拒否する | `codex/hooks.json` から rtk を外した |
-| `hook returned invalid session start JSON output` | `detect-parallel-sessions.sh` が通知の無いとき無出力。Codex は stdout を JSON として解釈するため空文字列は invalid | 早期 return を `{}` の出力に変えた（10箇所） |
+`hook returned invalid session start JSON output` は、いったん「無出力が invalid」と
+誤診して `{}` を返す修正を入れたが、Codex 0.147.0 で再現した。公式の Hooks 契約では
+SessionStart は**終了コード0 + 無出力が成功**であり、空オブジェクト `{}` は有効な
+SessionStart 応答として扱われない。`detect-parallel-sessions.sh` の早期 return を
+無出力へ戻し、回帰テスト6件で固定した。
 
-**教訓**: Claude Code のフック出力契約は「無出力＝何もしない」を許すが、
-Codex は**常に JSON を要求する**。同じスクリプトを両ホストで共有するなら、
-緩い方ではなく**厳しい方の契約に合わせる**必要がある。
+**教訓**: Claude Code と Codex で共通化するフックは、イベントごとの出力契約を
+推測せず、対象ホストの公式仕様と実機の最小再現で確認する。
 
 **rtk について**: Codex 側では書き換えが効かないまま失敗ログだけが出る状態だった。
 Claude Code 側（`settings.json`）は従来どおり有効で、そちらの挙動は変えていない。
