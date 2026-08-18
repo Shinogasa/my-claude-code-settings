@@ -18,39 +18,33 @@ TOML 定義。8ファイルの書き直しが必要。
 **保留理由**: Codex 側のサブエージェント粒度が固まっていない。先に移植すると使わない設定が残る。
 **着手条件**: Codex でサブエージェントを実際に使う場面が出てきたとき。
 
-### Codex 側のフックが実機で発火するか未確認
+### Codex 側のフック → 実機で検証済み（2026-08-18）
 
-2026-08-18 に配線した（`codex/hooks.json` → `~/.codex/hooks.json`、
-PreToolUse で `guard-dangerous-bash.sh` を呼ぶ）。根拠は一次ドキュメントと
-payload 互換テストで、**実機で1ターン回した確認は取れていない**。
+**この項目は closed。** `codex exec` から `git push --force origin main` を実行させ、
+`PreToolUse` フックがブロックすることを確認した。
 
-一次ドキュメントで確認済み（→ https://developers.openai.com/codex/hooks）
+```
+error=Command blocked by PreToolUse hook: ブロック: このforce pushは保護ブランチ (main) が対象です。
+Command: git push --force origin main
+```
 
-- payload のキーは Claude Code と同一（`tool_name` / `tool_input.command` / `cwd`）
-- ブロックは終了コード2 + stderr で共通
-- `~/.codex/hooks.json` はユーザーレベルとして読まれ、プロジェクトの trust から独立
+確認できたこと。
 
-**未確認**: 実際に `PreToolUse` が発火し、ブロックが効くか。
-検証は `codex exec` を1回走らせれば済むが、このセッションでは
-Claude Code 側の分類器が別エージェント CLI の起動をブロックしたため実施できなかった。
-ユーザーが端末で直接実行する必要がある。
+- `PreToolUse` は Codex で発火する
+- payload は互換。ガードが対象 ref を `main` と解決してブロックしている
+- 終了コード2 + stderr でツール呼び出しが止まり、stderr はそのままユーザーに表示される
+- 配線は `~/.codex/hooks.json` → `codex/hooks.json` のシンボリックリンク（`setup.sh`）
 
-**trust の fail-open に注意**: 未承認のフックはエラーにならず**スキップ**される。
-`hooks.json` を書き換えるたびに承認が外れる（呼び出し先スクリプトの編集では外れない。
-`[hooks.state]` の `trusted_hash` が2つの異なるパスで一致したことから、
-ハッシュ対象はフック定義の文字列だと判断した）。
+**trust のハッシュ対象が確定した**: リンク方式へ切り替えたとき、
+`pre_tool_use:0`（guard）と `pre_tool_use:2`（warn-branch-behind-main）の
+`trusted_hash` は変わったが、`pre_tool_use:1`（`rtk hook claude`）は**変わらなかった**。
+定義文字列が変わったものだけがハッシュを変える。
+→ **呼び出し先スクリプトを編集しても再承認は不要。`hooks.json` を書き換えたときだけ必要。**
 
-**着手条件**: 次に Codex を使うとき。`codex exec "echo test"` 相当を1回流し、
-`/hooks` で承認済みであることと、危険コマンドが実際に止まることを確認する。
-
-**手元の実測（2026-08-18）**: `~/.codex/hooks.json` は既に手動で作られていた
-（スクリプトはリポジトリからのコピー）。しかし `config.toml` の `[hooks.state]` に
-**このファイルの trust エントリが無い**。ドキュメントどおりなら、
-配線は存在するが**スキップされている**。「設定ファイルがある」ことを
-「防御が効いている」と読み替えてはいけない実例。
-
-**判定に使える指標**: `[hooks.state]` に `/Users/<user>/.codex/hooks.json:*` の
-エントリがあり `enabled = true` であること。無ければ未承認。
+**運用上の注意（残る）**: 未承認のフックはエラーにならずスキップされる。
+`codex/hooks.json` を編集した後は `/hooks` での再承認が要る。
+承認状態は `~/.codex/config.toml` の `[hooks.state]` にあり、**リポジトリには入らない**。
+新しい端末では設定は届くが承認は届かない。
 
 ### `setup.sh` が Codex 専用マシンで動かない
 
