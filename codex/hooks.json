@@ -1,5 +1,5 @@
 {
-  "description": "Codex CLI 向けのフック配線。Claude Code の settings.json と同じスクリプトを共有する。",
+  "description": "Codex CLI 向けのフック配線。Claude Code の settings.json と同じスクリプトを共有する。rtk は出力形式が Codex と非互換のため含めない。",
   "hooks": {
     "PreToolUse": [
       {
@@ -9,15 +9,6 @@
             "command": "\"$HOME/.codex/hooks/guard-dangerous-bash.sh\"",
             "timeout": 30,
             "statusMessage": "危険なコマンドを検査中"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "rtk hook claude"
           }
         ]
       },

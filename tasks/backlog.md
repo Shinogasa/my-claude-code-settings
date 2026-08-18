@@ -43,59 +43,21 @@ agent type」で拒否され、指定を外して再試行した直後に**ゲ�
 `sandbox_mode` と `model` が効いているかを見る。read-only の確認は
 「ファイルを1つ作らせて失敗すること」まで見ると確実。
 
-### Codex 実行時に一部のフックが Failed になる → 原因未特定
+### Codex 実行時のフック失敗 → 特定して修正済み（2026-08-18）
 
-2026-08-18 の `codex exec` で `SessionStart Failed` と `PreToolUse Failed` が
-1件ずつ出た（他は Completed）。**どのフックが失敗したかは特定できていない。**
+**この項目は closed。** 2件とも原因が判明し、どちらもこちらの配線が原因だった。
 
-調べた範囲と結果。
-
-| 対象 | 方法 | 結果 |
+| 失敗 | 原因 | 対応 |
 |---|---|---|
-| 自前の4フック | Codex 形式の payload を直接流す | 全て exit=0 |
-| `learning-output-style` | `CLAUDE_PLUGIN_ROOT` を設定して実行 | exit=0（未設定だと 127） |
-| `security-guidance` | 同上 | 正常に JSON を返す |
-| Codex のログ DB | `logs_2.sqlite` を hook + ERROR/WARN で検索 | 該当なし |
+| `PreToolUse hook returned updatedInput without permissionDecision:allow` | `rtk hook claude` の出力が `updatedInput` を返すのに `permissionDecision: "allow"` を含まない。Claude Code は通すが Codex は拒否する | `codex/hooks.json` から rtk を外した |
+| `hook returned invalid session start JSON output` | `detect-parallel-sessions.sh` が通知の無いとき無出力。Codex は stdout を JSON として解釈するため空文字列は invalid | 早期 return を `{}` の出力に変えた（10箇所） |
 
-**反証条件**: この「自前のフックではない」が誤りなら、payload の形が
-実際の Codex のものと違っていたか、タイムアウトなど payload 以外の要因で
-落ちていることになる。どちらもこの調べ方では検出できない。
+**教訓**: Claude Code のフック出力契約は「無出力＝何もしない」を許すが、
+Codex は**常に JSON を要求する**。同じスクリプトを両ホストで共有するなら、
+緩い方ではなく**厳しい方の契約に合わせる**必要がある。
 
-**注意**: 当該実行では `--dangerously-bypass-hook-trust` が有効だった
-（警告が2回出ている）。**trust 承認済みの状態での挙動を見たことにはならない。**
-
-**着手条件**: 失敗が繰り返し観測されたとき、または Codex のフックログを
-取り出す手段が分かったとき。
-
-
-
-### Codex 側のフック → 実機で検証済み（2026-08-18）
-
-**この項目は closed。** `codex exec` から `git push --force origin main` を実行させ、
-`PreToolUse` フックがブロックすることを確認した。
-
-```
-error=Command blocked by PreToolUse hook: ブロック: このforce pushは保護ブランチ (main) が対象です。
-Command: git push --force origin main
-```
-
-確認できたこと。
-
-- `PreToolUse` は Codex で発火する
-- payload は互換。ガードが対象 ref を `main` と解決してブロックしている
-- 終了コード2 + stderr でツール呼び出しが止まり、stderr はそのままユーザーに表示される
-- 配線は `~/.codex/hooks.json` → `codex/hooks.json` のシンボリックリンク（`setup.sh`）
-
-**trust のハッシュ対象が確定した**: リンク方式へ切り替えたとき、
-`pre_tool_use:0`（guard）と `pre_tool_use:2`（warn-branch-behind-main）の
-`trusted_hash` は変わったが、`pre_tool_use:1`（`rtk hook claude`）は**変わらなかった**。
-定義文字列が変わったものだけがハッシュを変える。
-→ **呼び出し先スクリプトを編集しても再承認は不要。`hooks.json` を書き換えたときだけ必要。**
-
-**運用上の注意（残る）**: 未承認のフックはエラーにならずスキップされる。
-`codex/hooks.json` を編集した後は `/hooks` での再承認が要る。
-承認状態は `~/.codex/config.toml` の `[hooks.state]` にあり、**リポジトリには入らない**。
-新しい端末では設定は届くが承認は届かない。
+**rtk について**: Codex 側では書き換えが効かないまま失敗ログだけが出る状態だった。
+Claude Code 側（`settings.json`）は従来どおり有効で、そちらの挙動は変えていない。
 
 ### `setup.sh` が Codex 専用マシンで動かない
 
