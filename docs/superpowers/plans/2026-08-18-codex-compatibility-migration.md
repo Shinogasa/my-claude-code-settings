@@ -4,7 +4,7 @@
 
 **Goal:** Claude Code 向け資産を、Codex では互換性を確認したものだけ有効にする再現可能な設定へ移行する。
 
-**Architecture:** ポリシー・知識は共有正本に残し、instructions、commands、agents、hooks、plugins、statusline の発火部分をホスト別アダプターに分ける。Codex へ自動移行されたプラグインは policy file と監査コマンドで判定し、非互換なものを実行経路から外す。
+**Architecture:** ポリシー・知識は共有正本に残し、instructions、commands、agents、hooks、plugins、statusline の発火部分をホスト別アダプターに分ける。Codexはnative-firstとし、自動移行されたpluginはpolicyで明示allowされたものだけを実行する。学習用コード参加はpluginではなく共有ruleへ統合する。
 
 **Tech Stack:** Bash, Python 3.11+, JSON, TOML, unittest, Claude Code settings, Codex CLI 0.147+
 
@@ -18,12 +18,15 @@
 | `skills/codex-cli-best-practice/SKILL.md` | Codex 設定作業を公式資料優先で案内する |
 | `codex/plugin-policy.json` | Codex での Claude 由来プラグイン判定を version control する |
 | `bin/audit-codex-plugins.py` | `codex plugin list --json` と policy の差を検出する。状態は変更しない |
+| `rules/learning-mode.md` | pluginに依存しないコード参加の発火条件、上限、停止、振り返りを定義する |
+| `settings.json.template` | Claude側で重複する`learning-output-style`を無効にする |
 | `setup.sh` | Claude-only / Codex-only を独立してセットアップする |
 | `hooks/detect-parallel-sessions.sh` | 実行ホストに依存せず helper を解決する |
 | `commands/` | Claude Code の command 正本として維持する |
 | `skills/source-command-*` | Codex の command 相当。deprecated prompts を置換する |
 | `tests/test_host_activation.py` | instructions、setup、配線のホスト境界を固定する |
 | `tests/test_codex_plugin_policy.py` | plugin policy の schema と分類漏れを固定する |
+| `tests/test_learning_mode_contract.py` | コード参加が既存の上限・OFF条件・除外条件に従うことを固定する |
 | `tests/test_detect_parallel_sessions_hook.py` | Codex-only path と SessionStart 出力契約を固定する |
 
 ### Task 1: Codex project guidance をグローバル指示の差分へ縮める
@@ -94,7 +97,7 @@ description: Codex CLI設定（AGENTS.md、skills、agents、hooks、plugins、M
 
 1. 対象機能の Codex 公式資料を先に確認する。
 2. ローカル `codex --version` と対象 subcommand の `--help` で実装差を確認する。
-3. `codex-cli-best-practice/` は索引と例として読み、公式資料と矛盾する記述は採用しない。
+3. `~/.codex/codex-cli-best-practice/` は索引と例として読み、公式資料と矛盾する記述は採用しない。
 4. hooks、plugins、rules は配置だけでなく trust・enabled・runtime output を検証する。
 5. 不在を結論にするときは `rules/proving-absence.md` の形式で報告する。
 ```
@@ -138,23 +141,66 @@ class TestCodexPluginPolicy(unittest.TestCase):
     def test_every_entry_has_supported_status(self):
         data = json.loads(POLICY.read_text(encoding="utf-8"))
         self.assertEqual(data["schemaVersion"], 1)
+        self.assertEqual(data["defaultDenyMarketplaces"], ["claude-plugins-official"])
         for plugin_id, entry in data["plugins"].items():
             with self.subTest(plugin=plugin_id):
                 self.assertIn(entry["status"], {"allow", "deny", "review"})
                 self.assertTrue(entry["reason"].strip())
 
-    def test_security_guidance_is_denied(self):
+    def test_decided_plugin_classification(self):
         data = json.loads(POLICY.read_text(encoding="utf-8"))
-        entry = data["plugins"]["security-guidance@claude-plugins-official"]
-        self.assertEqual(entry["status"], "deny")
+        actual = {name: entry["status"] for name, entry in data["plugins"].items()}
+        self.assertEqual(actual, {
+            "superpowers@openai-curated": "allow",
+            "learning-output-style@claude-plugins-official": "deny",
+            "security-guidance@claude-plugins-official": "deny",
+            "claude-md-management@claude-plugins-official": "deny",
+            "context7@claude-plugins-official": "review",
+            "serena@claude-plugins-official": "review",
+            "asana@claude-plugins-official": "deny",
+            "code-review@claude-plugins-official": "deny",
+            "gopls-lsp@claude-plugins-official": "deny",
+        })
 
-    def test_auditor_reports_enabled_denied_plugin(self):
+    def test_auditor_reports_enabled_non_allowed_plugins(self):
         spec = importlib.util.spec_from_file_location("auditor", AUDITOR)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        policy = {"security-guidance@claude-plugins-official": {"status": "deny", "reason": "hook contract"}}
-        installed = [{"pluginId": "security-guidance@claude-plugins-official", "enabled": True}]
-        self.assertEqual(module.find_violations(policy, installed), ["security-guidance@claude-plugins-official"])
+        policy = {
+            "defaultDenyMarketplaces": ["claude-plugins-official"],
+            "plugins": {
+                "allowed@openai-curated": {"status": "allow", "reason": "native"},
+                "deferred@claude-plugins-official": {"status": "review", "reason": "not tested"},
+                "blocked@claude-plugins-official": {"status": "deny", "reason": "incompatible"},
+            },
+        }
+        installed = [
+            {"pluginId": "allowed@openai-curated", "marketplaceName": "openai-curated", "enabled": True},
+            {"pluginId": "deferred@claude-plugins-official", "marketplaceName": "claude-plugins-official", "enabled": True},
+            {"pluginId": "blocked@claude-plugins-official", "marketplaceName": "claude-plugins-official", "enabled": True},
+            {"pluginId": "future@claude-plugins-official", "marketplaceName": "claude-plugins-official", "enabled": True},
+            {"pluginId": "personal@local", "marketplaceName": "local", "enabled": True},
+        ]
+        self.assertEqual(module.find_violations(policy, installed), [
+            "blocked@claude-plugins-official",
+            "deferred@claude-plugins-official",
+            "future@claude-plugins-official",
+        ])
+
+    def test_disabled_plugin_is_not_a_violation(self):
+        spec = importlib.util.spec_from_file_location("auditor", AUDITOR)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        policy = {
+            "defaultDenyMarketplaces": ["claude-plugins-official"],
+            "plugins": {},
+        }
+        installed = [{
+            "pluginId": "future@claude-plugins-official",
+            "marketplaceName": "claude-plugins-official",
+            "enabled": False,
+        }]
+        self.assertEqual(module.find_violations(policy, installed), [])
 ```
 
 - [ ] **Step 2: Run the policy test and verify missing files fail**
@@ -168,16 +214,17 @@ Expected: FAIL because the policy and auditor do not exist.
 ```json
 {
   "schemaVersion": 1,
+  "defaultDenyMarketplaces": ["claude-plugins-official"],
   "plugins": {
     "superpowers@openai-curated": {"status": "allow", "reason": "Codex native skill distribution"},
-    "learning-output-style@claude-plugins-official": {"status": "allow", "reason": "SessionStart injection observed on Codex 0.147.0"},
+    "learning-output-style@claude-plugins-official": {"status": "deny", "reason": "Code participation moves to the shared learning-mode rule"},
     "security-guidance@claude-plugins-official": {"status": "deny", "reason": "Claude asyncRewake and SessionStart handshake are incompatible"},
-    "claude-md-management@claude-plugins-official": {"status": "review", "reason": "Skill is visible; representative workflow is not smoke-tested"},
-    "context7@claude-plugins-official": {"status": "review", "reason": "MCP startup and tool call are not smoke-tested"},
-    "serena@claude-plugins-official": {"status": "review", "reason": "MCP startup and tool call are not smoke-tested"},
+    "claude-md-management@claude-plugins-official": {"status": "deny", "reason": "CLAUDE.md-only workflow does not model Codex AGENTS.md hierarchy"},
+    "context7@claude-plugins-official": {"status": "review", "reason": "Re-evaluate a current Codex-oriented option when the capability is needed"},
+    "serena@claude-plugins-official": {"status": "review", "reason": "Re-evaluate a current Codex-oriented option when the capability is needed"},
     "asana@claude-plugins-official": {"status": "deny", "reason": "Installed artifact exposes only a Claude command"},
     "code-review@claude-plugins-official": {"status": "deny", "reason": "Installed artifact exposes only a Claude command; Codex has native review"},
-    "gopls-lsp@claude-plugins-official": {"status": "review", "reason": "Codex manifest exists but repository ownership is undecided"}
+    "gopls-lsp@claude-plugins-official": {"status": "deny", "reason": "No observed Go workflow gap justifies an unverified LSP plugin"}
   }
 }
 ```
@@ -194,25 +241,34 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def find_violations(policy, installed):
-    return sorted(
-        p.get("pluginId", "")
-        for p in installed
-        if p.get("enabled") and policy.get(p.get("pluginId", ""), {}).get("status") == "deny"
-    )
+def find_violations(policy_doc, installed):
+    policy = policy_doc["plugins"]
+    default_deny = set(policy_doc.get("defaultDenyMarketplaces", []))
+    violations = []
+    for plugin in installed:
+        if not plugin.get("enabled"):
+            continue
+        plugin_id = plugin.get("pluginId", "")
+        entry = policy.get(plugin_id)
+        if entry is not None:
+            if entry.get("status") != "allow":
+                violations.append(plugin_id)
+        elif plugin.get("marketplaceName") in default_deny:
+            violations.append(plugin_id)
+    return sorted(violations)
 
 
 def main():
     policy_doc = json.loads((ROOT / "codex/plugin-policy.json").read_text(encoding="utf-8"))
     result = subprocess.run(["codex", "plugin", "list", "--json"], check=True, text=True, capture_output=True)
     installed = json.loads(result.stdout).get("installed", [])
-    violations = find_violations(policy_doc["plugins"], installed)
+    violations = find_violations(policy_doc, installed)
     if violations:
         print("Codexで無効化が必要なプラグイン:")
         for plugin_id in violations:
             print(f"- {plugin_id}")
         return 1
-    print("Codex plugin policy: deny状態の有効プラグインなし")
+    print("Codex plugin policy: allow以外のClaude由来プラグインは無効")
     return 0
 
 
@@ -222,31 +278,37 @@ if __name__ == "__main__":
 
 - [ ] **Step 5: Add a setup warning without mutating unknown plugins**
 
-After `setup_codex_plugins`, run the auditor. A policy violation prints the exact manual removal command,
-but `setup.sh` does not remove `review` or unlisted user plugins.
+After Codex link setup, run the auditor. A policy violation prints the exact plugin IDs that must be disabled.
+`setup.sh` does not mutate plugin state. Unlisted plugins from `claude-plugins-official` fail closed;
+unlisted plugins from other marketplaces remain outside this migration policy.
+
+Remove the existing `remove_duplicate_codex_plugins` function and its call. A same-name Claude marketplace copy
+is also a default-deny violation and must be disabled without deleting its config or cache.
 
 ```bash
 if ! python3 "$SCRIPT_DIR/bin/audit-codex-plugins.py"; then
-  yellow "  deny対象をCodex側で無効化してください:"
-  yellow "    codex plugin remove security-guidance@claude-plugins-official"
+  yellow "  allowされていないClaude由来pluginをCodex側で無効化してください"
+  yellow "  /pluginsを開き、上のpluginを選んでSpaceで無効化してください（removeはしません）"
 fi
 ```
 
-- [ ] **Step 6: Run policy tests and perform the explicit deny action**
+- [ ] **Step 6: Run policy tests and disable non-allowed plugins without removing them**
 
 Run: `python3 -m unittest tests.test_codex_plugin_policy -v`
 
-Expected: 3 tests PASS.
+Expected: 4 tests PASS.
 
-Then, after confirming the target from `codex plugin list --json`, run:
+Then open `/plugins`, select each reported plugin, and press Space to set it to disabled. Do not run
+`codex plugin remove`: removal deletes the local config entry and cache, while `review` intentionally retains
+the installed artifact for later evaluation.
 
 ```bash
-codex plugin remove security-guidance@claude-plugins-official
-codex plugin remove asana@claude-plugins-official
-codex plugin remove code-review@claude-plugins-official
+codex plugin list --json
+python3 bin/audit-codex-plugins.py
 ```
 
-Expected: each command reports only the named plugin as removed. Claude Code plugin state remains unchanged.
+Expected: every non-allowed `claude-plugins-official` entry remains installed with `enabled: false`, the auditor
+exits 0, and Claude Code plugin state remains unchanged.
 
 - [ ] **Step 7: Commit plugin policy**
 
@@ -255,7 +317,122 @@ git add codex/plugin-policy.json bin/audit-codex-plugins.py tests/test_codex_plu
 git commit -m "feat(codex): 移行プラグインをpolicyで監査する"
 ```
 
-### Task 3: `setup.sh` をホストごとに独立させる
+### Task 3: コード参加を共有学習モードへ統合する
+
+**Files:**
+
+- Modify: `rules/learning-mode.md`
+- Modify: `settings.json.template`
+- Modify: `README.md`
+- Create: `tests/test_learning_mode_contract.py`
+
+- [ ] **Step 1: Write the failing learning-mode contract test**
+
+```python
+import json
+from pathlib import Path
+import unittest
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+class TestLearningModeCodeContribution(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.rule = (ROOT / "rules/learning-mode.md").read_text(encoding="utf-8")
+
+    def test_code_contribution_is_bounded_learning_event(self):
+        for phrase in ["コード参加", "5〜10行", "代替学習イベント", "1タスク最大2回"]:
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.rule)
+
+    def test_code_contribution_has_skip_and_exclusions(self):
+        for phrase in ["スキップ", "設定", "ボイラープレート", "明白な実装", "単純CRUD"]:
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.rule)
+
+    def test_claude_plugin_is_disabled_after_rule_migration(self):
+        settings = json.loads((ROOT / "settings.json.template").read_text(encoding="utf-8"))
+        self.assertFalse(settings["enabledPlugins"]["learning-output-style@claude-plugins-official"])
+
+    def test_codex_policy_denies_the_duplicated_plugin(self):
+        policy = json.loads((ROOT / "codex/plugin-policy.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            policy["plugins"]["learning-output-style@claude-plugins-official"]["status"],
+            "deny",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
+```
+
+- [ ] **Step 2: Run the test and verify the missing contract fails**
+
+Run: `python3 -m unittest tests.test_learning_mode_contract -v`
+
+Expected: FAIL because the shared rule has no code-contribution contract and the Claude plugin is enabled.
+
+- [ ] **Step 3: Add the code-contribution branch to `learning-mode.md`**
+
+Add this section after the existing trigger-gate section. It is an alternative to ★ Predict, not an extra
+question stacked on the same decision.
+
+```markdown
+## コード参加（★ Predictの代替学習イベント）
+
+学習モードがONで、次を全て満たす実装判断では、選択肢による★ Predictの代わりに
+ユーザーが意味のある5〜10行を実装するコード参加を使える。1回のコード参加は、
+1タスク最大2回の学習機会を1回消費する。
+
+- 実装タスクであり、設定・セットアップではない
+- 業務ロジック、エラー処理、アルゴリズム、データ構造、UX、アーキテクチャのいずれかである
+- 複数の成立する実装があり、ユーザーの判断が振る舞いを変える
+- 5〜10行へ安全に切り出せ、既存テストまたは小さい追加テストで検証できる
+
+依頼前に、対象ファイル、周辺コード、関数シグネチャ、目的コメント、TODOを用意する。
+答えやトレードオフを先に開示せず、正確なファイルと位置、満たすべき入出力制約だけを伝え、
+ユーザーに実装を依頼してそのメッセージを終える。
+
+実装を受け取ったら、なぜその形を選んだかだけを自由記述で問い、そのメッセージを終える。
+次の応答でテストとレビューを行い、既存形式の★ Deltaと学習記録を返す。
+
+ユーザーは「スキップ」と答えられる。スキップは1回として数え、エージェントが実装を完了する。
+ボイラープレート、反復コード、明白な実装、設定、単純CRUDでは依頼しない。
+既存の「全部やって」「任せる」「急ぎ」「予測なしで」によるOFF条件はコード参加にも適用する。
+```
+
+- [ ] **Step 4: Disable the duplicated Claude plugin and document the source of truth**
+
+Set the template entry to false:
+
+```json
+"learning-output-style@claude-plugins-official": false
+```
+
+In `README.md`, state that code participation now lives in `rules/learning-mode.md` for both hosts and that
+the upstream plugin remains disabled to avoid duplicate prompting. The Codex declarative policy is checked here;
+its effective `enabled: false` state is verified by the auditor in Task 2 and again in the runtime smoke test.
+
+- [ ] **Step 5: Run the learning contract and JSON checks**
+
+Run:
+
+```bash
+python3 -m unittest tests.test_learning_mode_contract -v
+python3 -m json.tool settings.json.template >/dev/null
+```
+
+Expected: 4 tests PASS and the JSON parser exits 0.
+
+- [ ] **Step 6: Commit the shared learning behavior**
+
+```bash
+git add rules/learning-mode.md settings.json.template README.md tests/test_learning_mode_contract.py
+git commit -m "feat(learning): コード参加を共有学習モードへ統合する"
+```
+
+### Task 4: `setup.sh` をホストごとに独立させる
 
 **Files:**
 
@@ -264,31 +441,74 @@ git commit -m "feat(codex): 移行プラグインをpolicyで監査する"
 - Modify: `hooks/detect-parallel-sessions.sh`
 - Modify: `tests/test_detect_parallel_sessions_hook.py`
 
-- [ ] **Step 1: Add failing setup contract tests**
+- [ ] **Step 1: Add a failing Codex-only setup integration test**
 
-Add these assertions to `tests/test_host_activation.py`:
+Add a real setup fixture to `tests/test_host_activation.py`; do not prove host independence with source-string
+assertions. Copy the repository without `.git`, `.gitmodules`, or `.env`, create only `~/.codex`, and place a
+stub `codex` command first on `PATH` so the test never reads or mutates the developer's real config.
 
 ```python
+import os
+import shutil
+import subprocess
+import tempfile
+
+
 class TestSetupHostIndependence(unittest.TestCase):
-    def test_codex_targets_include_bin_and_best_practice(self):
-        text = (ROOT / "setup.sh").read_text(encoding="utf-8")
-        self.assertIn('"bin:$CODEX_DIR/bin"', text)
-        self.assertIn('"codex-cli-best-practice:$CODEX_DIR/codex-cli-best-practice"', text)
+    def test_codex_only_setup_runs_in_clean_home(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp)
+            repo = fixture / "repo"
+            shutil.copytree(
+                ROOT,
+                repo,
+                ignore=shutil.ignore_patterns(".git", ".gitmodules", ".env", "__pycache__"),
+            )
+            home = fixture / "home"
+            (home / ".codex").mkdir(parents=True)
+            fake_bin = fixture / "bin"
+            fake_bin.mkdir()
+            codex = fake_bin / "codex"
+            codex.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1 $2\" = \"plugin list\" ]; then\n"
+                "  printf '%s\\n' '{\"installed\":[{\"pluginId\":\"superpowers@openai-curated\",\"marketplaceName\":\"openai-curated\",\"enabled\":true}]}'\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            codex.chmod(0o755)
+            env = os.environ | {
+                "HOME": str(home),
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            }
 
-    def test_codex_no_longer_receives_deprecated_prompts(self):
-        text = (ROOT / "setup.sh").read_text(encoding="utf-8")
-        self.assertNotIn('"commands:$CODEX_DIR/prompts"', text)
+            result = subprocess.run(
+                ["bash", str(repo / "setup.sh")],
+                cwd=repo,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=60,
+            )
 
-    def test_missing_claude_dir_does_not_exit_before_codex_setup(self):
-        text = (ROOT / "setup.sh").read_text(encoding="utf-8")
-        self.assertNotIn('Claude Code を一度起動してください。\n  exit 1', text)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse((home / ".claude").exists())
+            self.assertEqual((home / ".agents/skills").resolve(), (repo / "skills").resolve())
+            self.assertEqual((home / ".codex/bin").resolve(), (repo / "bin").resolve())
+            self.assertEqual(
+                (home / ".codex/codex-cli-best-practice").resolve(),
+                (repo / "codex-cli-best-practice").resolve(),
+            )
+            self.assertFalse((home / ".codex/prompts").exists())
 ```
 
-- [ ] **Step 2: Run tests and verify all three fail**
+- [ ] **Step 2: Run the integration test and verify the current early exit fails**
 
 Run: `python3 -m unittest tests.test_host_activation -v`
 
-Expected: FAIL for missing Codex bin/submodule links, deprecated prompts link, and early exit.
+Expected: FAIL because the current script exits when `~/.claude` is absent.
 
 - [ ] **Step 3: Separate host detection from host setup**
 
@@ -311,7 +531,9 @@ Guard Claude settings generation, Claude plugin install, personal profile genera
 
 - [ ] **Step 4: Update Codex targets**
 
-The Codex target list becomes:
+The Codex target list becomes. `skills/codex-cli-best-practice/SKILL.md` reaches the Agent Skills root through
+the `skills` link; the separate `codex-cli-best-practice` target exposes the repository submodule that the skill
+reads as reference material.
 
 ```bash
 TARGETS+=(
@@ -359,7 +581,7 @@ git add setup.sh hooks/detect-parallel-sessions.sh tests/test_host_activation.py
 git commit -m "fix(setup): ClaudeとCodexのセットアップを独立させる"
 ```
 
-### Task 4: Codex custom prompts を skills へ集約する
+### Task 5: Codex custom prompts を skills へ集約する
 
 **Files:**
 
@@ -397,7 +619,7 @@ Keep Claude command files unchanged; only shared Codex skills need host-neutral 
 - `quality-gate` and `verify`: route users to `verification-loop`
 - `tdd`: route users to `tdd-workflow`
 
-No new prompt files are added. `commands/` remains Claude-only after Task 3 removes its Codex link.
+No new prompt files are added. `commands/` remains Claude-only after Task 4 removes its Codex link.
 
 - [ ] **Step 4: Run skill metadata and host-boundary checks**
 
@@ -418,7 +640,7 @@ git add skills README.md tests/test_host_activation.py
 git commit -m "refactor(codex): deprecated promptsをskillsへ集約する"
 ```
 
-### Task 5: Runtime smoke tests と運用証跡を固定する
+### Task 6: Runtime smoke tests と運用証跡を固定する
 
 **Files:**
 
@@ -445,25 +667,44 @@ Spawn these three roles:
 
 Record observed model, sandbox result, and Codex version in `docs/codex-runtime-smoke-test.md`.
 
-- [ ] **Step 3: Verify review-state plugins one at a time**
+- [ ] **Step 3: Verify plugin policy in a fresh Codex session**
 
-For each of `claude-md-management`, `context7`, `serena`, enable only that plugin, start a fresh session, and run one representative read-only operation. Record:
+Run:
 
-- plugin version
-- startup error presence
-- authentication prompt/result
-- one tool or skill result
-- disable/allow decision
+```bash
+python3 bin/audit-codex-plugins.py
+codex plugin list --json
+```
 
-Do not test Asana with a write operation. It remains denied unless a Codex-native connector and explicit authorization are selected later.
+Expected: the auditor exits 0; `superpowers@openai-curated` may be enabled; every installed plugin from a
+default-deny marketplace is disabled unless explicitly `allow`. Disabled entries remain installed in the cache.
+Start a fresh session and confirm there is no SessionStart JSON error and no `learning-output-style` developer
+instruction. Do not enable `context7` or `serena` in this migration; their selection is a separate backlog item.
 
-- [ ] **Step 4: Decide statusline scope from actual Codex footer**
+- [ ] **Step 4: Verify learning-mode code participation on both hosts**
 
-Use `/statusline` to configure the native footer. Compare the available fields with `statusline.js` output.
-If host, model, branch, and context usage are available, use native config and leave `statusline.js` Claude-only.
-Create a Codex script adapter only when a required field is absent.
+Prepare one disposable repository with a 5-10 line business-logic TODO that has two valid implementations, plus
+one configuration-only task. Start fresh Claude Code and Codex sessions so both read the same
+`rules/learning-mode.md`, and run the same two prompts on each host.
 
-- [ ] **Step 5: Run the full repository suite**
+Pass criteria:
+
+- the implementation task produces exactly one code-participation request before the agent fills the TODO
+- replying `スキップ` causes the agent to complete and verify the implementation
+- the configuration-only task does not produce a code-participation request
+- neither host exceeds the existing two-event task limit or emits `★ Insight`
+
+Record the host version, prompt fixture, transcript/session reference, and observed result in
+`docs/codex-runtime-smoke-test.md`. If either host misses the expected branch, record it as a failed runtime check;
+do not treat the rule's wording test as proof of behavior.
+
+- [ ] **Step 5: Verify the official default statusline without customizing it**
+
+Start a disposable Codex session with no explicit `tui.status_line` setting. Confirm the default footer is visible
+and record the observed default fields in `docs/codex-runtime-smoke-test.md`. Do not create a Codex statusline
+adapter and do not persist a custom item list.
+
+- [ ] **Step 6: Run the full repository suite**
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -476,7 +717,7 @@ python3 -m unittest tests.test_codex_agents -v
 
 Expected: all unittest cases PASS, shell/JSON checks exit 0, and `test_no_drift` reports no agent-generation drift.
 
-- [ ] **Step 6: Commit runtime evidence**
+- [ ] **Step 7: Commit runtime evidence**
 
 ```bash
 git add docs/codex-runtime-smoke-test.md tasks/backlog.md

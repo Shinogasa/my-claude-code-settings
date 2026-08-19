@@ -26,6 +26,12 @@
 
 調査ブランチでは上記の実環境変更は行わず、監査結果と実装計画だけを記録する。
 
+その後の個別判断では、**Codexはnative-firstとし、`claude-plugins-official`由来pluginは
+明示的にallowしたもの以外を実行しない**方針を採った。未知のpluginもmarketplace単位で
+default denyにする。`learning-output-style`はpluginとして維持せず、意味のある5〜10行を
+人間が実装する部分だけを自前学習モードへ統合する。詳細と却下案は
+`docs/adr/0003-codex-native-first-activation-policy.md`に記録した。
+
 ## 判定基準
 
 | 判定 | 意味 |
@@ -57,6 +63,8 @@
 
 `setup.sh` 以外に、Codex の `/import` が第二の流入経路になる。Claude 側でプラグインを
 `false` にしても、既に Codex の `config.toml` と cache へ移行された状態は自動では消えない。
+Codexのinstall状態とenabled状態は別であり、`/plugins`でSpaceを押すとcacheを残したまま
+個別pluginを無効化できる。`codex plugin remove`はconfigとcacheを削除するため、この移行では使わない。
 
 ## 互換性マトリクス
 
@@ -124,7 +132,7 @@ Codex 公式資料は custom prompts を deprecated とし、再利用可能な�
 | `pr-create` | `source-command-pr-create` | 変換済み |
 | `refactor-clean` | `source-command-refactor-clean` | 変換済み、用語修正要 |
 | `test-coverage` | `source-command-test-coverage` | 変換済み |
-| `code-review` | なし | Codex の組み込み `/review` を優先し、Claude 固有 `.claude/PRPs` 部分だけ別途残すか判断する |
+| `code-review` | なし | Codex の組み込み `/review` を使う。外部テンプレート由来の `.claude/PRPs` 成果物と投稿処理は移植しない |
 | `quality-gate` | なし | `verification-loop` へ統合する |
 | `tdd` | なし | `tdd-workflow` へ統合する |
 | `verify` | なし | `verification-loop` または Codex 公式 verification skill へ統合する |
@@ -170,17 +178,20 @@ OpenAI bundled/runtime の標準プラグインは移行対象外とした。
 | プラグイン | Codex での判定 | 根拠・方針 |
 |---|---|---|
 | `superpowers@openai-curated` | 共有可 | Codex native 配布。skills は動作確認済み。SessionStart hook は同梱しないため AGENTS の明示指示を維持 |
-| `learning-output-style@claude-plugins-official` | 共有可 | `${CLAUDE_PLUGIN_ROOT}` は Codex も互換提供し、SessionStart の additionalContext がこのセッションで実際に注入された |
+| `learning-output-style@claude-plugins-official` | **Codex で無効** | hook注入は動くが、コード参加の発火はモデル依存で、自前学習モードのヒント禁止・上限・OFF条件と競合する。コード参加部分だけ共有ruleへ統合する |
 | `security-guidance@claude-plugins-official` | **Codex で無効** | 下記「security-guidance」で詳述。プラグイン単位で止め、Claude 側は維持する |
-| `claude-md-management@claude-plugins-official` | アダプター必要 | skill は Codex に露出している。Claude command 由来部分を含むため、代表操作の smoke test 後に allowlist へ入れる |
-| `context7@claude-plugins-official` | 未検証 | `.mcp.json` を持つ。Codex import 対象形式だが、起動・認証・ツール呼び出しを未確認 |
-| `serena@claude-plugins-official` | 未検証 | `.mcp.json` を持つ。Codex import 対象形式だが、起動・認証・ツール呼び出しを未確認 |
-| `asana@claude-plugins-official` | Codex で無効候補 | cache 上は Claude command と README のみ。Codex で有効な skill/MCP/hook を確認できない |
-| `code-review@claude-plugins-official` | Codex で無効候補 | cache 上は Claude command のみ。Codex は組み込み `/review` を持つ |
-| `gopls-lsp@claude-plugins-official` | 共有可・管理外 | `.codex-plugin/plugin.json` を持つ Codex native 形式。リポジトリ宣言に無く、どのマシンにも再現される状態ではない |
+| `claude-md-management@claude-plugins-official` | **Codex で無効** | `CLAUDE.md`だけを対象にし、Codexの`AGENTS.md`階層とこのリポジトリの共有正本構造を扱わない |
+| `context7@claude-plugins-official` | **保留・無効** | 有用候補だが、Codex向け候補を含めて個別評価するまで導入しない |
+| `serena@claude-plugins-official` | **保留・無効** | 有用候補だが、Codex向け候補を含めて個別評価するまで導入しない |
+| `asana@claude-plugins-official` | **Codex で無効** | cache 上は Claude command と README のみ。Codex で有効な skill/MCP/hook を確認できない |
+| `code-review@claude-plugins-official` | **Codex で無効** | cache 上は Claude command のみ。Codex は組み込み `/review` と公式GitHub連携を持つ |
+| `gopls-lsp@claude-plugins-official` | **Codex で無効** | `.codex-plugin`形式だがruntime未検証。Go開発で具体的な不足が出た時点で現行候補を再選定する |
+| 未登録の`*@claude-plugins-official` | **Codex で無効** | 将来のimportをfail-closedにする。個別判断をADRとpolicyへ追加してからallowする |
 
-未検証プラグインは、動いたと仮定して allowlist に入れない。代表ツールを1回実行し、認証、
-副作用、エラー伝播を確認してから有効化する。
+`保留・無効`は実行許可ではない。代表ツール、認証、副作用、エラー伝播を個別に確認し、
+人間が明示的にallowへ変更するまでCodexでは起動しない。無効化は`/plugins`のenabled切り替えで
+行い、install記録とcacheは保持する。plugin cacheを直接patchせず、ClaudeとCodexのenabled状態を
+自動同期しない。別marketplaceの未登録pluginはこの移行policyの対象外とし、勝手に変更しない。
 
 #### `security-guidance` が非互換である理由
 
@@ -209,8 +220,8 @@ plugin cache を直接 patch しない。更新で消える上、信頼するコ
 |---|---|---|
 | `settings.json.template` | Claude 専用 | Codex は `config.toml`。キー単位で写像し、ファイル全体は共有しない |
 | `env.json.template` / `.env.example` | Claude 専用 | Anthropic/LiteLLM 認証用。Codex config へ転記しない |
-| `statusline.js` | アダプター必要 | 既存 script は Claude payload 用。Codex 0.147.0 は `/statusline` と footer config を持つため「相当機能なし」ではない |
-| `output-styles/` | Codex で直接無効 | Codex に同じ custom output-style file 機構は確認できない。必要な挙動は AGENTS、skill、plugin hook へ分解する |
+| `statusline.js` | Claude 専用 | Codex 0.147.0 は `/statusline` と footer config を持つ。当面は公式デフォルトを使い、実務上の不足が出るまでadapterを作らない |
+| `output-styles/` | Codex で直接無効 | `★ Design Decision`は学習モードと重複する。`★ Review`は将来のレビュー訓練と合わせて再設計し、直接移植しない |
 | `bin/ccp` | Claude 専用 | Claude の認証 profile 切り替え wrapper |
 | `setup.sh` | アダプター必要 | `~/.claude` を最初に必須化するため Codex 専用マシンで動かない。ホストごとの処理を独立させる |
 
@@ -248,7 +259,7 @@ MCP はローカル `config.toml` または plugin の `.mcp.json` から供給�
 
 ### Wave 0: エラーと暗黙有効化を止める
 
-- Codex 側で `security-guidance` を無効化する
+- `claude-plugins-official`をdefault denyにし、明示allow以外をCodex側で無効化する
 - Codex の Claude 由来プラグインを allowlist 方式にする
 - 直下 `AGENTS.md` の誤記とグローバル指示の重複を解消する
 
@@ -257,6 +268,7 @@ MCP はローカル `config.toml` または plugin の `.mcp.json` から供給�
 - `setup.sh` を Claude-only / Codex-only のどちらでも完走できる構造にする
 - Codex 側へ `bin/` と `codex-cli-best-practice` の必要部分を配る
 - hooks の trust と enabled 状態を setup 後の検証項目として表示する
+- `learning-output-style`のコード参加だけを、既存の上限・OFF条件を保った学習モードへ統合する
 
 ### Wave 2: deprecated 経路を閉じる
 
@@ -267,8 +279,9 @@ MCP はローカル `config.toml` または plugin の `.mcp.json` から供給�
 ### Wave 3: 実機 smoke test を完了する
 
 - 8 agent の代表3種（read-only、workspace-write、high reasoning）を spawn する
-- `context7`、`serena`、`claude-md-management` の代表操作を実行する
-- Codex statusline adapter を作るか、組み込み footer 設定だけで足りるか決める
+- plugin policyでdefault-deny marketplaceの明示allow以外が無効であることを確認する
+- Claude/Codex両方でコード参加の発火・スキップ・設定タスク非発火を実会話で確認する
+- Codexのデフォルトstatuslineが設定追加なしで表示されることを確認する
 - クリーンな Codex 専用環境で setup と SessionStart を検証する
 
 ## 不在の主張と監査の限界
@@ -309,5 +322,10 @@ plugin list と plugin-bundled hooks まで確認した。
 - https://learn.chatgpt.com/docs/agent-configuration/subagents
 - https://learn.chatgpt.com/docs/import
 - https://learn.chatgpt.com/docs/developer-commands?surface=cli
+- https://developers.openai.com/codex/app/review
+- https://developers.openai.com/codex/integrations/github
+- https://developers.openai.com/codex/github-action
+- https://developers.openai.com/codex/plugins/build
+- https://developers.openai.com/codex/cli/reference
 - https://developers.openai.com/plugins/concepts/skills
 - https://developers.openai.com/plugins/build/plugins

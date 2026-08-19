@@ -1,7 +1,7 @@
 ---
 adr: 2
 date: 2026-08-18
-status: accepted
+status: superseded by 0003
 ---
 
 # 共有ポリシーをホスト別アダプターで発火させる
