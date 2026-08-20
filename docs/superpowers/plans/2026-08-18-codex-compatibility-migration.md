@@ -1,5 +1,9 @@
 # Codex Compatibility Migration Implementation Plan
 
+> **Superseded:** 2026-08-20の確定判断を反映した
+> [2026-08-20-codex-compatibility-migration.md](2026-08-20-codex-compatibility-migration.md)
+> がこの計画を置き換える。このファイルの手順は実行しない。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Claude Code 向け資産を、Codex では互換性を確認したものだけ有効にする再現可能な設定へ移行する。
