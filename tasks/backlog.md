@@ -10,6 +10,146 @@
 
 ## Codex CLI 対応の続き
 
+全量監査と判断根拠は `docs/codex-compatibility-audit.md`、設計判断は
+`docs/adr/0003-codex-native-first-activation-policy.md`、実装手順は
+`docs/superpowers/plans/2026-08-18-codex-compatibility-migration.md` を参照。
+
+### P0: `security-guidance` を Codex 側だけ無効化する
+
+`security-guidance@claude-plugins-official` 2.0.7 は SessionStart で最初に
+`{"async": true, "asyncTimeout": 180000}` を返し、Codex 0.147.0 では
+`invalid session start JSON output` になる。`asyncRewake`、rewake message、Claude固有の
+Stop outputにも依存するため、フィールド1個の置換では直らない。
+
+**決めたこと**: Claude Code側は維持し、Codex側のpluginだけ無効化する。cacheは直接patchしない。
+明示的レビューは当面 `security-review` skillと`security-reviewer` agentで代替する。
+
+**完了条件**:
+
+- Codex plugin policyで`deny`になっている
+- Codexの新規SessionStartで同エラーが出ない
+- Claude Code側のenabled状態が変わっていない
+
+### P0: 直下 `AGENTS.md` の誤った複製を解消する
+
+現在の `AGENTS.md` は `CLAUDE.md` の機械置換版で、存在しない `~/.Codex` と
+`/Codex-best-practice`、既に解消済みの「Codex hooks未配線」を含む。Codexでは
+グローバル `~/.codex/AGENTS.md`（正本は`CLAUDE.md`）の後にこのファイルも読まれるため、
+単なるREADMEの誤記ではなく、矛盾した実行指示になる。
+
+**決めたこと**: 共通指示を複製せず、このリポジトリ固有のCodex差分だけに縮める。
+
+**完了条件**: 2 KiB未満、`~/.Codex`を含まない、Codex設定監査skillと互換性監査を参照する。
+
+### P1: Codex plugin allowlistとread-only監査を導入する
+
+Claude `/import` 由来の plugin enabled 状態は、Claude側の `enabledPlugins` と独立して残る。
+現状は `asana`、`claude-md-management`、`code-review`、`context7`、`gopls-lsp`、
+`learning-output-style`、`security-guidance`、`serena` がCodex側にも流入している。
+
+**決めたこと**: `codex/plugin-policy.json` に `allow / deny / review` と理由を記録し、
+`setup.sh` は状態を監査する。`review`も実行許可ではなく、明示的に`allow`へ変更するまで
+無効にする。`claude-plugins-official`はdefault denyとし、未知のpluginも明示allowまでは停止する。
+別marketplaceの未知user pluginは勝手に変更せず、いずれのpluginもcacheから削除しない。
+
+**完了条件**: default-deny marketplaceで明示allowされていないpluginが有効なら検査が失敗し、
+`/plugins`で無効化した後もinstall記録とcacheが残る。Claude側の設定変更だけではCodex側を
+無効化できないことがREADMEに残っている。
+
+確定した分類:
+
+- allow: `superpowers@openai-curated`
+- review・無効: `context7`、`serena`
+- deny: `learning-output-style`、`security-guidance`、`claude-md-management`、`asana`、
+  `code-review`、`gopls-lsp`
+
+### P1: コード参加を自前学習モードへ統合する
+
+`learning-output-style`のSessionStart注入は動くが、人間にコードを書かせる発火はモデル判断で、
+回数上限・OFF条件・記録がない。既存`learning-mode.md`はこれらを持つため、pluginを二重で
+動かさず、意味のある5〜10行の実装参加だけを共有ruleへ取り込む。
+
+**決めたこと**: コード参加は通常の★ Predictへ追加で重ねず、1回分を消費する代替学習イベントに
+する。実装タスクで周辺コード、関数シグネチャ、目的コメント、TODOを準備してから依頼し、
+設定・ボイラープレート・明白な実装・単純CRUDでは発火させない。`★ Insight`は追加しない。
+
+**完了条件**:
+
+- 学習モードOFF条件と1タスク最大2回がコード参加にも適用される
+- ユーザーがスキップでき、スキップ後はエージェントが実装を完了する
+- `learning-output-style`がClaudeとCodexの両方で無効になっている
+- 実装タスクで1回発火し、設定タスクでは発火しないことを会話上で確認する
+
+### P1: deprecated custom promptsをskillsへ移し切る
+
+`commands/ → ~/.codex/prompts/` は現在動くが、Codex公式ではcustom promptsがdeprecated。
+12 commands中8件は `source-command-*` skillへ変換済み。
+
+残りの扱い:
+
+- `code-review`: Codex組み込み`/review`へ寄せる
+- `quality-gate` / `verify`: `verification-loop`へ統合する
+- `tdd`: `tdd-workflow`へ統合する
+
+`code-review`はEverything Claude Code由来で、PRP成果物、検証、GitHub投稿を一体化した
+289行の外部テンプレートである。Codex側には移植せず、意味レビュー、決定的検査、PR投稿を
+それぞれ標準`/review`、`verification-loop`、公式GitHub連携へ分ける。
+
+**完了条件**: Codex向けprompts linkを外し、Claude Codeのcommandsは維持する。
+
+### P1: Codex-onlyマシンでsetupとSessionStartを完結させる
+
+`setup.sh` は `~/.claude` がないと開始時にexitする。またCodexの
+`detect-parallel-sessions.sh` は既定helperを `~/.claude/bin` から読むが、Codex側に
+`bin/`をリンクしていない。現在の両ホスト導入済みマシンでは隠れる故障である。
+
+**決めたこと**: Claude/Codexの検出と設定処理を独立させ、Codex側にも`bin/`を配る。
+
+**完了条件**: 一時HOME相当のfixtureで `~/.codex` だけ存在するsetup testが通り、
+SessionStart helperがClaude pathなしで起動する。
+
+### P1: Codex設定監査skillを追加する
+
+追加した `codex-cli-best-practice` submoduleは有用だが、0.147.0より古い記述を含む。
+具体的には `codex_hooks`、`[profiles.*]`、marketplace `list`、`type: shell`、
+`/skill-name` などが現行仕様とずれている。
+
+**決めたこと**: Codex設定作業用skillを追加し、公式資料、ローカル`--help`、submoduleの順で
+根拠を採る。submoduleの例を無検証で転記しない。
+
+### P2: `context7` / `serena` のCodex向け候補を個別評価する
+
+両者は有用候補だが、Claude版のimportをそのまま使わない。Codex公式・curated・公開pluginを
+含めて候補を探し、version、起動、認証、代表read-only操作、エラー伝播、副作用を1件ずつ
+確認してからallowへ移す。
+
+**着手条件**: Codex移行が完了し、どちらかの機能が実務タスクで必要になったとき。
+
+### P2: Codex agentsのruntime適用を検証する
+
+生成ドリフトとschemaのテストは通っている。read-onlyの`code-explorer`、write可能な
+`code-simplifier`、高reasoningの`planner`を実際にspawnし、modelとsandboxを確認する。
+静的TOML検査だけで完了扱いにしない。
+
+### Codex statuslineの自前化 → 着手条件待ち
+
+当面はCodex公式のデフォルトstatuslineを使い、`statusline.js`はClaude専用のまま維持する。
+公式footerで足りない項目が実務上の事故や継続的な不便を起こした場合だけadapterを検討する。
+
+**着手条件**: 不足している表示項目と、それにより起きた具体的な問題を記録できたとき、
+またはCodex公式がcustom providerを公開したとき。
+
+### Everything Claude Code由来資産を棚卸しする
+
+commit `0ca03372e3ecb09c00ffedb707dc819a4b664334` で、skills 8件、agents 8件、commands 10件、
+rules 3件、contexts 3件を含む34ファイルを導入した。自前`code-review`がCodex標準reviewと
+重複していたように、Codex native機能、Superpowers、現在の自前ruleとの競合がありうる。
+
+**決めたこと**: Codex移行中には一括削除しない。導入元、現行upstream、実利用記録、
+代替機能、発火競合を資産ごとに確認し、keep / replace / removeへ分類する。
+
+**着手条件**: Codex互換性移行の実装とruntime smoke testが完了したとき。
+
 ### `agents/` の Codex 移植 → 完了（2026-08-18）
 
 **この項目は closed。** `agents/*.md` から `codex/agents/*.toml` を生成し、

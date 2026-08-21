@@ -25,6 +25,21 @@ skills / commands / rules / CLAUDE.md は単一ソースを両ホストへリン
 `paths:` を付けるとコンテキストは減るが、**`/compact` 後に再注入されない**（次にマッチする
 ファイルを読むまで復帰しない）。常に効いている必要がある規約に付けてはいけない。
 
+### セッション開始時の必須読み込み
+
+**セッション開始時に以下をすべて全文読む。** 各 `rules/...` は、Claude Codeでは
+`~/.claude/`、Codex CLIでは `~/.codex/` を起点に解決する。
+
+- `rules/learning-mode.md`
+- `rules/proving-absence.md`
+- `rules/task-management.md`
+- `rules/parallel-worktree.md`
+- `rules/output-formatting.md`
+- `rules/persona.md`
+
+Markdownリンクは参照先への経路にすぎず、内容がコンテキストへ展開（transclusion）された
+証明にはならない。リンクの存在ではなく、ファイルを全文読んだことを確認する。
+
 ## superpowers
 
 skills の発火方式がホストで異なる。
