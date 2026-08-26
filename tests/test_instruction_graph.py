@@ -26,6 +26,7 @@ SESSION_RULES = (
     "rules/parallel-worktree.md",
     "rules/output-formatting.md",
     "rules/persona.md",
+    "rules/security-review-policy.md",
 )
 
 

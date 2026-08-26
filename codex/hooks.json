@@ -26,10 +26,16 @@
     ],
     "SessionStart": [
       {
+        "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
             "type": "command",
             "command": "\"$HOME/.codex/hooks/detect-parallel-sessions.sh\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "\"$HOME/.codex/hooks/inject-superpowers.sh\"",
             "timeout": 10
           }
         ]
