@@ -29,7 +29,13 @@ quiet_exit() {
   exit 0
 }
 
-DETECT="${PARALLEL_SESSIONS_DETECT_CMD:-$HOME/.claude/bin/detect-parallel-sessions}"
+if [ -n "${PARALLEL_SESSIONS_DETECT_CMD:-}" ]; then
+  DETECT="$PARALLEL_SESSIONS_DETECT_CMD"
+elif [ -x "${CODEX_HOME:-$HOME/.codex}/bin/detect-parallel-sessions" ]; then
+  DETECT="${CODEX_HOME:-$HOME/.codex}/bin/detect-parallel-sessions"
+else
+  DETECT="$HOME/.claude/bin/detect-parallel-sessions"
+fi
 EXCLUDE_PATH="${PARALLEL_SESSIONS_EXCLUDE_PATH:-$HOME/.claude/rules}"
 
 [ -x "$DETECT" ] || quiet_exit
