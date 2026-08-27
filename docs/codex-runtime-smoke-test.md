@@ -9,6 +9,7 @@
 - Codex CLI: `codex-cli 0.149.1`
 - 作業ツリー: BASEと同一HEAD。既存の未コミット変更は保全し、本タスクで変更・stage・revertしていない。
 - 実HOME: setup/runtime probeは実行していない。したがって実HOMEへの変更はない。
+- Fix round 1の静的検証は、`/tmp/task-6-fix-round-1.pTHUgI/repo` にlocal clean cloneした `e7f1e57` のdetached HEADで実行した。clone前後の `git status --short` は空であり、実リポジトリのbranch、index、未コミット変更は操作していない。
 
 ## Step 1: 静的スイート
 
@@ -16,6 +17,7 @@
 | --- | --- | --- | --- |
 | `python3 -m unittest discover -s tests -v` | failure 0、全件完走 | exit 1。正本環境では236件中 failure 1 / error 11。Gitの署名設定がテスト用一時リポジトリの空コミットを失敗させた。 | 失敗 |
 | 同コマンド（`GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1` の補助診断） | failure 0 | exit 1。280件中 failure 2。 | 失敗 |
+| clean clone `e7f1e57` での `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 python3 -m unittest discover -s tests -v` | failure 0、全件完走 | exit 1。280件中 failure 1。`test_own_process_tree_is_excluded` が空配列期待に対して自己プロセスの一時repoを1件返した。 | 失敗 |
 | `bash -n setup.sh hooks/*.sh bin/ccp bin/detect-parallel-sessions` | exit 0 | exit 0 | 成功 |
 | `python3 -m json.tool`（`settings.json.template`、`codex/hooks.json`、`codex/plugin-policy.json`、`manifests/skills.json`） | 各exit 0 | 各exit 0 | 成功 |
 
@@ -25,6 +27,8 @@
 2. `test_own_process_tree_is_excluded`: `bin/detect-parallel-sessions` がテストプロセスの祖先PIDを検出結果から除外できず、空配列期待に対して一時リポジトリの1件を返した。
 
 正本環境の11 errorは、グローバルGit署名設定がテストfixtureの空コミットに適用され、利用可能な署名agentがないことで発生した。補助診断ではこの環境要因を除去して280件まで完走したが、上記2 failureは残った。
+
+Fix round 1では、未コミットのuser変更を除外するため `mktemp -d /tmp/task-6-fix-round-1.XXXXXX`、`git clone --no-local --no-hardlinks`、`git checkout --detach e7f1e57513903c5d0daedf1cc31f683b6a76c619` を順に実行した。clean cloneでの探索範囲は、このcommitの全テスト（280件）である。固定された自己祖先除外failureが残ったため、Step 2〜3・5〜7のruntime検証には進んでいない。Criticalは未解決であり、Task 6は未完了である。
 
 ## Step 2: 隔離HOMEでのsetup
 
@@ -39,6 +43,8 @@
 状態: 未確認。
 
 ## Step 4: 代表subagent（controller実測）
+
+このStepは隔離HOMEで実行していない。controllerは現在の親Codex sessionからCodexの`spawn_agent`操作で各agentを起動した。書込み対象は、リポジトリ内でグローバルGit ignoreされるSDD一時領域 `.superpowers/` に限定され、configとHOMEは変更していない。独立したnested session用HOME、`HOME`の値、個々の一時ファイル名はcontroller記録にないため、隔離HOMEだったとは主張しない。
 
 | agent | repository生成設定 | runtime観測 | 操作結果 | 状態 |
 | --- | --- | --- | --- | --- |
