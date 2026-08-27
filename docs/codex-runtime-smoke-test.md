@@ -84,8 +84,20 @@ OpenAI公式の[Subagents documentation](https://developers.openai.com/codex/con
 ## Step 5: security cost boundary
 
 期待結果: 通常の文書差分はLLM security reviewを起動せず、認証/入力検証差分はLunaの`security-reviewer`を起動し、判断不能時に親が人間へ上位モデルの確認を求める。
-観測結果: 未実行。今回の実行単位はStep 2までとしたため。
-状態: 未確認。
+
+観測結果:
+
+- 通常のdocs-only synthetic diffはsecurity boundary非該当と分類し、LLM reviewerをspawnしなかった。
+- authentication + user inputを含むsynthetic diffだけを`agent_type=security-reviewer`へdispatchした。現在のspawn tool contractとrepo生成設定では、このroleは`gpt-5.6-luna`固定である。
+- 最初のdispatchでは、gitignoredな`.superpowers` artifactをchild環境から取得できず、入力不足として`Confidence: insufficient`になった。これはコードレビュー結果ではなく、artifact delivery failureとして分離した。その後、同じ軽量reviewerへdiffをinlineで再送した。
+- 軽量review結果は、token長上限なしがMedium、`verifyWithIdentityProvider`契約不明が条件付きHigh、caller認可不明が条件付きHighだった。`Confidence: insufficient`かつ`Human confirmation required: yes`だったため、親は強いmodelを自動spawnせず、ユーザーへ確認した。
+- ユーザーの回答「おkつづき」で承認を得た後だけ、default agent（`gpt-5.6-sol`、reasoning `high`）をdispatchした。上位review結果は、認証検証契約がコード上で保証されない点が条件付きHigh、token長無制限が条件付きMedium、無効credentialの失敗動作未定義が条件付きMediumだった。意図的に根拠を欠いたfixtureのため、こちらも`Confidence: insufficient`だった。
+- このprobeはコスト境界の制御経路を確認するためのsynthetic inputであり、実credentialやproduction codeは変更していない。
+
+判定: 成功。通常差分の非起動、境界差分の軽量review、判断不能時の人間確認、承認後だけの上位review dispatchを確認した。
+
+限界: reviewer自身による正確なruntime model名のself-reportは未確認である。`gpt-5.6-luna`はspawn toolの固定role contractとrepo生成設定に基づくrouting証拠であり、runtime self-reportの代替ではない。
+状態: 成功。
 
 ## Step 6: pluginとlearning
 
@@ -101,7 +113,7 @@ OpenAI公式の[Subagents documentation](https://developers.openai.com/codex/con
 
 ## 限界と次の確認
 
-- static gateと隔離HOMEのsetup probeは成功した。runtime全体の成功は主張できず、Step 3・5〜7を次の実行単位で確認する必要がある。
-- 「runtime hookが未承認」「plugin状態が不適合」「statuslineが未確認」は、実行していないため存在を結論づけない。探索範囲はStep 1の静的検査とcontrollerが実施したStep 4だけであり、他のruntime状態を覆う根拠はない。これらが誤りなら隔離HOMEの実機実行で観測される。
+- static gateと隔離HOMEのsetup probe、security reviewのコスト境界（Step 5）は成功した。runtime全体の成功は主張できず、Step 3・6〜7を次の実行単位で確認する必要がある。
+- 「runtime hookが未承認」「plugin状態が不適合」「statuslineが未確認」は、実行していないため存在を結論づけない。探索範囲はStep 1、Step 4、Step 5のsynthetic probeであり、他のruntime状態を覆う根拠はない。これらが誤りなら隔離HOMEの実機実行で観測される。
 - `code-explorer`と`planner`のruntime sandboxがread-onlyであることは未確認である。親read-only sessionの追加試験が必要である。
 - 本タスクでは実HOME、既存の `codex/plugin-policy.json`、`tasks/backlog.md`、`learning/entries/2026-08-27-*` を変更していない。
