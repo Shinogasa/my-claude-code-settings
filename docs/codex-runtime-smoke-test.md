@@ -2,15 +2,16 @@
 
 記録日: 2026-08-27
 対象BASE: `77974734bed817fc79e7940ef74461db4f185e05`
-検証時HEAD: `eb7e832f52bbf42e2c113561f12da23e1a4cc8de`
+検証時HEAD: `eb520766be67f894260a70e9e6a84648aa40ba32`
 
 ## 実行環境
 
 - Codex CLI: `codex-cli 0.149.1`
 - 作業開始時のHEADはBASEと一致していた。以後の検証commitを積む間も、既存の未コミット変更は保全し、本タスクで変更・stage・revertしていない。
-- 実HOME: setup/runtime probeは実行していない。したがって実HOMEへの変更はない。
+- 実HOMEではsetup/runtime probeを実行していない。すべて使い捨てHOMEへ限定したため、実HOMEへの変更はない。
 - Fix round 1の静的検証は、`/tmp/task-6-fix-round-1.pTHUgI/repo` にlocal clean cloneした `e7f1e57` のdetached HEADで実行した。clone前後の `git status --short` は空であり、実リポジトリのbranch、index、未コミット変更は操作していない。
 - Fix round 2の静的検証は、`/tmp/task-6-fix-round-2.uILYi6/repo` にlocal clean cloneした `eb7e832` で実行した。clone直後の `git status --short` は空であり、実リポジトリの既存未コミット変更を検証対象へ混ぜていない。
+- Step 2は、`/tmp/task-6-step-2.uJpLZp/repo` にlocal clean cloneした `eb52076` と、同ディレクトリ配下の使い捨てHOMEで実行した。submoduleは正本の固定済みcheckoutをlocal sourceとして初期化し、cloneに`.env`が無いことを確認した。実HOME、認証情報、ネットワークを使わないため、`claude`と`codex`は呼び出しを記録して固定JSONを返すstubへ差し替えた。
 
 ## Step 1: 静的スイート
 
@@ -37,13 +38,33 @@ Fix round 2では、CodexのmacOS sandboxで`ps`が拒否されると、検出�
 ## Step 2: 隔離HOMEでのsetup
 
 期待結果: `--claude`、`--codex`、`--all` の再実行が冪等であり、未所有パスと `--replace-conflicts` の所有権・backup復旧を確認する。
-観測結果: 未実行。Fix round 2はstatic gateの修復と再検証を区切りとし、runtime probeは次の実行単位へ残した。
-状態: 未確認。
+
+OpenAI公式の[Advanced Configuration](https://developers.openai.com/codex/config-advanced)は、Codexのlocal stateが`CODEX_HOME`（既定`~/.codex`）に置かれると説明する。setupは`HOME/.codex`を配布先にするため、実HOMEではなくselectorごとに独立した使い捨てHOMEを与えた。
+
+| selector | 初回 | 2回目 | host境界 |
+| --- | --- | --- | --- |
+| `--claude` | exit 0 | exit 0 | `.codex`のsentinel 1件だけを維持し、`.agents`を作らない |
+| `--codex` | exit 0 | exit 0 | `.claude`のsentinel 1件だけを維持する |
+| `--all` | exit 0 | exit 0 | Claude、Codex、Agent skillsの対象をすべて配置する |
+
+初回後のHOMEをcopyし、2回目後とregular file checksumおよびsymlink targetで比較した。3 selectorとも内容とsymlink topologyに差分はなく、代表4 symlinkのinodeも一致した。Claude生成JSONと両hostのownership stateは同内容で再配置されるためmtimeだけが更新された。したがって確認できた冪等性は「同一状態へ収束すること」であり、「2回目が一切writeしないこと」ではない。
+
+`--all`の競合fixtureには、Claude側の`.claude/CLAUDE.md`とCodex側の`.agents/skills/api-design`を未所有regular fileとして置いた。通常実行は2件を報告してexit 1となり、HOMEのchecksum・symlink topologyは実行前copyと一致した。backup、ownership state、CLI stub logも作成されず、選択hostへの部分適用はなかった。
+
+同じHOMEへ`--all --replace-conflicts`を実行するとexit 0となり、両方の元ファイルを同一timestamp `20260827_142934` のhost別backupへ退避した。Claude側は`.claude/backups/20260827_142934/CLAUDE.md`、Codex側は`.codex/backups/20260827_142934/.agents/skills/api-design`である。backupと実行前copyはbyte単位で一致し、各destinationは正しいsymlinkへ置換され、両hostのownership stateが作成された。その直後の通常`--all`もexit 0で、backupの個数と内容を維持した。
+
+手動復旧はHOMEを複製し、`.claude/CLAUDE.md`と`.agents/skills/api-design`のsymlinkを明示的に外して、対応するbackupを元パスへmoveする形でシミュレートした。復旧した元ファイルの**内容**は実行前copyとbyte単位で一致した。これは内容を手動復旧できる証拠であり、permission、mtime、ownerなどのmetadata復元や、setup自身のrestore CLIを確認したものではない。
+
+回帰検査として`bash -n setup.sh`はexit 0、`GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 python3 -m unittest tests.test_setup_cli tests.test_setup_preflight -v`は47件を159.529秒で完走し、failure / error 0だった。
+
+このprobeが確認したのはsetupのbash、Git、Python、filesystem上の配布契約である。plugin CLIはstubのため、pluginの実導入・監査runtimeはStep 6の未確認事項として残る。cloneに`.env`を含めていないため、実credentialを使うClaude設定生成も実行していない。
+
+状態: 成功。
 
 ## Step 3: hook信頼とSessionStart
 
 期待結果: 隔離Codexで `/hooks` を確認・承認し、新規起動とcompact継続でsuperpowers注入および有効なSessionStart出力を確認する。
-観測結果: 未実行。Fix round 2ではstatic gateまでを再検証したため。
+観測結果: 未実行。今回の実行単位はStep 2までとしたため。
 状態: 未確認。
 
 ## Step 4: 代表subagent（controller実測）
@@ -63,24 +84,24 @@ OpenAI公式の[Subagents documentation](https://developers.openai.com/codex/con
 ## Step 5: security cost boundary
 
 期待結果: 通常の文書差分はLLM security reviewを起動せず、認証/入力検証差分はLunaの`security-reviewer`を起動し、判断不能時に親が人間へ上位モデルの確認を求める。
-観測結果: 未実行。Fix round 2ではstatic gateまでを再検証したため。
+観測結果: 未実行。今回の実行単位はStep 2までとしたため。
 状態: 未確認。
 
 ## Step 6: pluginとlearning
 
 期待結果: plugin audit、`codex plugin list --json`、両ホストでのコード参加・skip・構成作業を確認する。
-観測結果: 未実行。Fix round 2ではstatic gateまでを再検証したため。
+観測結果: 未実行。今回の実行単位はStep 2までとしたため。
 状態: 未確認。
 
 ## Step 7: 公式default statusline
 
 期待結果: 明示的な`tui.status_line`なしの隔離Codexで可視フィールドを記録する。
-観測結果: 未実行。Fix round 2ではstatic gateまでを再検証したため。
+観測結果: 未実行。今回の実行単位はStep 2までとしたため。
 状態: 未確認。
 
 ## 限界と次の確認
 
-- static gateはclean cloneの全281件で成功した。runtime成功の主張はできず、Step 2〜3・5〜7を次の実行単位で確認する必要がある。
+- static gateと隔離HOMEのsetup probeは成功した。runtime全体の成功は主張できず、Step 3・5〜7を次の実行単位で確認する必要がある。
 - 「runtime hookが未承認」「plugin状態が不適合」「statuslineが未確認」は、実行していないため存在を結論づけない。探索範囲はStep 1の静的検査とcontrollerが実施したStep 4だけであり、他のruntime状態を覆う根拠はない。これらが誤りなら隔離HOMEの実機実行で観測される。
 - `code-explorer`と`planner`のruntime sandboxがread-onlyであることは未確認である。親read-only sessionの追加試験が必要である。
 - 本タスクでは実HOME、既存の `codex/plugin-policy.json`、`tasks/backlog.md`、`learning/entries/2026-08-27-*` を変更していない。
