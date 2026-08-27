@@ -15,6 +15,9 @@ PLUGIN_POLICY = json.loads(
 )
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 SETUP = (ROOT / "setup.sh").read_text(encoding="utf-8")
+REVIEW_STYLE = (ROOT / "output-styles" / "review-and-design.md").read_text(
+    encoding="utf-8"
+)
 SKILL_MANIFEST = json.loads(
     (ROOT / "manifests" / "skills.json").read_text(encoding="utf-8")
 )
@@ -44,7 +47,21 @@ class TestCodeParticipationContract(unittest.TestCase):
         for marker in ("スキップ", "理由", "検証", "★ Delta"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, RULE)
-        self.assertNotIn("★ Insight", RULE)
+        self.assertIn("コード参加では `★ Insight` を追加しない", RULE)
+
+    def test_code_participation_orders_prepare_reason_verify_and_delta(self):
+        section = RULE.split("## コード参加（Predictの代替イベント）", 1)[1]
+        section = section.split("\n## ", 1)[0]
+        markers = (
+            "### 依頼前にエージェントが準備するもの",
+            "ユーザーがコードを書いた直後",
+            "理由だけ",
+            "実行可能な検査によって検証",
+            "★ Delta を返す",
+        )
+        positions = [section.index(marker) for marker in markers]
+        self.assertEqual(positions, sorted(positions))
+        self.assertEqual(RULE.count("- **上限:"), 1)
 
     def test_excludes_low_value_code_participation(self):
         for marker in ("設定", "ボイラープレート", "明白な実装", "単純CRUD"):
@@ -64,6 +81,10 @@ class TestLearningPluginPolicy(unittest.TestCase):
         self.assertEqual(
             PLUGIN_POLICY["plugins"][self.PLUGIN_ID]["status"], "deny"
         )
+
+    def test_review_style_does_not_delegate_to_disabled_plugin(self):
+        self.assertNotIn("learning-output-style プラグインが管理", REVIEW_STYLE)
+        self.assertIn("rules/learning-mode.md", REVIEW_STYLE)
 
 
 class TestDeprecatedCommandRouting(unittest.TestCase):
@@ -92,6 +113,8 @@ class TestDeprecatedCommandRouting(unittest.TestCase):
         self.assertIn("/review", text)
         self.assertNotIn("/tdd", text)
         self.assertNotIn("/code-review", text)
+        self.assertNotIn("/prp-plan", text)
+        self.assertNotIn("/prp-implement", text)
 
 
 class TestSharedSkillPortability(unittest.TestCase):
@@ -99,7 +122,7 @@ class TestSharedSkillPortability(unittest.TestCase):
 
     def test_shared_skills_are_host_neutral(self):
         forbidden = (
-            r"Claude Code sessions",
+            r"\bClaude Code\b",
             r"\b(?:Use|use) (?:the )?(?:Read|Edit|Grep|Glob) tool\b",
             r"\buse Grep\b",
             r"Run: /verify",

@@ -54,7 +54,6 @@ bash setup.sh
 | リポジトリ | リンク先 | 備考 |
 |---|---|---|
 | `skills/` | `~/.agents/skills/` | Agent Skills オープン標準。Codex はスキャン時にシンボリックリンクを追従する |
-| `commands/` | `~/.codex/prompts/` | 現在は互換配線しているが、Codex custom prompts は deprecated。`skills/source-command-*` へ移行中 |
 | `rules/` | `~/.codex/rules/` | `AGENTS.md` から Markdown を相対参照するための配置。Codex の Starlark `.rules` とは別物 |
 | `CLAUDE.md` | `~/.codex/AGENTS.md` | Codex のグローバル指示 |
 | `hooks/` | `~/.codex/hooks/` | Claude Code と共有するhookスクリプト本体 |
@@ -62,6 +61,18 @@ bash setup.sh
 | `codex/agents/` | `~/.codex/agents/` | `agents/*.md` から生成したCodex TOML |
 
 `~/.agents/` は Codex が自動生成しないため、Codex 検出時に `setup.sh` が作成する。
+
+Codex custom prompts は deprecated のため、`commands/` は `~/.codex/prompts/` へ配布しない。
+Claude Codeでは既存commandを維持し、Codexでは次のnative機能または共有skillを使う。
+
+| Claude command | Codexの入口 |
+|---|---|
+| `code-review` | Codex組み込み `/review` |
+| `quality-gate` | `verification-loop` |
+| `verify` | `verification-loop` |
+| `tdd` | `tdd-workflow` |
+
+その他のcommandは `skills/source-command-*` として共有し、Codexのskill discoveryから利用する。
 
 ### Claude Code 向けプラグイン
 

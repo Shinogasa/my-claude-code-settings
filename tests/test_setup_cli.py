@@ -227,7 +227,7 @@ class SetupCliTests(unittest.TestCase):
     def test_claude_plugin_list_skips_installed_and_aggregates_independent_failures(self):
         (self.home / ".claude").mkdir()
         installed = '[{"id":"code-review@claude-plugins-official"}]'
-        failed = "learning-output-style@claude-plugins-official"
+        failed = "context7@claude-plugins-official"
         result = run_setup(
             self.repository, self.home, "--claude",
             extra_env={"CLAUDE_PLUGIN_LIST": installed, "CLAUDE_FAIL_PLUGIN": failed},
@@ -236,6 +236,7 @@ class SetupCliTests(unittest.TestCase):
         commands = (self.home.parent / "commands.log").read_text(encoding="utf-8")
         self.assertIn("claude plugin list --json", commands)
         self.assertNotIn("claude plugin install code-review@claude-plugins-official", commands)
+        self.assertNotIn("claude plugin install learning-output-style@claude-plugins-official", commands)
         self.assertIn("claude plugin install context7@claude-plugins-official", commands)
         self.assertIn(f"plugin={failed} operation=install", result.stderr)
         self.assertIn(f"retry: claude plugin install {failed}", result.stderr)
