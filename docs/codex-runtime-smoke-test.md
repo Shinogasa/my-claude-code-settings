@@ -102,7 +102,7 @@ OpenAI公式の[Subagents documentation](https://developers.openai.com/codex/con
 ### Step 5 fix round 1: 再現可能な操作記録
 
 - ordinary fixture: docs-only synthetic diff。artifact SHA-256は`9c2b93d9dc2a2d3ed52bee703ade42aa49a0ace5a27d5d91b1f5effb427e12d0`。security boundary非該当として分類し、LLM reviewerはspawnしなかった。
-- boundary fixture: `resolveSession` / `verifyWithIdentityProvider`を含むauthentication + user input validationのsynthetic diff。artifact SHA-256は`6e4b99a9d8618bffc12a9b3a805ae00ee79c326f525ae2abdc5148a85b39947e`。
+- boundary fixture: `resolveSession` / `verifyWithIdentityProvider`を含むauthentication + user input validationのsynthetic diff。artifact SHA-256は`6e4b99a9d8618bffc12a9b3a805ae00ee79c326f525ea2abdc5148a85b39947e`。
 - 操作列: boundary fixtureについて`spawn_agent(agent_type="security-reviewer")`を実行 → gitignored `.superpowers` artifactをchild環境から取得できず、artifact delivery failureとして入力不足の`Confidence: insufficient`を記録 → 同一reviewerへinline diffを`send_input`して再送 → 軽量reviewの`Confidence: insufficient` / `Human confirmation required: yes`を受け、ユーザーの「おkつづき」を取得 → 承認後に`spawn_agent(agent_type="default", model="gpt-5.6-sol", reasoning_effort="high")`を実行した。
 - 初回artifact delivery failureはコードreview所見ではなく配信失敗として扱い、inline retry後のreview結果と分離した。Lunaのexact runtime self-reportが未確認である限界は変わらない。
 
