@@ -118,6 +118,30 @@ OpenAI公式の[Subagents documentation](https://developers.openai.com/codex/con
 観測結果: 未実行。今回の実行単位はStep 2までとしたため。
 状態: 未確認。
 
+## Step 6/7 checkpoint（2026-08-28）
+
+### Step 6: plugin policy と learning behavior
+
+| 対象 | expected | observed | status |
+| --- | --- | --- | --- |
+| plugin policy | `bin/audit-codex-plugins.py` が違反なしとなり、default-deny plugin はすべてdisabled、context7 / serenaもunapprovedのままである | `python3 bin/audit-codex-plugins.py` はexit 0（`Codex plugin policy violations: none`）。clean cloneでの `python3 -m unittest tests.test_codex_plugin_policy -v` は20件、failure / error 0。`codex plugin list --json` はexit 0、installed 17 / enabled 8で、enabled 8は`openai-primary-runtime` / `openai-bundled`由来。`claude-plugins-official`由来9件（context7 / serenaを含む）はすべてdisabled。 | 成功 |
+| superpowers current-session利用 | 有効なsuperpowers skillを現在sessionで利用できる | active configの`[plugins."superpowers@openai-curated"] enabled = true`、cache manifest（superpowers 6.3.0、skillsあり、hooks `{}`）を確認した。このsessionでcacheの`superpowers:using-superpowers`と`subagent-driven-development`を実際に読んで利用した。 | 確認済み |
+| superpowers inventory | `codex plugin list --json`がsuperpowersのinventory登録状態を示す | 同コマンドのinstalled / available配列にsuperpowers entryは無かった。これはcurrent-sessionでのskill利用確認とは別の観測である。主張: 今回取得した2配列にentryが無かった。探索範囲: Codex CLI 0.150.1の同コマンド出力をpluginId/nameで検索した。範囲の根拠: OpenAI公式Developer commandsは同コマンドがinstalled / available配列を返すと定義する。反証条件: 別の認証・network・marketplace refresh状態で同コマンドがsuperpowersを返す、またはinventoryが別の永続層を正本としている場合、この観測はinstalled状態全体を覆わない。 | 未確認（config/cacheとCLI inventoryが不一致。再インストール・ID変更は未実施） |
+| Codex controlled code participation | learning-mode ruleを正確に読んだ後、signature・目的コメント・TODO・テストを先に用意し、5〜10行の参加依頼、skip後の自己実装、構成作業除外を確認する | controlled probeでは前提を用意して参加を依頼し、`スキップ`後に同じ判断を再質問せず自己実装した。親実測の`GOCACHE=/tmp/task-6-step-6.HIWqiw/go-cache-verify-1 go test -cover ./...`はPASS（coverage 100%）、同GOCACHEの`go vet ./...`もPASS。configuration exclusion probeでは`agent-config.toml`を質問・コード参加なしで作成し、`tomllib` parse resultは`{'log_level': 'debug', 'max_retries': 3}`だった。 | 部分確認（Codex側のみ） |
+| Codex natural learning probe | ruleを明示しない通常の発火でもlearning-mode契約を満たす | 選択式Predictで選択と理由を同時に質問し、参加依頼前にsignature・目的コメント・TODOを実作業ツリーへ用意しなかった。skip後の再質問はせず自己実装し、親実測の`go test -cover ./...`はPASS（coverage 100%）、`go vet ./...`もPASS。 | 未達。モデル判断だけで常時遵守されるとは主張しない。 |
+| Claude learning probe | Claude側でもcode participation、skip、configuration exclusionを確認する | isolated HOMEの最初のprobe sessionはassistant実行前に`API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)`で終了し、scratchに実装ファイルは生成されなかった。再試行はユーザーが中断し、新しいsession JSONLも生成されなかった。sandboxではprocess listを検査できなかったためprocess不在は未確認。 | 未確認。networkを使える環境で別タスクへ延期。 |
+
+### Step 7: 公式default statusline
+
+| 対象 | expected | observed | status |
+| --- | --- | --- | --- |
+| 隔離Codexのdefault statusline | 明示的な`tui.status_line`なしでTUIを起動し、公式defaultの可視fieldを記録する。custom item listは保存しない。 | isolated `CODEX_HOME=/tmp/task-6-step-6.HIWqiw/codex-statusline-home`で`codex login status`はexit 1（`Not logged in`）。実HOMEのcredentialをcopy / symlinkせず、TUIを起動しなかった。`tui.status_line`を保存する操作もしていない。 | 未確認。認証済みの隔離環境を用意できた場合に確認・反証できる。 |
+
+### checkpointの境界
+
+- security boundary: 該当なし。今回の変更はdocs-onlyであり、認証・認可・入力・API・secrets・権限・deployment設定を変更しない。
+- 実HOME、plugin enabled state、hook trust state、credentialは変更していない。
+
 ## 限界と次の確認
 
 - static gateと隔離HOMEのsetup probe、security reviewのコスト境界（Step 5）は成功した。runtime全体の成功は主張できず、Step 3・6〜7を次の実行単位で確認する必要がある。
