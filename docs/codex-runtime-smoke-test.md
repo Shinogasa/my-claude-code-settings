@@ -67,6 +67,24 @@ OpenAI公式の[Advanced Configuration](https://developers.openai.com/codex/conf
 観測結果: 未実行。今回の実行単位はStep 2までとしたため。
 状態: 未確認。
 
+### Step 3 後続部分checkpoint（2026-08-28）
+
+OpenAI公式の[Hooks](https://developers.openai.com/codex/hooks)は、non-managed hookを実行前にreview/trustすること、trustがcurrent definition hashに紐づき定義変更後は再reviewまでskipされることを定義する。同文書で、SessionStartのsourceは`startup` / `resume` / `clear` / `compact`、commandのplain stdoutはdeveloper contextへ追加されること、root sessionのcompact後は`compact`にmatchするSessionStart hookが次のmodel request前に実行されることを確認した。
+
+- 実測時のCodex CLIは`0.150.1`、Pythonは`3.14.6`だった。これは既存の古いcheckpointを置換せず、その後続versionとして記録する。
+- active `~/.codex/hooks.json`はrepoの`codex/hooks.json`、active `~/.codex/hooks`はrepoの`hooks`へのsymlinkだった。`hooks.json`のrepo/active SHA-256は双方`ac3b2dd184eab6466ab9ec3c9ff77b4146116218cbcf3c1a5d1a07b70d5fc6ec`、`inject-superpowers.sh`のrepo/active SHA-256は双方`afe066762399fef808257da4b7fb4e9a455cd34d4fcb2c025c3ec22035473da5`だった。
+- active scriptへsynthetic payloadを与えると、`startup` / `resume` / `clear` / `compact`のすべてで次の1行をstdoutへ返した。invalid JSONおよびnon-SessionStart payloadはexit 1とdiagnosticになった。
+
+  ```text
+  Before responding, read and follow superpowers:using-superpowers from the enabled Codex plugin.
+  ```
+
+- 現sessionのdeveloper contextにも同じ1行が正確に届き、main agentは実際に`superpowers:using-superpowers`を全文読んだ。配線、content hash、synthetic output、model-visible contextが一致するため、current-sessionでactive repo hookの出力が注入されたことと整合する。
+
+このcheckpointは部分確認であり、Step 3を完了扱いにはしない。model contextはSessionStartのsource値、persist済みtrust hash、launch時のtrust bypass有無を公開しないため、これらを確認済みとは書かない。`/hooks` UIでのsource/hash/trustの表示・操作、fresh disposable startup、実際の`/compact` continuationは実行していない。trust state、hook enabled state、credential、実HOMEファイルは変更していない。
+
+未確認の不在主張は次の範囲に限定する。主張: 上記3種類のruntime確認は未実行である。探索範囲: current sessionのdeveloper context、active symlinkとcontent hash、active scriptへのsynthetic payload、および公式Hooks文書である。範囲の根拠: これらは配線・出力契約・現sessionの注入を覆うが、UI state、fresh process startup、compact continuationを発生させない。反証条件: `/hooks` UI、fresh disposable startup、または実際の`/compact` continuationを実行してsource/hash/trust、起動時注入、compact後注入を観測した場合、この未確認範囲は更新される。
+
 ## Step 4: 代表subagent（controller実測）
 
 このStepは隔離HOMEで実行していない。controllerは現在の親Codex sessionからCodexの`spawn_agent`操作で各agentを起動した。書込み対象は、リポジトリ内でグローバルGit ignoreされるSDD一時領域 `.superpowers/` に限定され、configとHOMEは変更していない。独立したnested session用HOME、`HOME`の値、個々の一時ファイル名はcontroller記録にないため、隔離HOMEだったとは主張しない。
@@ -157,7 +175,7 @@ Claude scratchの不在主張は次の範囲に限定する。主張: `claude-le
 
 ## 限界と次の確認
 
-- static gateと隔離HOMEのsetup probe、security reviewのコスト境界（Step 5）は成功した。runtime全体の成功は主張できず、Step 3・6〜7を次の実行単位で確認する必要がある。
-- 「runtime hookが未承認」「plugin状態が不適合」「statuslineが未確認」は、実行していないため存在を結論づけない。探索範囲はStep 1、Step 4、Step 5のsynthetic probeであり、他のruntime状態を覆う根拠はない。これらが誤りなら隔離HOMEの実機実行で観測される。
-- `code-explorer`と`planner`のruntime sandboxがread-onlyであることは未確認である。親read-only sessionの追加試験が必要である。
+- static gate、隔離HOMEのsetup probe、security reviewのコスト境界（Step 5）、Step 6のplugin policy、Step 3のcurrent-session注入の部分証跡は確認した。runtime全体の成功は主張できない。
+- Step 3は`/hooks` UI trust、fresh disposable startup、実際の`/compact` continuationが未確認である。探索範囲・範囲根拠・反証条件はStep 3後続部分checkpointに限定して記録した。
+- 残項目は、Step 3のUI trust/fresh startup/compact、Claude側Step 6、Step 7、superpowers inventoryの根本原因である。`code-explorer`と`planner`のruntime sandboxがread-onlyであることも未確認であり、親read-only sessionの追加試験が必要である。
 - 本タスクでは実HOME、既存の `codex/plugin-policy.json`、`tasks/backlog.md`、`learning/entries/2026-08-27-*` を変更していない。
