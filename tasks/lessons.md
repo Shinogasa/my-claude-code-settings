@@ -189,3 +189,19 @@ fingerprintを検証した。新規配置はno-overwriteの`os.link`を使い、
 ユーザー所有pathを守るとき、preflightとmutationを一つの安全境界として扱わない。
 「検査→破壊的操作」の間へ更新を差し込むテストを作り、検証対象inodeをatomic操作で
 固定する。比較と更新が別syscallなら、直前検査でもTOCTOUは残る。
+
+### 2026-08-28 | PUBLIC証跡へ実HOMEの絶対パスを書いた
+
+**間違えた内容:**
+runtime証跡へactive hook sourceを正確に残そうとして、個人ユーザー名を含む実HOMEの
+絶対パスを2箇所書いた。commit hookがPUBLICリポジトリの禁止パターンとしてブロックした。
+
+**指摘・修正:**
+sourceの意味を失わない`~/.codex/hooks.json`表記へ一般化し、同じ禁止パターンが
+diffに残っていないことを再検査した。
+
+**教訓:**
+PUBLICな証跡では、hashやstatusの正確さと端末固有pathの転記を分離する。
+実HOME、ユーザー名、一時ディレクトリは、再現に不可欠でない限り`~`や役割名へ
+一般化してからstageする。commit hookだけに頼らず、docs差分の禁止パターン検査を
+commit前チェックへ含める。

@@ -85,6 +85,26 @@ OpenAI公式の[Hooks](https://developers.openai.com/codex/hooks)は、non-manag
 
 証跡不在の主張は次の範囲に限定する。主張: このcheckpointには、上記3種類のruntime確認の実行を示す証跡がない。探索範囲: このcheckpointに記録したcurrent sessionのdeveloper context、active symlinkとcontent hash、active scriptへのsynthetic payload、および公式Hooks文書である。範囲の根拠: これらは配線・出力契約・現sessionの注入を記録するが、UI state、fresh process startup、compact continuationの実行記録を取得する操作ではない。反証条件: このcheckpointの記録に、`/hooks` UI、fresh disposable startup、または実際の`/compact` continuationの実行を示すsource/hash/trust、起動時注入、compact後注入の証跡が含まれる場合、この主張は誤りである。Step 3はこの未確認を含むため未完了である。
 
+### Step 3 app-server checkpoint（2026-08-28）
+
+OpenAI公式の[Codex App Server](https://developers.openai.com/codex/app-server)は、`hooks/list`が1つ以上のcwdについて検出済みhookを列挙すると定義する。Codex CLI 0.150.1から`--experimental`付きで生成したJSON Schemaでは、各hookに`sourcePath`、`currentHash`、`enabled`、`trustStatus`があり、trust statusは`managed` / `untrusted` / `trusted` / `modified`の4値だった。
+
+- active `~/.codex/config.toml`の`[hooks.state]`には、`~/.codex/hooks.json:session_start:0:0`に対応する保存済みhashとして`sha256:3f8911580f61c6f4450d1d74183566c6ec25f3502f5ed5db55238821b4bca7c5`があった。同じsource pathの`:0:1` stateは記録されていなかった。
+- repoの現行`codex/hooks.json`をsymlinkした隔離`CODEX_HOME`に対する`hooks/list`は、SessionStart 0:0を`sha256:e8115dac39817f461271372a24ea6d552f2b3999bd696847455cd5a65fcce634`、0:1を`sha256:48a53495fa7bdae07490fdd5d231ed981fb13fdc54af5d50dc13b99383b9926c`として列挙した。stateを持たない最初の一覧では両方`untrusted`だった。
+- 隔離`CODEX_HOME`だけに上記2つのcurrent hashをtrust fixtureとして設定すると、同じ`hooks/list`は両方を`trusted`と返した。続くephemeral `thread/start`（`sessionStartSource: "startup"`）の最初のturnでは、`detect-parallel-sessions.sh`と`inject-superpowers.sh`の`hook/started` / `hook/completed`が各1回記録され、両方`completed`になった。後者のcontext entryは次の1行だった。
+
+  ```text
+  Before responding, read and follow superpowers:using-superpowers from the enabled Codex plugin.
+  ```
+
+- model接続はhook完了後にDNSで失敗したためturnをinterruptした。SessionStartの完走とcontext生成はmodel応答の成功に依存せず観測でき、invalid SessionStart JSONは報告されなかった。
+- active `CODEX_HOME`をそのまま使う最初のapp-server起動は、既存`state_5.sqlite`の初期化に失敗した。`codex doctor --summary`もstate database integrity failureを報告したため、state DBの退避・修復・再生成は行わず、公式設定`sqlite_home`だけを使い捨てディレクトリへoverrideして再実行した。
+- このactive `hooks/list`はwarning / error 0で4件を返した。PreToolUse 0:0と0:1は`enabled: true` / `trusted`、SessionStart 0:0（`detect-parallel-sessions.sh`）は`enabled: true` / `modified`、0:1（`inject-superpowers.sh`）は`enabled: true` / `untrusted`だった。sourceはすべて`user`、source pathはactive `~/.codex/hooks.json`だった。
+
+このcheckpointにより、active source/hash/enabled/trust statusと、trust fixture上のfresh disposable startupを確認できた。active SessionStart 2件は`modified` / `untrusted`であり、公式のhash連動契約上、`/hooks`で再review / trustするまで通常起動ではskipされる。現在sessionへ同じdeveloper contextが届いた事実は、active hookのpersist済みtrustやtrust bypassを証明しないという前checkpointの境界を維持する。実HOMEのconfig、hook trust、credential、plugin enabled stateは変更せず、trust fixtureとSQLite runtime stateは使い捨て領域だけに作成した。
+
+Step 3はactive trust statusとfresh startupまで部分確認が進んだが、`/hooks` UIでのactive hook再承認と、実際のcompact完了後のcontinuationは未確認のため完了扱いにしない。
+
 ## Step 4: 代表subagent（controller実測）
 
 このStepは隔離HOMEで実行していない。controllerは現在の親Codex sessionからCodexの`spawn_agent`操作で各agentを起動した。書込み対象は、リポジトリ内でグローバルGit ignoreされるSDD一時領域 `.superpowers/` に限定され、configとHOMEは変更していない。独立したnested session用HOME、`HOME`の値、個々の一時ファイル名はcontroller記録にないため、隔離HOMEだったとは主張しない。
@@ -166,7 +186,7 @@ Claude scratchの不在主張は次の範囲に限定する。主張: `claude-le
 
 | 対象 | expected | observed | status |
 | --- | --- | --- | --- |
-| 隔離Codexのdefault statusline | 明示的な`tui.status_line`なしでTUIを起動し、公式defaultの可視fieldを記録する。custom item listは保存しない。 | isolated `CODEX_HOME=/tmp/task-6-step-6.HIWqiw/codex-statusline-home`で`codex login status`はexit 1（`Not logged in`）。実HOMEのcredentialをcopy / symlinkせず、TUIを起動しなかった。`tui.status_line`を保存する操作もしていない。 | 未確認。認証済みの隔離環境を用意できた場合に確認・反証できる。 |
+| statuslineの移行方針 | 独自adapterを作らずCodex公式の設定機構を使う。 | OpenAI公式の[Developer commands](https://developers.openai.com/codex/cli/slash-commands)は、`/statusline`で項目を選択・並べ替えし、`tui.status_line`へ保存すると定義する。active configには`model-with-reasoning`、`current-dir`、`project-name`、`git-branch`、`pull-request-number`、`approval-mode`、`context-used`の明示設定がある。ユーザー判断により公式defaultの追加実測は移行の合否対象から外し、custom item listの変更やadapter追加は行わない。 | 方針確定。default実測は対象外。 |
 
 ### checkpointの境界
 
@@ -177,6 +197,6 @@ Claude scratchの不在主張は次の範囲に限定する。主張: `claude-le
 
 - Task 6全体の状態: in progress。
 - static gate、隔離HOMEのsetup probe、security reviewのコスト境界（Step 5）、Step 6のplugin policy、Step 3のcurrent-session注入の部分証跡は確認した。runtime全体の成功は主張できない。
-- Step 3は`/hooks` UI trust、fresh disposable startup、実際の`/compact` continuationが未確認である。探索範囲・範囲根拠・反証条件はStep 3後続部分checkpointに限定して記録した。
-- 残項目は、Step 3のUI trust/fresh startup/compact、Claude側Step 6、Step 7、superpowers inventoryの根本原因である。`code-explorer`と`planner`のruntime sandboxがread-onlyであることも未確認であり、親read-only sessionの追加試験が必要である。
+- Step 3は公式`hooks/list`でactive source/hash/enabled/trust statusを確認し、隔離trust fixtureでfresh startupも確認した。active SessionStartは`modified` / `untrusted`であり、`/hooks` UIでの再承認と実際の`/compact` continuationが未確認である。
+- 残項目は、Step 3のactive UI trust / compact、Claude側Step 6、superpowers inventoryの根本原因である。`code-explorer`と`planner`のruntime sandboxがread-onlyであることも未確認であり、親read-only sessionの追加試験が必要である。Step 7の公式default実測はユーザー判断で合否対象から外した。
 - 本タスクでは実HOME、既存の `codex/plugin-policy.json`、`tasks/backlog.md`、`learning/entries/2026-08-27-*` を変更していない。
