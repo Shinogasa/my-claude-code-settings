@@ -89,6 +89,23 @@ OpenAI公式の[Hooks](https://developers.openai.com/codex/hooks)は、non-manag
 
 OpenAI公式の[Codex App Server](https://developers.openai.com/codex/app-server)は、`hooks/list`が1つ以上のcwdについて検出済みhookを列挙すると定義する。Codex CLI 0.150.1から`--experimental`付きで生成したJSON Schemaでは、各hookに`sourcePath`、`currentHash`、`enabled`、`trustStatus`があり、trust statusは`managed` / `untrusted` / `trusted` / `modified`の4値だった。
 
+実行時version: Codex CLI `0.150.1`、Python `3.14.6`。以下の`<repo>`と`<scratch>`は使い捨ての作業領域であり、実HOMEの絶対パス、credential、active trust stateは記録・変更していない。
+
+| 操作 | 実行コマンド / JSONL操作 | expected | observed |
+| --- | --- | --- | --- |
+| Schema生成 | `codex app-server generate-json-schema --experimental --out <schema-dir>` | app-server protocol schemaを生成し、hookのsource/hash/enabled/trust fieldsを検査可能にする | exit 0。生成schemaに`sourcePath`、`currentHash`、`enabled`、`trustStatus`と4つのtrust status enumを確認した。 |
+| active stateの診断 | `codex app-server --stdio`、続いて`codex doctor --summary --no-color --ascii` | active state DBが使用可能ならapp-serverを通常起動でき、doctorはintegrity failureを返さない | 通常起動は`state_5.sqlite`初期化に失敗し、doctorもstate database integrity failureを返した。DBの退避・修復・再生成は実施しなかった。 |
+| active `hooks/list` | `codex app-server -c 'sqlite_home="<scratch>/active-hook-probe-sqlite"' --stdio`を起動し、JSONLで`initialize` → `initialized` → `hooks/list`（`cwds: ["<repo>"]`） | active hooksのsource、enabled、trust status、warning/errorを列挙する | warning / error 0、4件enabled、sourceはすべて`user`。PreToolUse 2件は`trusted`、SessionStart 0:0は`modified`、0:1は`untrusted`だった。 |
+| stateなしfixtureの`hooks/list` | `CODEX_HOME=<scratch>/isolated-codex-home codex app-server --stdio`を起動し、同じJSONL handshakeと`hooks/list`を実行 | stateなしでは現行SessionStart definitionが未trustとして列挙される | SessionStart 0:0と0:1はそれぞれ現行`currentHash`で列挙され、両方`untrusted`だった。 |
+| trust fixture後の`hooks/list` | 隔離configの`[hooks.state]`へ上記2件の現行hashだけをfixtureとして設定し、同じ`hooks/list`を再実行 | fixtureに登録した2件だけが`trusted`になる | SessionStart 0:0と0:1はともに`trusted`。これは隔離fixtureの結果であり、active trustの成功を意味しない。 |
+| fresh startup | fixtureのapp-serverへJSONLでephemeral `thread/start`（`sessionStartSource: "startup"`、`sandbox: "read-only"`、`approvalPolicy: "never"`）→ `turn/start`を送信 | SessionStart 2件が開始・完了し、inject hookのcontextが期待した1行と完全一致し、invalid SessionStart JSONを報告しない | 両hookに各1回の`hook/started` / `hook/completed`を記録し、両方`completed`。context entryは期待値とexact matchした。hook完了後にmodel接続がDNS失敗したため`turn/interrupt`を送信した。 |
+
+期待したinject hookのcontext entryは次の1行である。
+
+```text
+Before responding, read and follow superpowers:using-superpowers from the enabled Codex plugin.
+```
+
 - active `~/.codex/config.toml`の`[hooks.state]`には、`~/.codex/hooks.json:session_start:0:0`に対応する保存済みhashとして`sha256:3f8911580f61c6f4450d1d74183566c6ec25f3502f5ed5db55238821b4bca7c5`があった。同じsource pathの`:0:1` stateは記録されていなかった。
 - repoの現行`codex/hooks.json`をsymlinkした隔離`CODEX_HOME`に対する`hooks/list`は、SessionStart 0:0を`sha256:e8115dac39817f461271372a24ea6d552f2b3999bd696847455cd5a65fcce634`、0:1を`sha256:48a53495fa7bdae07490fdd5d231ed981fb13fdc54af5d50dc13b99383b9926c`として列挙した。stateを持たない最初の一覧では両方`untrusted`だった。
 - 隔離`CODEX_HOME`だけに上記2つのcurrent hashをtrust fixtureとして設定すると、同じ`hooks/list`は両方を`trusted`と返した。続くephemeral `thread/start`（`sessionStartSource: "startup"`）の最初のturnでは、`detect-parallel-sessions.sh`と`inject-superpowers.sh`の`hook/started` / `hook/completed`が各1回記録され、両方`completed`になった。後者のcontext entryは次の1行だった。
