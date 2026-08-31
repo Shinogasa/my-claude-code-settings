@@ -7,8 +7,11 @@
 
 実行: python3 tests/test_codex_personal_profile.py
 """
+import contextlib
 import importlib.util
+import io
 import os
+import stat
 import subprocess
 import tempfile
 import tomllib
@@ -96,6 +99,73 @@ class TestGenerator(unittest.TestCase):
             self.assertEqual(tomllib.load(f)["model_provider"], "openai")
 
 
+class TestGeneratedFileHardening(unittest.TestCase):
+    """生成物そのものの扱い。いずれも失敗しても静かなので、ここで固定する。"""
+
+    def setUp(self):
+        self.gen = load_generator()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def generate(self, config_text: str, allowlist_text: str = "") -> Path:
+        config = self.dir / "config.toml"
+        allowlist = self.dir / "allowlist.txt"
+        dest = self.dir / "personal.config.toml"
+        config.write_text(config_text, encoding="utf-8")
+        allowlist.write_text(allowlist_text, encoding="utf-8")
+        self.gen.main([str(config), str(allowlist), str(dest)])
+        return dest
+
+    def test_profile_is_not_world_readable(self):
+        # 生成元の config.toml は 600。値は転記しないが、会社の MCP サーバ名は
+        # 社内トポロジの情報なので共有マシンで他ユーザーへ見せない。
+        dest = self.generate('[mcp_servers.company_tool]\nurl = "https://example.invalid"\n')
+        self.assertEqual(stat.S_IMODE(dest.stat().st_mode), 0o600)
+
+    def test_no_temporary_file_is_left_behind(self):
+        dest = self.generate('model_provider = "llm_gateway"\n')
+        leftovers = [p.name for p in dest.parent.glob("*.tmp")]
+        self.assertEqual(leftovers, [])
+
+    def test_quote_in_server_name_survives_round_trip(self):
+        # エスケープを忘れると生成物が TOML として壊れる。
+        rendered = self.gen.render({'odd"name': {}}, set())
+        self.assertEqual(list(tomllib.loads(rendered)["mcp_servers"]), ['odd"name'])
+
+    def test_backslash_in_server_name_survives_round_trip(self):
+        rendered = self.gen.render({"odd\\name": {}}, set())
+        self.assertEqual(list(tomllib.loads(rendered)["mcp_servers"]), ["odd\\name"])
+
+    def test_allowlisted_network_facing_server_is_reported(self):
+        # 許可リストは人間が書く。会社のリモートサーバを足しても生成は成功するため、
+        # 判断した本人の目に入る位置で言う必要がある。
+        config = self.dir / "config.toml"
+        allowlist = self.dir / "allowlist.txt"
+        dest = self.dir / "out.toml"
+        config.write_text(
+            '[mcp_servers.remote_tool]\nurl = "https://example.invalid"\n', encoding="utf-8"
+        )
+        allowlist.write_text("remote_tool\n", encoding="utf-8")
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+            self.gen.main([str(config), str(allowlist), str(dest)])
+        self.assertIn("remote_tool", stderr.getvalue())
+
+    def test_allowlisted_local_server_is_not_reported(self):
+        config = self.dir / "config.toml"
+        allowlist = self.dir / "allowlist.txt"
+        dest = self.dir / "out.toml"
+        config.write_text('[mcp_servers.local_tool]\ncommand = "/bin/true"\n', encoding="utf-8")
+        allowlist.write_text("local_tool\n", encoding="utf-8")
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+            self.gen.main([str(config), str(allowlist), str(dest)])
+        self.assertEqual(stderr.getvalue(), "")
+
+
 class TestRepoAllowlist(unittest.TestCase):
     def test_allowlist_is_parseable_and_not_empty_of_comments(self):
         gen = load_generator()
@@ -103,6 +173,18 @@ class TestRepoAllowlist(unittest.TestCase):
         self.assertNotIn("", allowed)
         for name in allowed:
             self.assertFalse(name.startswith("#"), f"コメントが混入している: {name}")
+
+    def test_allowlist_has_no_network_facing_entry_on_this_machine(self):
+        # このマシンの config.toml に対して、許可済みサーバが外部接続を持たないこと。
+        # config.toml が無いマシン（CI 等）ではスキップする。
+        gen = load_generator()
+        config = Path.home() / ".codex" / "config.toml"
+        if not config.exists():
+            self.skipTest("~/.codex/config.toml が無い")
+        servers = gen.read_mcp_servers(config)
+        allowed = gen.read_allowlist(ALLOWLIST)
+        exposed = [n for n in allowed if n in servers and gen.is_network_facing(servers[n])]
+        self.assertEqual(exposed, [], f"外部接続を持つサーバが許可されている: {exposed}")
 
 
 class TestCxpGuard(unittest.TestCase):

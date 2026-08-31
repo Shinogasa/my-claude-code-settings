@@ -11,9 +11,14 @@ Codex のプロファイルは base 設定を「置き換える」のではな�
 
 実行: python3 bin/generate-codex-personal-profile.py <config.toml> <allowlist> <dest>
 """
+import os
 import sys
 import tomllib
 from pathlib import Path
+
+# 個人セッションで有効にしても、外部へ出ていくサーバかどうかの判定に使うキー。
+# config.toml にある remote サーバは会社のゲートウェイ上にある可能性が高い。
+NETWORK_FACING_KEYS = ("url", "http_headers", "bearer_token_env_var")
 
 HEADER = [
     "# setup.sh が生成する。手で編集しても次回の setup.sh 実行で上書きされる。",
@@ -40,15 +45,47 @@ def read_mcp_servers(path: Path) -> dict:
         return tomllib.load(f).get("mcp_servers", {})
 
 
+def quote_key(name: str) -> str:
+    """TOML の基本文字列としてサーバ名をクォートする。
+
+    エスケープせずに埋め込むと、`"` や `\\` を含む名前で生成物が壊れる。
+    壊れた場合 cxp 側の tomllib が落ちて起動は止まる(fail closed)が、
+    原因が生成側だと分かりにくいため、ここで正しく出す。
+    """
+    escaped = name.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def is_network_facing(definition) -> bool:
+    if not isinstance(definition, dict):
+        return False
+    return any(key in definition for key in NETWORK_FACING_KEYS)
+
+
 def render(servers: dict, allowed: set[str]) -> str:
     lines = list(HEADER)
     # config.toml にある全サーバを明示的に列挙する。無効なものだけ書くと、cxp の未反映検査が
     # 「許可済みで省略した」と「そもそも反映していない」を区別できなくなる。
     for name in sorted(servers):
-        lines.append(f'[mcp_servers."{name}"]')
+        lines.append(f"[mcp_servers.{quote_key(name)}]")
         lines.append(f"enabled = {'true' if name in allowed else 'false'}")
         lines.append("")
     return "\n".join(lines)
+
+
+def write_profile(dest: Path, content: str) -> None:
+    """生成物を 600 で原子的に置き換える。
+
+    生成元の config.toml は 600。生成物は値を転記しないが、会社の MCP サーバ名は
+    社内トポロジの情報なので、共有マシンで他ユーザーへ見せる理由がない。
+
+    途中で落ちた生成物が残ると cxp が tomllib で落ちる(fail closed)ため実害は無いが、
+    原因が読みにくいので一時ファイル経由で置き換える。
+    """
+    tmp = dest.with_name(dest.name + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, dest)
 
 
 def main(argv: list[str]) -> int:
@@ -63,12 +100,23 @@ def main(argv: list[str]) -> int:
     allowed = read_allowlist(allowlist_path)
     servers = read_mcp_servers(base_config)
 
-    dest.write_text(render(servers, allowed), encoding="utf-8")
+    write_profile(dest, render(servers, allowed))
 
     enabled = sorted(n for n in servers if n in allowed)
     disabled = sorted(n for n in servers if n not in allowed)
     print(f"  MCP 有効: {', '.join(enabled) or 'なし'}")
     print(f"  MCP 無効: {', '.join(disabled) or 'なし'}")
+
+    # 許可リストは人間が書く。会社のリモートサーバを誤って足しても、
+    # 生成は成功してしまい実行結果からは気づけない。判断した本人の目に入る位置で言う。
+    exposed = [n for n in enabled if is_network_facing(servers[n])]
+    if exposed:
+        print(
+            "  警告: 許可したサーバが外部へ接続します: "
+            + ", ".join(exposed)
+            + "\n        会社のゲートウェイ上にあるなら codex/personal-mcp-allowlist.txt から外すこと。",
+            file=sys.stderr,
+        )
     return 0
 
 
