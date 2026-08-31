@@ -73,3 +73,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | # | タイトル | 日付 | 状態 |
 |---|---|---|---|
 | [0001](0001-learning-mode-prediction-format.md) | 学習モードの予測フェーズを再認から生成へ変える | 2026-08-14 | accepted |
+| [0005](0005-learning-mode-decision-layer-gate.md) | 判断点を層で選別し、実装レベルの経験は定石欄で供給する | 2026-08-21 | accepted |
