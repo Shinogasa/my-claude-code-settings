@@ -162,9 +162,9 @@ OpenAI公式の[Subagents documentation](https://developers.openai.com/codex/sub
 
 ただし、この親turnではTask 6の「`code-explorer`をread-onlyでruntime確認」は達成していない。反証条件は、親をread-onlyにした別sessionで`code-explorer`を実行したときにworkspace-writeを観測すること。未実行のため、configured read-onlyがruntimeで有効になることは未確認である。
 
-### Step 4 parent read-only checkpoint（2026-08-31）
+### Step 4 planner parent read-only checkpoint（2026-08-31）
 
-上記の反証試験をCodex CLI `0.150.1`で実行した。外側sandbox内での初回起動はin-process app-server clientの初期化が`Operation not permitted`となったため、外側だけ承認済み実行へ切り替えた。nested Codex自体は次のflagsで`read-only`かつapprovalなしに固定した。
+既存のplanner残項目をCodex CLI `0.150.1`で確認した。外側sandbox内での初回起動はin-process app-server clientの初期化が`Operation not permitted`となったため、外側だけ承認済み実行へ切り替えた。nested Codex自体は次のflagsで`read-only`かつapprovalなしに固定した。
 
 ```bash
 codex exec --enable multi_agent --ephemeral --json \
@@ -174,30 +174,32 @@ codex exec --enable multi_agent --ephemeral --json \
 公開リポジトリでは、実行時の絶対リポジトリパスだけを`<repo>`へ一般化した。ほかのprompt本文は次のとおりである。
 
 ```text
-この検証だけを実行してください。1. agent_type=code-explorer のsubagentを1体だけspawnする。childには作業ディレクトリ <repo> で次のshell commandを正確に1回だけ実行させる: touch -- .superpowers/sdd/2026-08-20-codex-compatibility-migration/parent-read-only-probe.txt 。approval要求、権限昇格、retry、別command、別file変更は禁止する。2. child完了後、親自身が次のread-only shell commandを正確に1回実行する: if test -e .superpowers/sdd/2026-08-20-codex-compatibility-migration/parent-read-only-probe.txt; then printf "present\n"; else printf "absent\n"; fi 。3. childのruntime context、touchのexit codeとstderr、親存在確認のstdoutだけを報告する。それ以外の操作は禁止する。
+この検証だけを実行してください。1. agent_type=planner のsubagentを1体だけspawnする。childには作業ディレクトリ <repo> で次のshell commandを正確に1回だけ実行させる: touch -- .superpowers/sdd/2026-08-20-codex-compatibility-migration/planner-parent-read-only-probe.txt 。approval要求、権限昇格、retry、別command、別file変更は禁止する。2. child完了後、親自身が次のread-only shell commandを正確に1回実行する: if test -e .superpowers/sdd/2026-08-20-codex-compatibility-migration/planner-parent-read-only-probe.txt; then printf "present\n"; else printf "absent\n"; fi 。3. childのruntime context、touchのexit codeとstderr、親存在確認のstdoutだけを報告する。それ以外の操作は禁止する。
 ```
 
 childは上記の`touch` commandを1回だけ実行した。
 
 ```bash
-touch -- .superpowers/sdd/2026-08-20-codex-compatibility-migration/parent-read-only-probe.txt
+touch -- .superpowers/sdd/2026-08-20-codex-compatibility-migration/planner-parent-read-only-probe.txt
 ```
 
 child完了後、親は次のread-only commandを1回だけ実行した。期待値は`absent`であり、観測値はexit 0 / stdout `absent`だった。
 
 ```bash
-if test -e .superpowers/sdd/2026-08-20-codex-compatibility-migration/parent-read-only-probe.txt; then printf "present\n"; else printf "absent\n"; fi
+if test -e .superpowers/sdd/2026-08-20-codex-compatibility-migration/planner-parent-read-only-probe.txt; then printf "present\n"; else printf "absent\n"; fi
 ```
 
 | 判別対象 | 仮説が正しい場合 | 反証条件 | observed |
 | --- | --- | --- | --- |
-| 親のlive read-only sandboxがchildへ再適用される | child writeが拒否され、targetは作成されない | child writeがexit 0となるか、targetが存在する | spawn成功。child runtime contextはfilesystem sandbox `read-only` / permission profile `managed/restricted`。`touch`はexit 1、`Operation not permitted`。親の存在確認はexit 0 / `absent`。 |
+| 親のlive read-only sandboxがchildへ再適用される | child writeが拒否され、targetは作成されない | child writeがexit 0となるか、targetが存在する | `agent_type=planner` childを1体だけspawn。child runtime contextはfilesystem `read-only`。`touch`はexactly once、exit 1、stderrは`Operation not permitted`。親のexact存在確認はexit 0 / stdout `absent`。outer `codex exec`はexit 0 / `turn.completed`。 |
 
-target不在の主張は次の範囲に限定する。主張: child完了後のcheck時点で、exact targetは存在しなかった。探索範囲: 表示した`test -e` commandでexact pathを1回だけ確認した。範囲の根拠: childはexact `touch` 1回だけに制約され、このcommandが作成または更新できるpathはこのtargetだけである。反証条件: childがexit 0となる、親のstdoutが`present`となる、またはexact checkの外で異なるpath/action/raceがある場合、この主張は誤りまたは主張の範囲外となる。
+target不在の主張は次の範囲に限定する。主張: 親check時点で、exact planner probe targetは存在しなかった。探索範囲: prompt内のliteral `test -e` commandでexact pathを1回確認し、controllerもouter process完了後に同じexact-path checkを再実行して`absent`を観測した。範囲の根拠: childはこのtargetへの`touch` exactly onceだけに制約され、このcommandが作成または更新できるpathはこのtargetだけである。反証条件: childがexit 0となる、親またはcontrollerのstdoutが`present`となる、または制約外のaction / race / pathがある場合、この主張は誤りまたは主張の範囲外となる。
 
-この結果は、親workspace-writeでchild writeが成功した前checkpointと対になり、親turnのlive sandbox overrideがchildへ再適用される公式契約と一致する。Task 6の`code-explorer` read-only runtime確認は達成した。
+repository routing/config evidenceでは、`planner`は`gpt-5.6-sol`、reasoning `high`、sandbox `read-only`である。これはrepository設定とroutingの証拠であり、childのexact runtime model / reasoning effort self-reportではない。後者は取得していない。
 
-限界: childのexact runtime model self-reportは取得していない。`gpt-5.6-luna`はrepository生成設定とspawn routingに基づく。外側実行の権限はnested Codexのread-only境界そのものではなく、App Server初期化を可能にするための実行条件である。active MCPのOAuth refresh errorが別途出たが、child spawn・write拒否・存在確認は完走した。
+この結果は、親workspace-writeでchild writeが成功した前checkpointと対になり、親turnのlive sandbox overrideがchildへ再適用される公式契約と一致する。Task 6 Step 4の`planner` read-only runtime sandbox確認は達成した。Atlassian MCP OAuth refresh errorは別diagnosticとして出たが、child spawn、write拒否、親存在確認、outer process完走を無効化しない。
+
+限界: このprobeはCodex CLI `0.150.1`でこのparent invocationのplanner sandboxを確認したものであり、将来のversionや他のparent sandbox modeまでは証明しない。外側実行の権限はnested Codexのread-only境界そのものではなく、App Server初期化を可能にするための実行条件である。security boundaryはdocs-onlyのため非該当であり、実HOME/config/hook trust/credential/plugin enabled stateは変更していない。
 
 ## Step 5: security cost boundary
 
@@ -278,5 +280,5 @@ Claude scratchの不在主張は次の範囲に限定する。主張: `claude-le
 - Task 6全体の状態: in progress。
 - static gate、隔離HOMEのsetup probe、security reviewのコスト境界（Step 5）、Step 6のplugin policy、Step 3のcurrent-session注入の部分証跡は確認した。runtime全体の成功は主張できない。
 - Step 3は公式`hooks/list`でactive source/hash/enabled/trust statusを確認し、隔離trust fixtureでfresh startupも確認した。active SessionStartは`modified` / `untrusted`であり、`/hooks` UIでの再承認と実際の`/compact` continuationが未確認である。
-- 残項目は、Step 3のactive UI trust / compact、Claude側Step 6、superpowers inventoryの根本原因、`planner`のread-only runtime sandboxである。exact runtime model self-reportの限界は、sandbox確認とは別に維持する。Step 7の公式default実測はユーザー判断で合否対象から外した。
+- Step 4のplanner read-only runtime sandbox確認は達成した。残項目は、Step 3のactive UI trust / compact、Claude側Step 6、superpowers inventoryの根本原因である。exact runtime model / reasoning effort self-reportの未取得は、sandbox確認とは別の限界として維持する。Step 7の公式default実測はユーザー判断で合否対象から外した。
 - 本タスクでは実HOME、既存の `codex/plugin-policy.json`、`tasks/backlog.md`、`learning/entries/2026-08-27-*` を変更していない。
