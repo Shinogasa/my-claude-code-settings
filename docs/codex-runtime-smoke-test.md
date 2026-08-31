@@ -89,16 +89,42 @@ OpenAI公式の[Hooks](https://developers.openai.com/codex/hooks)は、non-manag
 
 OpenAI公式の[Codex App Server](https://developers.openai.com/codex/app-server)は、`hooks/list`が1つ以上のcwdについて検出済みhookを列挙すると定義する。Codex CLI 0.150.1から`--experimental`付きで生成したJSON Schemaでは、各hookに`sourcePath`、`currentHash`、`enabled`、`trustStatus`があり、trust statusは`managed` / `untrusted` / `trusted` / `modified`の4値だった。
 
-実行時version: Codex CLI `0.150.1`、Python `3.14.6`。以下の`<repo>`と`<scratch>`は使い捨ての作業領域であり、実HOMEの絶対パス、credential、active trust stateは記録・変更していない。
+実行時version: Codex CLI `0.150.1`、Python `3.14.6`。以下の`<repo>`と`<scratch>`は使い捨ての作業領域であり、実HOMEの絶対パス、credential、active trust stateは記録・変更していない。2026-08-31のfix roundでは、下記fixture TOMLとJSONLを固定してtrust fixtureとfresh startupを再実行し、同じ結果を確認した。
 
-| 操作 | 実行コマンド / JSONL操作 | expected | observed |
-| --- | --- | --- | --- |
-| Schema生成 | `codex app-server generate-json-schema --experimental --out <schema-dir>` | app-server protocol schemaを生成し、hookのsource/hash/enabled/trust fieldsを検査可能にする | exit 0。生成schemaに`sourcePath`、`currentHash`、`enabled`、`trustStatus`と4つのtrust status enumを確認した。 |
-| active stateの診断 | `codex app-server --stdio`、続いて`codex doctor --summary --no-color --ascii` | active state DBが使用可能ならapp-serverを通常起動でき、doctorはintegrity failureを返さない | 通常起動は`state_5.sqlite`初期化に失敗し、doctorもstate database integrity failureを返した。DBの退避・修復・再生成は実施しなかった。 |
-| active `hooks/list` | `codex app-server -c 'sqlite_home="<scratch>/active-hook-probe-sqlite"' --stdio`を起動し、JSONLで`initialize` → `initialized` → `hooks/list`（`cwds: ["<repo>"]`） | active hooksのsource、enabled、trust status、warning/errorを列挙する | warning / error 0、4件enabled、sourceはすべて`user`。PreToolUse 2件は`trusted`、SessionStart 0:0は`modified`、0:1は`untrusted`だった。 |
-| stateなしfixtureの`hooks/list` | `CODEX_HOME=<scratch>/isolated-codex-home codex app-server --stdio`を起動し、同じJSONL handshakeと`hooks/list`を実行 | stateなしでは現行SessionStart definitionが未trustとして列挙される | SessionStart 0:0と0:1はそれぞれ現行`currentHash`で列挙され、両方`untrusted`だった。 |
-| trust fixture後の`hooks/list` | 隔離configの`[hooks.state]`へ上記2件の現行hashだけをfixtureとして設定し、同じ`hooks/list`を再実行 | fixtureに登録した2件だけが`trusted`になる | SessionStart 0:0と0:1はともに`trusted`。これは隔離fixtureの結果であり、active trustの成功を意味しない。 |
-| fresh startup | fixtureのapp-serverへJSONLでephemeral `thread/start`（`sessionStartSource: "startup"`、`sandbox: "read-only"`、`approvalPolicy: "never"`）→ `turn/start`を送信 | SessionStart 2件が開始・完了し、inject hookのcontextが期待した1行と完全一致し、invalid SessionStart JSONを報告しない | 両hookに各1回の`hook/started` / `hook/completed`を記録し、両方`completed`。context entryは期待値とexact matchした。hook完了後にmodel接続がDNS失敗したため`turn/interrupt`を送信した。 |
+| 操作 | 実行コマンド / JSONL操作 | expected | observed | version | 制約 / 限界 |
+| --- | --- | --- | --- | --- | --- |
+| Schema生成 | `codex app-server generate-json-schema --experimental --out <schema-dir>` | app-server protocol schemaを生成し、hookのsource/hash/enabled/trust fieldsを検査可能にする | exit 0。生成schemaに`sourcePath`、`currentHash`、`enabled`、`trustStatus`と4つのtrust status enumを確認した。 | Codex CLI `0.150.1` | experimental schemaはこのCLI versionの契約であり、別versionの互換性を証明しない。 |
+| active stateの診断 | `codex app-server --stdio`、続いて`codex doctor --summary --no-color --ascii` | active state DBが使用可能ならapp-serverを通常起動でき、doctorはintegrity failureを返さない | 通常起動は`state_5.sqlite`初期化に失敗し、doctorもstate database integrity failureを返した。 | Codex CLI `0.150.1` | DBの退避・修復・再生成は実施しておらず、通常起動の成功は確認していない。 |
+| active `hooks/list` | `codex app-server -c 'sqlite_home="<scratch>/active-hook-probe-sqlite"' --stdio`を起動し、下記の`initialize` → `initialized` → `hooks/list`を送信 | active hooksのsource、enabled、trust status、warning/errorを列挙する | warning / error 0、4件enabled、sourceはすべて`user`。PreToolUse 2件は`trusted`、SessionStart 0:0は`modified`、0:1は`untrusted`だった。 | Codex CLI `0.150.1` | SQLite runtime stateだけを分離したread-only列挙であり、`/hooks` UI承認や通常startupを実行していない。 |
+| stateなしfixtureの`hooks/list` | `CODEX_HOME=<scratch>/isolated-codex-home codex app-server --stdio`を起動し、下記の同じ3 JSONLを送信 | stateなしでは現行SessionStart definitionが未trustとして列挙される | SessionStart 0:0と0:1はそれぞれ現行`currentHash`で列挙され、両方`untrusted`だった。 | Codex CLI `0.150.1` | credentialを持たない使い捨てHOMEであり、active trust stateを検査していない。 |
+| trust fixture後の`hooks/list` | 下記2 symlinkと`config.toml`を`<scratch>/isolated-codex-home`へ作成し、同じ3 JSONLを送信 | fixtureに登録した2件だけが`trusted`になる | SessionStart 0:0と0:1はともに`trusted`。 | Codex CLI `0.150.1` / Python `3.14.6` | 現行hashを隔離configへ直接書いたfixtureであり、active `/hooks`承認の成功を意味しない。 |
+| fresh startup | 同じapp-serverへ下記の`thread/start` → response由来IDによる`turn/start` → `turn/interrupt`を送信 | SessionStart 2件が開始・完了し、inject hookのcontextが期待した1行と完全一致し、invalid SessionStart JSONを報告しない | 両hookに各1回の`hook/started` / `hook/completed`を記録し、両方`completed`。context entryは期待値とexact matchした。 | Codex CLI `0.150.1` / Python `3.14.6` | hook完了後にmodel接続がDNS失敗したためinterruptした。model応答と実compact continuationは確認していない。 |
+
+`hooks/list`で送ったJSONLは次の3行である。
+
+```jsonl
+{"id":1,"method":"initialize","params":{"clientInfo":{"name":"hook-probe","version":"1.0.0"},"capabilities":{"experimentalApi":true}}}
+{"method":"initialized","params":{}}
+{"id":2,"method":"hooks/list","params":{"cwds":["<repo>"]}}
+```
+
+trust fixtureは、`ln -s <repo>/codex/hooks.json <scratch>/isolated-codex-home/hooks.json`と`ln -s <repo>/hooks <scratch>/isolated-codex-home/hooks`を実行し、次の`config.toml`だけを使い捨てHOMEへ作成した。
+
+```toml
+[hooks.state."<scratch>/isolated-codex-home/hooks.json:session_start:0:0"]
+trusted_hash = "sha256:e8115dac39817f461271372a24ea6d552f2b3999bd696847455cd5a65fcce634"
+
+[hooks.state."<scratch>/isolated-codex-home/hooks.json:session_start:0:1"]
+trusted_hash = "sha256:48a53495fa7bdae07490fdd5d231ed981fb13fdc54af5d50dc13b99383b9926c"
+```
+
+fresh startupで送ったJSONLは次の3行である。`<thread-id>`と`<turn-id>`は直前のresponseから得た値で置換した。
+
+```jsonl
+{"id":3,"method":"thread/start","params":{"cwd":"<repo>","ephemeral":true,"approvalPolicy":"never","sandbox":"read-only","sessionStartSource":"startup"}}
+{"id":4,"method":"turn/start","params":{"threadId":"<thread-id>","input":[{"type":"text","text":"Reply with OK."}]}}
+{"id":5,"method":"turn/interrupt","params":{"threadId":"<thread-id>","turnId":"<turn-id>"}}
+```
 
 期待したinject hookのcontext entryは次の1行である。
 
