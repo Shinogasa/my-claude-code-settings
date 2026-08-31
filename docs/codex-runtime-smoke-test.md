@@ -152,15 +152,47 @@ Step 3はactive trust statusとfresh startupまで部分確認が進んだが、
 
 OpenAI公式の[Hooks](https://developers.openai.com/codex/hooks)は、root sessionのcompact後、`source=compact`にmatchするSessionStart hookを**次のmodel request前**に実行し、そのstdoutをadditional developer contextとして継続へ渡す契約を定義する。[Codex App Server](https://developers.openai.com/codex/app-server)は、`thread/compact/start`が`{}`を返し、compact lifecycleを`contextCompaction` itemで通知する契約を定義する。この2契約を、次の隔離runtimeでmanual continuationとして実測した。
 
-| 項目 | observed |
-| --- | --- |
-| runtime | Codex CLI `0.150.1`。使い捨て`CODEX_HOME`にrepositoryのhooks定義をsymlinkし、現行SessionStart 2件のhashだけをtrust fixtureへ設定した。 |
-| transport / auth | custom Responses providerは決定的なlocalhost mock、`requires_openai_auth=false`。`cli_auth_credentials_store="file"`でcredential lookupをfixture内のfile storeへ限定し、fixtureに`auth.json`は置かなかった。 |
-| 外部経路の抑止 | 子App Server起動前に名前が`KEY`、`TOKEN`、`SECRET`、`PASSWORD`、`CREDENTIAL`を含む環境変数を除外した。`features.remote_control=false`、`features.remote_models=false`、`check_for_update_on_startup=false`、`analytics.enabled=false`を設定した。実HOMEのconfig、trust、credential、plugin state、state DBは変更していない。 |
-| startup | `hooks/list`でSessionStart 2件が`enabled=true` / `trusted`かつ期待hashであることを確認した。startup `turn/start`で2件ともcompletedし、localhost `/v1/responses` requestはagent message `BEFORE`と`turn/completed`を返した。 |
-| compact | clientが`thread/compact/start`を送るとresponseは`{}`。compact turnの`turn/started`、`contextCompaction`の`item/started` / `item/completed`、compact turnの`turn/completed`をこの順で観測した。 |
-| continuation | `Reply exactly AFTER.`のcontinuation `turn/start`後、次のlocalhost model requestより前にSessionStart 2件がともにcompletedした。inject hookの唯一のcontext entryは期待文とexact matchし、agent message `AFTER`とcontinuation `turn/completed`を観測した。 |
-| probe result | `startupHookCount=2`、`contextCompactionStarted=true`、`contextCompactionCompleted=true`、`compactHookCount=2`、`compactContextExactMatch=true`、`continuationAgentMessageSeen=true`、`continuationTurnCompleted=true`。probeはexit `0`、App Server stderrは空だった。 |
+#### 再現入口とfixture
+
+使い捨てfixtureは`hooks.json -> <repo>/codex/hooks.json`、`hooks -> <repo>/hooks`のsymlinkとし、`config.toml`の`[hooks.state]`には次のcurrent hashだけを設定する。credentialはfixture内file storeだけを探索し、`auth.json`は置かない。
+
+```toml
+[hooks.state."<scratch>/compact-codex-home/hooks.json:session_start:0:0"]
+trusted_hash = "sha256:e8115dac39817f461271372a24ea6d552f2b3999bd696847455cd5a65fcce634"
+
+[hooks.state."<scratch>/compact-codex-home/hooks.json:session_start:0:1"]
+trusted_hash = "sha256:48a53495fa7bdae07490fdd5d231ed981fb13fdc54af5d50dc13b99383b9926c"
+```
+
+最終probe commandは次である。
+
+```bash
+cd <repo>
+python3 .superpowers/sdd/2026-08-20-codex-compatibility-migration/compact-hook-probe.py
+```
+
+probeは決定的localhost Responses mockをlistenerとして起動し、`codex app-server --stdio --strict-config`を起動する。App Serverには`model_provider="compact_mock"`、`wire_api="responses"`、`requires_openai_auth=false`、file credential store、retry 0、`remote_control=false`、`remote_models=false`、update check無効、analytics無効を渡す。子processの環境から名前が`KEY`、`TOKEN`、`SECRET`、`PASSWORD`、`CREDENTIAL`を含む変数を除外する。probe自身がApp Server JSONLを送受信し、成功・失敗にかかわらずstdinをcloseしてprocessをwait（timeout時はterminate）、localhost serverをshutdownする。
+
+JSONL client inputは次の順であり、`<thread-id>`は直前の`thread/start` responseで置換する。最終evidenceでは`id: 5`のresponseは`{}`だった。これはprobeが実際に送る完全なrequest sequenceで、hook / turn / item通知はApp Serverから同じstdio上で受け取る。
+
+```jsonl
+{"id":1,"method":"initialize","params":{"clientInfo":{"name":"compact-hook-probe","version":"1.0.0"},"capabilities":{"experimentalApi":true}}}
+{"method":"initialized","params":{}}
+{"id":2,"method":"hooks/list","params":{"cwds":["<repo>"]}}
+{"id":3,"method":"thread/start","params":{"cwd":"<repo>","ephemeral":true,"approvalPolicy":"never","sandbox":"read-only","sessionStartSource":"startup","model":"gpt-5.6-luna"}}
+{"id":4,"method":"turn/start","params":{"threadId":"<thread-id>","input":[{"type":"text","text":"Reply exactly BEFORE."}],"effort":"low"}}
+{"id":5,"method":"thread/compact/start","params":{"threadId":"<thread-id>"}}
+{"id":6,"method":"turn/start","params":{"threadId":"<thread-id>","input":[{"type":"text","text":"Reply exactly AFTER."}],"effort":"low"}}
+```
+
+| 段階 | expected | observed |
+| --- | --- | --- |
+| fixture / transport | Codex CLI `0.150.1`の使い捨て`CODEX_HOME`でSessionStart 2件が`enabled=true` / `trusted`かつ期待hash。localhost custom Responses providerは認証不要で、外部credential・remote control/models・update・analyticsを使わない。 | `hooks/list`で2件が期待hashの`enabled=true` / `trusted`。`requires_openai_auth=false`、fixture内file credential store、credential環境変数除外、各外部経路無効を使った。実HOMEのconfig、trust、credential、plugin state、state DBは変更していない。 |
+| startup | SessionStart 2件がcompletedし、期待contextを追加した後に最初のmodel requestと`BEFORE` agent message / completed turnが続く。 | startup SessionStart 2件がcompleted。localhost `/v1/responses` requestはagent message `BEFORE`と`turn/completed`を返した。 |
+| compact | `thread/compact/start`は`{}`を返し、compact turnのstarted、`contextCompaction`のstarted / completed、compact turn completedを通知する。 | responseは`{}`。compact turnの`turn/started`、`contextCompaction`の`item/started` / `item/completed`、compact turnの`turn/completed`をこの順で観測した。 |
+| continuation | 次のmodel request前にSessionStart 2件がcompletedし、唯一のinject contextが期待文とexact matchする。続いて`AFTER` agent messageとcompleted turnが続く。 | `Reply exactly AFTER.`のcontinuation `turn/start`後、次のlocalhost model requestより前にSessionStart 2件がcompleted。唯一のcontext entryは期待文とexact matchし、agent message `AFTER`とcontinuation `turn/completed`を観測した。 |
+| invalid SessionStart JSONの否定条件 | startup pairとcontinuation pairの各SessionStartについて`hook/completed` eventとstatusを記録し、invalid SessionStart JSONの報告がないことをApp Server stderrと合わせて確認する。 | startup / continuationとも2件ずつの`hook/completed`を記録し、最終evidenceでは各statusは`completed`。App Server stderrは空で、invalid SessionStart JSONの報告はなかった。これはparser内部をinterceptした観測ではなく、hook completion/statusとstderrに限定した判定である。 |
+| probe result | compact lifecycle、continuation hooks / context / agent message / turnがすべて成立し、probeは成功終了する。 | `startupHookCount=2`、`contextCompactionStarted=true`、`contextCompactionCompleted=true`、`compactHookCount=2`、`compactContextExactMatch=true`、`continuationAgentMessageSeen=true`、`continuationTurnCompleted=true`。probeはexit `0`。 |
 
 期待contextは次の1行である。
 
