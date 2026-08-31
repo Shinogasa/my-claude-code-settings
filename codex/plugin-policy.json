@@ -39,6 +39,10 @@
     "gopls-lsp@claude-plugins-official": {
       "status": "deny",
       "reason": "Go開発上の具体的な不足が出ておらず、公開仕様でのruntime契約も未確認"
+    },
+    "atlassian@claude-plugins-official": {
+      "status": "deny",
+      "reason": "Codexは atlassian-http を MCP として直接設定済みで、plugin版とは重複する"
     }
   }
 }
