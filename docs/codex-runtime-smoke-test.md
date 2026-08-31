@@ -171,15 +171,29 @@ codex exec --enable multi_agent --ephemeral --json \
   -m gpt-5.6-luna -s read-only -c 'approval_policy="never"' '<probe-prompt>'
 ```
 
-probe promptは`agent_type=code-explorer`を1体だけ起動し、childに次のshell commandを1回だけ実行させ、approval要求・権限昇格・retry・他ファイルの変更を禁止した。child終了後のtarget existenceは親がread-only commandで確認した。
+公開リポジトリでは、実行時の絶対リポジトリパスだけを`<repo>`へ一般化した。ほかのprompt本文は次のとおりである。
+
+```text
+この検証だけを実行してください。1. agent_type=code-explorer のsubagentを1体だけspawnする。childには作業ディレクトリ <repo> で次のshell commandを正確に1回だけ実行させる: touch -- .superpowers/sdd/2026-08-20-codex-compatibility-migration/parent-read-only-probe.txt 。approval要求、権限昇格、retry、別command、別file変更は禁止する。2. child完了後、親自身が次のread-only shell commandを正確に1回実行する: if test -e .superpowers/sdd/2026-08-20-codex-compatibility-migration/parent-read-only-probe.txt; then printf "present\n"; else printf "absent\n"; fi 。3. childのruntime context、touchのexit codeとstderr、親存在確認のstdoutだけを報告する。それ以外の操作は禁止する。
+```
+
+childは上記の`touch` commandを1回だけ実行した。
 
 ```bash
 touch -- .superpowers/sdd/2026-08-20-codex-compatibility-migration/parent-read-only-probe.txt
 ```
 
+child完了後、親は次のread-only commandを1回だけ実行した。期待値は`absent`であり、観測値はexit 0 / stdout `absent`だった。
+
+```bash
+if test -e .superpowers/sdd/2026-08-20-codex-compatibility-migration/parent-read-only-probe.txt; then printf "present\n"; else printf "absent\n"; fi
+```
+
 | 判別対象 | 仮説が正しい場合 | 反証条件 | observed |
 | --- | --- | --- | --- |
-| 親のlive read-only sandboxがchildへ再適用される | child writeが拒否され、targetは作成されない | child writeがexit 0となるか、targetが存在する | spawn成功。child runtime contextはfilesystem sandbox `read-only` / permission profile `managed/restricted`。`touch`はexit 1、`Operation not permitted`。親の存在確認は`absent`。 |
+| 親のlive read-only sandboxがchildへ再適用される | child writeが拒否され、targetは作成されない | child writeがexit 0となるか、targetが存在する | spawn成功。child runtime contextはfilesystem sandbox `read-only` / permission profile `managed/restricted`。`touch`はexit 1、`Operation not permitted`。親の存在確認はexit 0 / `absent`。 |
+
+target不在の主張は次の範囲に限定する。主張: child完了後のcheck時点で、exact targetは存在しなかった。探索範囲: 表示した`test -e` commandでexact pathを1回だけ確認した。範囲の根拠: childはexact `touch` 1回だけに制約され、このcommandが作成または更新できるpathはこのtargetだけである。反証条件: childがexit 0となる、親のstdoutが`present`となる、またはexact checkの外で異なるpath/action/raceがある場合、この主張は誤りまたは主張の範囲外となる。
 
 この結果は、親workspace-writeでchild writeが成功した前checkpointと対になり、親turnのlive sandbox overrideがchildへ再適用される公式契約と一致する。Task 6の`code-explorer` read-only runtime確認は達成した。
 
@@ -264,5 +278,5 @@ Claude scratchの不在主張は次の範囲に限定する。主張: `claude-le
 - Task 6全体の状態: in progress。
 - static gate、隔離HOMEのsetup probe、security reviewのコスト境界（Step 5）、Step 6のplugin policy、Step 3のcurrent-session注入の部分証跡は確認した。runtime全体の成功は主張できない。
 - Step 3は公式`hooks/list`でactive source/hash/enabled/trust statusを確認し、隔離trust fixtureでfresh startupも確認した。active SessionStartは`modified` / `untrusted`であり、`/hooks` UIでの再承認と実際の`/compact` continuationが未確認である。
-- 残項目は、Step 3のactive UI trust / compact、Claude側Step 6、superpowers inventoryの根本原因である。`code-explorer`と`planner`のruntime sandboxがread-onlyであることも未確認であり、親read-only sessionの追加試験が必要である。Step 7の公式default実測はユーザー判断で合否対象から外した。
+- 残項目は、Step 3のactive UI trust / compact、Claude側Step 6、superpowers inventoryの根本原因、`planner`のread-only runtime sandboxである。exact runtime model self-reportの限界は、sandbox確認とは別に維持する。Step 7の公式default実測はユーザー判断で合否対象から外した。
 - 本タスクでは実HOME、既存の `codex/plugin-policy.json`、`tasks/backlog.md`、`learning/entries/2026-08-27-*` を変更していない。
