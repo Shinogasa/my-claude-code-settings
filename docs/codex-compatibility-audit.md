@@ -186,6 +186,7 @@ OpenAI bundled/runtime の標準プラグインは移行対象外とした。
 | `asana@claude-plugins-official` | **Codex で無効** | cache 上は Claude command と README のみ。Codex で有効な skill/MCP/hook を確認できない |
 | `code-review@claude-plugins-official` | **Codex で無効** | cache 上は Claude command のみ。Codex は組み込み `/review` と公式GitHub連携を持つ |
 | `gopls-lsp@claude-plugins-official` | **Codex で無効** | `.codex-plugin`形式だがruntime未検証。Go開発で具体的な不足が出た時点で現行候補を再選定する |
+| `atlassian@claude-plugins-official` | **Codex で無効** | Codexは `atlassian-http` を MCP として直接設定済みで、plugin版とは重複する |
 | 未登録の`*@claude-plugins-official` | **Codex で無効** | 将来のimportをfail-closedにする。個別判断をADRとpolicyへ追加してからallowする |
 
 `保留・無効`は実行許可ではない。代表ツール、認証、副作用、エラー伝播を個別に確認し、
