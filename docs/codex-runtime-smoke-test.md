@@ -148,6 +148,30 @@ Before responding, read and follow superpowers:using-superpowers from the enable
 
 Step 3はactive trust statusとfresh startupまで部分確認が進んだが、`/hooks` UIでのactive hook再承認と、実際のcompact完了後のcontinuationは未確認のため完了扱いにしない。
 
+### Step 3 manual compact continuation checkpoint（2026-08-31）
+
+OpenAI公式の[Hooks](https://developers.openai.com/codex/hooks)は、root sessionのcompact後、`source=compact`にmatchするSessionStart hookを**次のmodel request前**に実行し、そのstdoutをadditional developer contextとして継続へ渡す契約を定義する。[Codex App Server](https://developers.openai.com/codex/app-server)は、`thread/compact/start`が`{}`を返し、compact lifecycleを`contextCompaction` itemで通知する契約を定義する。この2契約を、次の隔離runtimeでmanual continuationとして実測した。
+
+| 項目 | observed |
+| --- | --- |
+| runtime | Codex CLI `0.150.1`。使い捨て`CODEX_HOME`にrepositoryのhooks定義をsymlinkし、現行SessionStart 2件のhashだけをtrust fixtureへ設定した。 |
+| transport / auth | custom Responses providerは決定的なlocalhost mock、`requires_openai_auth=false`。`cli_auth_credentials_store="file"`でcredential lookupをfixture内のfile storeへ限定し、fixtureに`auth.json`は置かなかった。 |
+| 外部経路の抑止 | 子App Server起動前に名前が`KEY`、`TOKEN`、`SECRET`、`PASSWORD`、`CREDENTIAL`を含む環境変数を除外した。`features.remote_control=false`、`features.remote_models=false`、`check_for_update_on_startup=false`、`analytics.enabled=false`を設定した。実HOMEのconfig、trust、credential、plugin state、state DBは変更していない。 |
+| startup | `hooks/list`でSessionStart 2件が`enabled=true` / `trusted`かつ期待hashであることを確認した。startup `turn/start`で2件ともcompletedし、localhost `/v1/responses` requestはagent message `BEFORE`と`turn/completed`を返した。 |
+| compact | clientが`thread/compact/start`を送るとresponseは`{}`。compact turnの`turn/started`、`contextCompaction`の`item/started` / `item/completed`、compact turnの`turn/completed`をこの順で観測した。 |
+| continuation | `Reply exactly AFTER.`のcontinuation `turn/start`後、次のlocalhost model requestより前にSessionStart 2件がともにcompletedした。inject hookの唯一のcontext entryは期待文とexact matchし、agent message `AFTER`とcontinuation `turn/completed`を観測した。 |
+| probe result | `startupHookCount=2`、`contextCompactionStarted=true`、`contextCompactionCompleted=true`、`compactHookCount=2`、`compactContextExactMatch=true`、`continuationAgentMessageSeen=true`、`continuationTurnCompleted=true`。probeはexit `0`、App Server stderrは空だった。 |
+
+期待contextは次の1行である。
+
+```text
+Before responding, read and follow superpowers:using-superpowers from the enabled Codex plugin.
+```
+
+失敗試行はこのruntime成功と分離する。active-home CLI config overrideは永続hook trustを変更せずSessionStartは`modified` / `untrusted`のままだった。trust済みの使い捨てHOMEではstartup hookを確認できたが、credentialを意図的に持ち込まなかったbuilt-in providerはHTTP 401で停止した。inline SessionStart hookも`source=sessionFlags`として読み込まれたがtrustを要しreviewを回避しなかった。localhost mock導入後の最初のtimeoutはCodex runtimeの失敗ではない。probeが`select()`とbuffered `TextIOWrapper.readline()`を混在させたため、後続JSONLがPython内部bufferに先読みされた後もOS fdを`select()`で待ったI/O実装の不具合だった。stdout reader threadと`queue.Queue`へ置き換えると、既に生成されていた`turn/completed`を取得でき、全compact sequenceが完走した。
+
+このcheckpointでmanual compact continuationは達成したが、限界を維持する。model transportは決定的localhost mockでありhosted model inferenceは証明しない。hook input JSONをinterceptしていないため、`source=compact`は公式契約と、`thread/compact/start`完了後かつcontinuation model request直前にだけ2件目のSessionStart pairが現れたイベント位置から判定している。active `/hooks`の再承認は未実施であり、この隔離trust fixtureの成功へ畳まない。
+
 ## Step 4: 代表subagent（controller実測）
 
 このStepは隔離HOMEで実行していない。controllerは現在の親Codex sessionからCodexの`spawn_agent`操作で各agentを起動した。書込み対象は、リポジトリ内でグローバルGit ignoreされるSDD一時領域 `.superpowers/` に限定され、configとHOMEは変更していない。独立したnested session用HOME、`HOME`の値、個々の一時ファイル名はcontroller記録にないため、隔離HOMEだったとは主張しない。
