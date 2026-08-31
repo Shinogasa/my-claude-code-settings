@@ -15,6 +15,7 @@ FAILURES=()
 BACKUP_TIMESTAMP=""
 CLAUDE_SETTINGS_STAGED=""
 CLAUDE_PERSONAL_STAGED=""
+CODEX_PERSONAL_STAGED=""
 SETUP_ENV_JSON='{}'
 
 usage() {
@@ -49,13 +50,13 @@ red() { printf 'エラー: %s\n' "$1" >&2; }
 yellow() { printf '注意: %s\n' "$1" >&2; }
 green() { printf '✓ %s\n' "$1"; }
 
-cleanup_staged_claude_files() {
+cleanup_staged_files() {
   local path
-  for path in "$CLAUDE_SETTINGS_STAGED" "$CLAUDE_PERSONAL_STAGED"; do
+  for path in "$CLAUDE_SETTINGS_STAGED" "$CLAUDE_PERSONAL_STAGED" "$CODEX_PERSONAL_STAGED"; do
     [ -z "$path" ] || rm -f "$path"
   done
 }
-trap cleanup_staged_claude_files EXIT
+trap cleanup_staged_files EXIT
 
 declare -a TARGET_HOSTS TARGET_SOURCES TARGET_DESTINATIONS TARGET_GENERATED
 declare -a TARGET_SNAPSHOTS
@@ -159,6 +160,7 @@ build_targets() {
     while IFS= read -r skill; do
       add_link_target codex "$SCRIPT_DIR/skills/$skill" "$AGENTS_DIR/skills/$skill"
     done < <(read_manifest_skills codex)
+    add_generated_target codex "$SCRIPT_DIR/codex/personal-mcp-allowlist.txt" "$CODEX_DIR/personal.config.toml"
   fi
 }
 
@@ -276,6 +278,10 @@ validate_sources() {
   done
   if selected_codex && [ ! -f "$SCRIPT_DIR/bin/audit-codex-plugins.py" ]; then
     red "Codex plugin auditor が存在しません"
+    return 1
+  fi
+  if selected_codex && [ ! -f "$SCRIPT_DIR/bin/generate-codex-personal-profile.py" ]; then
+    red "Codex 個人プロファイル生成スクリプトが存在しません"
     return 1
   fi
 }
@@ -598,6 +604,37 @@ PY
   CLAUDE_PERSONAL_STAGED=""
 }
 
+# Codex のプロファイルは base 設定を「置き換える」のではなく「重ねる」ため、プロファイルに
+# 書いていない [mcp_servers.*] は個人セッションでもそのまま起動する。会社のゲートウェイ上の
+# MCP サーバが残ると個人作業が会社インフラを叩く事故になるため、config.toml から導出した
+# deny-by-default のプロファイルを生成する。
+prepare_codex_personal_profile() {
+  CODEX_PERSONAL_STAGED="$(mktemp "$CODEX_DIR/.personal.config.toml.setup.XXXXXX")" || return 1
+  chmod 600 "$CODEX_PERSONAL_STAGED" || return 1
+  python3 "$SCRIPT_DIR/bin/generate-codex-personal-profile.py" \
+    "$CODEX_DIR/config.toml" "$SCRIPT_DIR/codex/personal-mcp-allowlist.txt" "$CODEX_PERSONAL_STAGED"
+}
+
+commit_codex_personal_profile() {
+  local state_file="$1" snapshot="$2"
+  python3 - "$CODEX_PERSONAL_STAGED" "$CODEX_DIR/personal.config.toml" \
+    "$STATE_TOOL" "$state_file" "$snapshot" <<'PY'
+import importlib.util
+import json
+import sys
+
+staged, destination, tool, state_path, snapshot = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("setup_state", tool)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.install_generated_file(staged, destination, json.loads(snapshot))
+state = module.load_state(state_path)
+state["generated"][destination] = module.sha256_file(destination)
+module.save_state(state_path, state)
+PY
+  CODEX_PERSONAL_STAGED=""
+}
+
 target_snapshot_for_destination() {
   local destination="$1" index
   for index in "${!TARGET_DESTINATIONS[@]}"; do
@@ -632,19 +669,6 @@ print_claude_path_guidance() {
   esac
 }
 
-ensure_state_file() {
-  python3 - "$STATE_TOOL" "$1" <<'PY'
-import importlib.util
-import sys
-
-spec = importlib.util.spec_from_file_location("setup_state", sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-state = module.load_state(sys.argv[2])
-module.save_state(sys.argv[2], state)
-PY
-}
-
 apply_targets() {
   local index host state_file
   for index in "${!TARGET_SOURCES[@]}"; do
@@ -658,7 +682,9 @@ apply_targets() {
       "$(target_snapshot_for_destination "$CLAUDE_DIR/settings.personal.json")"
   fi
   if selected_codex; then
-    ensure_state_file "$(state_path codex)"
+    commit_codex_personal_profile \
+      "$(state_path codex)" \
+      "$(target_snapshot_for_destination "$CODEX_DIR/personal.config.toml")"
   fi
 }
 
@@ -760,6 +786,9 @@ fi
 snapshot_targets || exit 1
 if selected_claude; then
   prepare_claude_files || exit 1
+fi
+if selected_codex; then
+  prepare_codex_personal_profile || exit 1
 fi
 validate_target_snapshots || exit 1
 if [ "${#CONFLICT_DESTINATIONS[@]}" -gt 0 ]; then
