@@ -158,9 +158,32 @@ Step 3はactive trust statusとfresh startupまで部分確認が進んだが、
 | `code-simplifier` | model `gpt-5.6-luna`、sandbox `workspace-write` | model未確認、sandbox `workspace-write` | SDD一時Pythonを`if/else`から`return bool(value)`へ編集。構文・挙動検査PASS。 | sandboxのみ確認。 |
 | `planner` | model `gpt-5.6-sol`、reasoning `high`、sandbox `read-only` | model/effort非公開で未確認、sandbox `workspace-write` | 一時ファイルの作成・削除に成功。 | 部分確認。runtime read-only期待は未達。 |
 
-OpenAI公式の[Subagents documentation](https://developers.openai.com/codex/concepts/subagents)は、subagentが親のsandbox policyを継承し、親turnのlive runtime overrideがcustom agent fileのdefaultより再適用されると説明する。したがって、read-only TOMLとworkspace-write実測の差は現行仕様と整合する。
+OpenAI公式の[Subagents documentation](https://developers.openai.com/codex/subagents/)は、subagentが親のsandbox policyを継承し、親turnのlive runtime overrideがcustom agent fileのdefaultより再適用されると説明する。したがって、read-only TOMLとworkspace-write実測の差は現行仕様と整合する。
 
 ただし、この親turnではTask 6の「`code-explorer`をread-onlyでruntime確認」は達成していない。反証条件は、親をread-onlyにした別sessionで`code-explorer`を実行したときにworkspace-writeを観測すること。未実行のため、configured read-onlyがruntimeで有効になることは未確認である。
+
+### Step 4 parent read-only checkpoint（2026-08-31）
+
+上記の反証試験をCodex CLI `0.150.1`で実行した。外側sandbox内での初回起動はin-process app-server clientの初期化が`Operation not permitted`となったため、外側だけ承認済み実行へ切り替えた。nested Codex自体は次のflagsで`read-only`かつapprovalなしに固定した。
+
+```bash
+codex exec --enable multi_agent --ephemeral --json \
+  -m gpt-5.6-luna -s read-only -c 'approval_policy="never"' '<probe-prompt>'
+```
+
+probe promptは`agent_type=code-explorer`を1体だけ起動し、childに次のshell commandを1回だけ実行させ、approval要求・権限昇格・retry・他ファイルの変更を禁止した。child終了後のtarget existenceは親がread-only commandで確認した。
+
+```bash
+touch -- .superpowers/sdd/2026-08-20-codex-compatibility-migration/parent-read-only-probe.txt
+```
+
+| 判別対象 | 仮説が正しい場合 | 反証条件 | observed |
+| --- | --- | --- | --- |
+| 親のlive read-only sandboxがchildへ再適用される | child writeが拒否され、targetは作成されない | child writeがexit 0となるか、targetが存在する | spawn成功。child runtime contextはfilesystem sandbox `read-only` / permission profile `managed/restricted`。`touch`はexit 1、`Operation not permitted`。親の存在確認は`absent`。 |
+
+この結果は、親workspace-writeでchild writeが成功した前checkpointと対になり、親turnのlive sandbox overrideがchildへ再適用される公式契約と一致する。Task 6の`code-explorer` read-only runtime確認は達成した。
+
+限界: childのexact runtime model self-reportは取得していない。`gpt-5.6-luna`はrepository生成設定とspawn routingに基づく。外側実行の権限はnested Codexのread-only境界そのものではなく、App Server初期化を可能にするための実行条件である。active MCPのOAuth refresh errorが別途出たが、child spawn・write拒否・存在確認は完走した。
 
 ## Step 5: security cost boundary
 
