@@ -58,7 +58,7 @@ default denyにする。`learning-output-style`はpluginとして維持せず、
 | `codex/agents/*.toml` | 使用しない | `~/.codex/agents` | 生成物。権限写像は情報を失う |
 | `hooks/` | `settings.json` から起動 | `codex/hooks.json` から起動 | スクリプト共有、イベント定義はホスト別 |
 | Claude `enabledPlugins` | Claude plugin install | `/import` で Codex に流入しうる | Codex 側の enabled 状態は独立して残る |
-| `CODEX_PLUGINS` | 使用しない | Codex marketplace から導入 | 現在は `superpowers@openai-curated` のみ |
+| `CODEX_PLUGINS` | 使用しない | Codex marketplace から導入 | 現在は `superpowers@openai-api-curated` のみ |
 | MCP | マシンローカルまたはプラグイン | マシンローカルまたはプラグイン | リポジトリ内に共通の MCP 正本はない |
 
 `setup.sh` 以外に、Codex の `/import` が第二の流入経路になる。Claude 側でプラグインを
@@ -177,7 +177,7 @@ OpenAI bundled/runtime の標準プラグインは移行対象外とした。
 
 | プラグイン | Codex での判定 | 根拠・方針 |
 |---|---|---|
-| `superpowers@openai-curated` | 共有可 | Codex native 配布。skills は動作確認済み。SessionStart hook は同梱しないため AGENTS の明示指示を維持 |
+| `superpowers@openai-api-curated` | 共有可 | Codex native 配布。skills は動作確認済み。SessionStart hook は同梱しないため AGENTS の明示指示を維持 |
 | `learning-output-style@claude-plugins-official` | **Codex で無効** | hook注入は動くが、コード参加の発火はモデル依存で、自前学習モードのヒント禁止・上限・OFF条件と競合する。コード参加部分だけ共有ruleへ統合する |
 | `security-guidance@claude-plugins-official` | **Codex で無効** | 下記「security-guidance」で詳述。プラグイン単位で止め、Claude 側は維持する |
 | `claude-md-management@claude-plugins-official` | **Codex で無効** | `CLAUDE.md`だけを対象にし、Codexの`AGENTS.md`階層とこのリポジトリの共有正本構造を扱わない |
@@ -245,7 +245,7 @@ MCP はローカル `config.toml` または plugin の `.mcp.json` から供給�
 | 項目 | 参照リポジトリ | 0.147.0 / 公式 |
 |---|---|---|
 | hooks feature | `codex_hooks = true` が必須 | `features.hooks` が正規、既定有効。旧名は deprecated alias |
-| marketplace list | subcommand は無い | `codex plugin marketplace list` が stable |
+| marketplace list | subcommand は無い | `codex plugin list --json` が inventory の根拠 |
 | hook handler | 一部文書で `type: shell` | 現在実行されるのは `type: command` のみ |
 | hook events | 5イベント中心 | Permission/Compact/Subagent/SessionEnd を含む |
 | config profile | `[profiles.*]` | 0.134.0 以降は `<name>.config.toml` |

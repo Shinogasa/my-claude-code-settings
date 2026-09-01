@@ -91,13 +91,13 @@ Claude Codeでは既存commandを維持し、Codexでは次のnative機能また
 
 ### Codex CLI 向けプラグイン
 
-`setup.sh` は Codex 公式マーケットプレイス（`openai-curated`）から以下を冪等に導入する。
+`setup.sh` は Codex 公式マーケットプレイス（`openai-api-curated`）から以下を冪等に導入する。
 導入先は `~/.codex/config.toml` だが、同ファイルは認証情報を平文で持つためリポジトリ管理下には
 置かない。「リポジトリが状態を持つ」のではなく「冪等なコマンドを `setup.sh` が叩く」形にしている。
 
 | プラグイン | 備考 |
 |---|---|
-| `superpowers@openai-curated` | Claude Code 側は `settings.json.template` の `enabledPlugins` で管理 |
+| `superpowers@openai-api-curated` | Codex側のpolicyで管理 |
 
 導入済みのものはスキップする。ユーザーが `enabled = false` にした場合も「導入済み」と判定される
 ため、明示的な無効化を `setup.sh` が上書きすることはない。

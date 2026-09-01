@@ -49,7 +49,7 @@ cache は削除せず、有効化状態を止める。
 
 現時点の扱いを次のように固定する。
 
-- `superpowers@openai-curated` は Codex native として有効にする
+- `superpowers@openai-api-curated` は Codex native として有効にする
 - `learning-output-style` は Codex 0.147.0 の SessionStart で動作を観測済みのため有効候補とする
 - `security-guidance@claude-plugins-official` は Codex 側で無効にする
 - MCP / skill を持つ Claude 由来プラグインは代表操作の smoke test 後に allowlist へ加える

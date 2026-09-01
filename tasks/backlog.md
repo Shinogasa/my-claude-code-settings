@@ -262,7 +262,7 @@ Claude Code 側（`settings.json`）は従来どおり有効で、そちらの�
 ```
 codex
 `superpowers:using-superpowers` を先に確認し、このセッションのスキル適用ルールに従います。
-exec /bin/zsh -lc "sed -n '1,240p' .../superpowers/11c74d6b/skills/using-superpowers/SKILL.md"
+exec /bin/zsh -lc "sed -n '1,240p' .../superpowers/1e285826/skills/using-superpowers/SKILL.md"
 ```
 
 `AGENTS.md` の `## superpowers` 節（「応答を始める前に自分で読むこと」）だけで
@@ -277,7 +277,7 @@ Codex は**プラグイン同梱の `hooks/hooks.json` を読む**（実測: `[h
 `security-guidance@claude-plugins-official:hooks/hooks.json` と
 `learning-output-style@claude-plugins-official:hooks/hooks.json` のエントリがある）。
 
-一方、採用している `superpowers@openai-curated` は**配布物に `hooks/` を含まない**
+一方、採用している `superpowers@openai-api-curated` は**配布物に `hooks/` を含まない**
 （`assets` / `CODE_OF_CONDUCT.md` / `LICENSE` / `README.md` / `skills` のみ）。
 `superpowers@claude-plugins-official` の方は `hooks/hooks.json` を同梱し、
 `SessionStart` で `run-hook.cmd session-start` を呼ぶ形になっていた。

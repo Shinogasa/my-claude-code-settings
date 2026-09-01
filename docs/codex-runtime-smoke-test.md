@@ -6,7 +6,7 @@
 
 ## 実行環境
 
-- Codex CLI: `codex-cli 0.149.1`
+- Codex CLI: `codex-cli 0.150.1`
 - 作業開始時のHEADはBASEと一致していた。以後の検証commitを積む間も、既存の未コミット変更は保全し、本タスクで変更・stage・revertしていない。
 - 実HOMEではsetup/runtime probeを実行していない。すべて使い捨てHOMEへ限定したため、実HOMEへの変更はない。
 - Fix round 1の静的検証は、`/tmp/task-6-fix-round-1.pTHUgI/repo` にlocal clean cloneした `e7f1e57` のdetached HEADで実行した。clone前後の `git status --short` は空であり、実リポジトリのbranch、index、未コミット変更は操作していない。
@@ -340,8 +340,8 @@ code-explorerとplannerのparent read-only証跡、および上表のcode-simpli
 | 対象 | expected | observed | status |
 | --- | --- | --- | --- |
 | plugin policy | `bin/audit-codex-plugins.py` が違反なしとなり、default-deny plugin はすべてdisabled、context7 / serenaもunapprovedのままである | `python3 bin/audit-codex-plugins.py` はexit 0（`Codex plugin policy violations: none`）。clean cloneでの `python3 -m unittest tests.test_codex_plugin_policy -v` は20件、failure / error 0。`codex plugin list --json` はexit 0、installed 17 / enabled 8で、enabled 8は`openai-primary-runtime` / `openai-bundled`由来。`claude-plugins-official`由来9件（context7 / serenaを含む）はすべてdisabled。 | 成功 |
-| superpowers current-session利用 | 有効なsuperpowers skillを現在sessionで利用できる | active configの`[plugins."superpowers@openai-curated"] enabled = true`、cache manifest（superpowers 6.3.0、skillsあり、hooks `{}`）を確認した。このsessionでcacheの`superpowers:using-superpowers`と`subagent-driven-development`を実際に読んで利用した。 | 確認済み |
-| superpowers inventory | `codex plugin list --json`がsuperpowersのinventory登録状態を示す | Codex CLI 0.150.1でinstalled 17 / available 0、superpowers entryは0件だった。active configのplugin宣言は18件で、installedとの集合差は`superpowers@openai-curated`だけだった。これはcurrent-sessionでのskill利用確認とは別の観測である。 | 未確認（config/cacheとCLI inventoryが不一致。再インストール・ID変更は未実施） |
+| superpowers current-session利用 | 有効なsuperpowers skillを現在sessionで利用できる | `codex plugin list --json`の`superpowers@openai-api-curated` entryが`installed=true` / `enabled=true`。cache keyは`1e285826`で、このsessionで`superpowers:using-superpowers`を実際に読んで利用した。 | 確認済み |
+| superpowers inventory | `codex plugin list --json`がsuperpowersのinventory登録状態を示す | Codex CLI 0.150.1で`superpowers@openai-api-curated`が`installed=true` / `enabled=true`、marketplaceは`openai-api-curated`、versionは`1e285826`。 | 確認済み |
 | Codex controlled code participation | learning-mode ruleを正確に読んだ後、signature・目的コメント・TODO・テストを先に用意し、5〜10行の参加依頼、skip後の自己実装、構成作業除外を確認する | controlled probeでは前提を用意して参加を依頼し、`スキップ`後に同じ判断を再質問せず自己実装した。親実測の`GOCACHE=/tmp/task-6-step-6.HIWqiw/go-cache-verify-1 go test -cover ./...`はPASS（coverage 100%）、同GOCACHEの`go vet ./...`もPASS。configuration exclusion probeでは`agent-config.toml`を質問・コード参加なしで作成し、`tomllib` parse resultは`{'log_level': 'debug', 'max_retries': 3}`だった。 | 部分確認（Codex側のみ） |
 | Codex natural learning probe | ruleを明示しない通常の発火でもlearning-mode契約を満たす | 選択式Predictで選択と理由を同時に質問し、参加依頼前にsignature・目的コメント・TODOを実作業ツリーへ用意しなかった。skip後の再質問はせず自己実装し、親実測の`go test -cover ./...`はPASS（coverage 100%）、`go vet ./...`もPASS。 | 未達。モデル判断だけで常時遵守されるとは主張しない。 |
 | Claude learning probe | Claude側でもcode participation、skip、configuration exclusionを確認する | isolated HOMEの最初のprobe sessionはassistant実行前に`API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)`で終了した。再試行はユーザーが中断した。sandboxではprocess listを検査できなかったためprocess不在は未確認。 | 未確認。networkを使える環境で別タスクへ延期。 |
@@ -350,8 +350,7 @@ code-explorerとplannerのparent read-only証跡、および上表のcode-simpli
 
 - OpenAI公式の[Developer commands](https://developers.openai.com/codex/cli/reference)は、`codex plugin list --json`が`installed`と`available`の2配列を返すと定義する。今回の不在主張はこの2配列だけを対象とし、runtime loaderやcache全体へ拡張しない。
 - OpenAI公式の[Plugins](https://developers.openai.com/codex/plugins)は、OpenAI API keyでCodexへsign inすると、対応するOpenAI-curated pluginを閲覧・install・管理できると説明する。実測の`codex login status`は`Not logged in`で、`available`が0件なのはこの条件と整合する。ただし、未認証がsuperpowersの`installed`脱落まで引き起こしたとは確認していない。
-- `codex plugin marketplace list --json`が返した現在のcurated marketplace名は`openai-api-curated`だった。一方、active configとruntime cacheは`superpowers@openai-curated`および`~/.codex/plugins/cache/openai-curated/superpowers/6d99ee14`を使う。marketplace checkoutのHEADとcache hashはともに`6d99ee14`で、同checkoutの`openai-curated` / `openai-api-curated`両catalogにsuperpowers entryがある。cache manifestはversion 6.3.0、skillsあり、hooks `{}`であり、このsessionでは同cacheのskillを実際に読めた。
-- `codex plugin list --json`はsandbox内外のどちらでもinstalled 17 / available 0だったため、sandbox内のDNS制限だけでは差分を説明できない。active config 18件とinstalled 17件の集合差は`superpowers@openai-curated`だけである。
+- `codex plugin list --json`は`superpowers@openai-api-curated`を`installed=true` / `enabled=true`として返した。version/cache keyは`1e285826`で、期待値とのinventory不整合は解消済みである。
 
 現時点の仮説は、runtime loaderが旧marketplace IDのcacheを利用できる一方、CLI inventoryは現在のmarketplace IDまたは認証状態と整合せずentryを返していない、というものである。これは原因確定ではない。ID変更だけの効果は、実HOMEを変更せずにreserved marketplace名を再現する試験がCLIに拒否されたため未確認である。再install、config ID変更、plugin enabled state変更は実施していない。
 

@@ -32,7 +32,7 @@ Codex plugin policyを次のように固定する。
 
 | plugin | 状態 | 理由 |
 |---|---|---|
-| `superpowers@openai-curated` | allow | Codex向け配布物で、skillsの利用を確認済み |
+| `superpowers@openai-api-curated` | allow | Codex向け配布物で、skillsの利用を確認済み |
 | `learning-output-style@claude-plugins-official` | deny | 自前学習モードと重複・競合する。コード参加だけ共有ruleへ統合する |
 | `security-guidance@claude-plugins-official` | deny | Claude固有の非同期hook契約でSessionStartが失敗する |
 | `claude-md-management@claude-plugins-official` | deny | `CLAUDE.md`だけを対象にし、Codexの`AGENTS.md`階層を扱わない |

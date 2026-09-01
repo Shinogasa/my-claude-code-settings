@@ -8,7 +8,7 @@ status: accepted
 
 ## 背景
 
-`superpowers@openai-curated` v5.1.3 はCodex向けskillを配るが、manifestは`skills`だけを宣言し、
+`superpowers@openai-api-curated` v1e285826 はCodex向けskillを配るが、manifestは`skills`だけを宣言し、
 配布物に`hooks/`を含まない。`AGENTS.md`の散文指示による`using-superpowers`読込は1ターンで
 観測できたものの、読み忘れを検知できない。Claude由来の`security-guidance`はCodexと異なる
 SessionStart出力契約で失敗するため、ADR 0003でCodex側をdenyにした。
@@ -18,7 +18,7 @@ SessionStart出力契約で失敗するため、ADR 0003でCodex側をdenyにし
 
 ## 決定
 
-- `superpowers@openai-curated`を維持し、リポジトリ管理のCodexネイティブ`SessionStart` hookで
+- `superpowers@openai-api-curated`を維持し、リポジトリ管理のCodexネイティブ`SessionStart` hookで
   `superpowers:using-superpowers`の読込指示を追加developer contextとして注入する。
 - hookは`startup`、`resume`、`clear`、`compact`を対象にし、Codex公式契約の平文stdoutを使う。
 - セキュリティ境界は、認証・認可、ユーザー入力、API、ファイルアップロード、秘密情報、決済、

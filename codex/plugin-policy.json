@@ -4,7 +4,7 @@
     "claude-plugins-official"
   ],
   "plugins": {
-    "superpowers@openai-curated": {
+    "superpowers@openai-api-curated": {
       "status": "allow",
       "reason": "Codex向け配布物で、skillsの利用を確認済み"
     },

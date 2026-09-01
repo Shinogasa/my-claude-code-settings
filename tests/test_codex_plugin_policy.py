@@ -39,7 +39,7 @@ class CodexPluginPolicyTests(unittest.TestCase):
         self.assertEqual(
             policy["plugins"],
             {
-                "superpowers@openai-curated": {"status": "allow", "reason": "Codex向け配布物で、skillsの利用を確認済み"},
+                "superpowers@openai-api-curated": {"status": "allow", "reason": "Codex向け配布物で、skillsの利用を確認済み"},
                 "context7@claude-plugins-official": {"status": "review", "reason": "有用候補だが、Codex向け候補を個別評価するまで導入しない"},
                 "serena@claude-plugins-official": {"status": "review", "reason": "有用候補だが、Codex向け候補を個別評価するまで導入しない"},
                 "learning-output-style@claude-plugins-official": {"status": "deny", "reason": "自前学習モードと重複・競合する。コード参加だけ共有ruleへ統合する"},
@@ -76,7 +76,7 @@ class CodexPluginPolicyTests(unittest.TestCase):
         )
 
     def test_enabled_allow_is_ignored(self):
-        installed = [{"pluginId": "superpowers@openai-curated", "marketplaceName": "openai-curated", "enabled": True}]
+        installed = [{"pluginId": "superpowers@openai-api-curated", "marketplaceName": "openai-api-curated", "enabled": True}]
         self.assertEqual(self.auditor.find_violations(self.read_policy(), installed), [])
 
     def test_disabled_entries_are_ignored(self):
@@ -95,7 +95,7 @@ class CodexPluginPolicyTests(unittest.TestCase):
 
     def test_unknown_policy_status_raises(self):
         policy = self.read_policy()
-        policy["plugins"]["superpowers@openai-curated"]["status"] = "maybe"
+        policy["plugins"]["superpowers@openai-api-curated"]["status"] = "maybe"
         with self.assertRaisesRegex(ValueError, "status"):
             self.auditor.find_violations(policy, [])
 
@@ -139,7 +139,7 @@ class CodexPluginPolicyTests(unittest.TestCase):
         self.assertEqual(self.auditor.find_violations(policy, installed), ["personal-plugin@personal"])
 
     def test_load_installed_uses_default_command_and_parses_stdout(self):
-        document = {"installed": [{"pluginId": "superpowers@openai-curated", "enabled": True}], "available": []}
+        document = {"installed": [{"pluginId": "superpowers@openai-api-curated", "enabled": True}], "available": []}
         completed = subprocess.CompletedProcess([], 0, json.dumps(document), "")
         with mock.patch.object(self.auditor.subprocess, "run", return_value=completed) as run:
             self.assertEqual(self.auditor.load_installed(), document["installed"])

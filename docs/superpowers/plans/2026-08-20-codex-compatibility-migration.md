@@ -171,7 +171,7 @@ Commit:
 Tests must assert schemaVersion 1、defaultDenyMarketplaces equals claude-plugins-official、and the exact
 classification from ADR 0003:
 
-- allow: superpowers@openai-curated
+- allow: superpowers@openai-api-curated
 - review: context7@claude-plugins-official、serena@claude-plugins-official
 - deny: learning-output-style@claude-plugins-official、
   security-guidance@claude-plugins-official、claude-md-management@claude-plugins-official、
