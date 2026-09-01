@@ -604,10 +604,9 @@ PY
   CLAUDE_PERSONAL_STAGED=""
 }
 
-# Codex のプロファイルは base 設定を「置き換える」のではなく「重ねる」ため、プロファイルに
-# 書いていない [mcp_servers.*] は個人セッションでもそのまま起動する。会社のゲートウェイ上の
-# MCP サーバが残ると個人作業が会社インフラを叩く事故になるため、config.toml から導出した
-# deny-by-default のプロファイルを生成する。
+# Codex のプロファイルは base 設定へ重ねられるため、全 MCP サーバを deny-by-default で
+# 列挙する。TUI の config/batchWrite は profile を単体検証するので、enabled だけでなく
+# base と同じ url または command も含む自己完結したエントリを生成する。
 prepare_codex_personal_profile() {
   CODEX_PERSONAL_STAGED="$(mktemp "$CODEX_DIR/.personal.config.toml.setup.XXXXXX")" || return 1
   chmod 600 "$CODEX_PERSONAL_STAGED" || return 1

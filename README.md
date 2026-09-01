@@ -223,8 +223,12 @@ Codex のプロファイルは base 設定を**置き換えるのではなく重
 **deny by default** でプロファイルを生成する。個人セッションで有効にするサーバだけを
 `codex/personal-mcp-allowlist.txt` に列挙する。
 
-生成後に `config.toml` へサーバが増えると、そのサーバは個人側でも有効なまま残る。
-`cxp` は起動前に未反映のサーバを検査し、あれば `setup.sh` の再実行を促して停止する。
+各エントリには `enabled` に加え、HTTP サーバなら `url`、stdio サーバなら `command` を
+転記する。Codex CLI 0.151.0 の TUI が設定保存時に profile を単体検証するためである。
+認証ヘッダー、token 環境変数、引数、環境変数は転記せず、base から継承する。
+
+生成後にサーバが追加・削除された場合、または `url` / `command` が変わった場合、
+`cxp` は起動前に不一致を検出し、`setup.sh` の再実行を促して停止する。
 
 **検査の範囲**: `config.toml` の `[mcp_servers.*]` のみ。プラグイン marketplace 由来の
 MCP サーバ（`~/.codex/plugins/` 配下で定義され `codex mcp list` には出る）は

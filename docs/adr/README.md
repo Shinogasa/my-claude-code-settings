@@ -77,3 +77,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0003](0003-codex-native-first-activation-policy.md) | Codex移行をnative-firstなallowlistで管理する | 2026-08-18 | accepted |
 | [0004](0004-codex-runtime-enforcement-policy.md) | Codexの起動時規約とセキュリティレビューを段階的に強制する | 2026-08-20 | accepted |
 | [0005](0005-codex-personal-profile-mcp-inheritance.md) | 個人プロファイルが会社設定の MCP サーバを継承する既定 | 2026-08-31 | accepted |
+| [0006](0006-codex-personal-profile-standalone-mcp-transport.md) | Codex個人プロファイルのMCP定義を単体検証可能にする | 2026-09-01 | accepted |
