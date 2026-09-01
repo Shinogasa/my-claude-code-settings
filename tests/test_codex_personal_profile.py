@@ -194,6 +194,14 @@ class TestGeneratedFileHardening(unittest.TestCase):
         server = tomllib.loads(rendered)["mcp_servers"]["local_tool"]
         self.assertEqual(server["command"], 'say "hello"\\next')
 
+    def test_unicode_transport_value_survives_round_trip(self):
+        rendered = self.gen.render(
+            {"local_tool": {"command": "/tmp/工具-🛠️"}},
+            set(),
+        )
+        server = tomllib.loads(rendered)["mcp_servers"]["local_tool"]
+        self.assertEqual(server["command"], "/tmp/工具-🛠️")
+
     def test_allowlisted_network_facing_server_is_reported(self):
         # 許可リストは人間が書く。会社のリモートサーバを足しても生成は成功するため、
         # 判断した本人の目に入る位置で言う必要がある。
