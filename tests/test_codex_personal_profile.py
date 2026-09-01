@@ -61,11 +61,60 @@ class TestGenerator(unittest.TestCase):
         )
         self.assertFalse(result["mcp_servers"]["company_search"]["enabled"])
 
+    def test_http_server_copies_only_url_and_enabled(self):
+        # profile 単体の設定検証に必要な transport だけを複写する。
+        result = self.generate(
+            '[mcp_servers.remote_tool]\n'
+            'url = "https://example.invalid/mcp"\n'
+            'http_headers = { Authorization = "not-copied" }\n'
+            'bearer_token_env_var = "REMOTE_TOKEN"\n',
+            "",
+        )
+        self.assertEqual(
+            result["mcp_servers"]["remote_tool"],
+            {
+                "url": "https://example.invalid/mcp",
+                "enabled": False,
+            },
+        )
+
     def test_server_in_allowlist_is_enabled(self):
         result = self.generate(
             '[mcp_servers.local_tool]\ncommand = "/bin/true"\n', "local_tool\n"
         )
         self.assertTrue(result["mcp_servers"]["local_tool"]["enabled"])
+
+    def test_stdio_server_copies_only_command_and_enabled(self):
+        result = self.generate(
+            '[mcp_servers.local_tool]\n'
+            'command = "/usr/bin/env"\n'
+            'args = ["python3", "server.py"]\n'
+            'env = { TOKEN = "not-copied" }\n',
+            "local_tool\n",
+        )
+        self.assertEqual(
+            result["mcp_servers"]["local_tool"],
+            {
+                "command": "/usr/bin/env",
+                "enabled": True,
+            },
+        )
+
+    def test_server_without_transport_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "command または url"):
+            self.gen.render({"broken": {}}, set())
+
+    def test_server_with_two_transports_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "command または url"):
+            self.gen.render(
+                {
+                    "broken": {
+                        "command": "/bin/true",
+                        "url": "https://example.invalid",
+                    }
+                },
+                set(),
+            )
 
     def test_every_server_is_listed_explicitly(self):
         # 許可済みを省略すると、cxp の未反映検査が「許可して省いた」と
@@ -130,12 +179,20 @@ class TestGeneratedFileHardening(unittest.TestCase):
 
     def test_quote_in_server_name_survives_round_trip(self):
         # エスケープを忘れると生成物が TOML として壊れる。
-        rendered = self.gen.render({'odd"name': {}}, set())
+        rendered = self.gen.render({'odd"name': {"command": "/bin/true"}}, set())
         self.assertEqual(list(tomllib.loads(rendered)["mcp_servers"]), ['odd"name'])
 
     def test_backslash_in_server_name_survives_round_trip(self):
-        rendered = self.gen.render({"odd\\name": {}}, set())
+        rendered = self.gen.render({"odd\\name": {"command": "/bin/true"}}, set())
         self.assertEqual(list(tomllib.loads(rendered)["mcp_servers"]), ["odd\\name"])
+
+    def test_transport_value_survives_round_trip(self):
+        rendered = self.gen.render(
+            {"local_tool": {"command": 'say "hello"\\next'}},
+            set(),
+        )
+        server = tomllib.loads(rendered)["mcp_servers"]["local_tool"]
+        self.assertEqual(server["command"], 'say "hello"\\next')
 
     def test_allowlisted_network_facing_server_is_reported(self):
         # 許可リストは人間が書く。会社のリモートサーバを足しても生成は成功するため、
@@ -235,16 +292,62 @@ class TestCxpGuard(unittest.TestCase):
         self.write_config(
             '[mcp_servers.known]\nurl = "x"\n[mcp_servers.added_later]\nurl = "y"\n'
         )
-        self.write_profile('[mcp_servers."known"]\nenabled = false\n')
+        self.write_profile('[mcp_servers."known"]\nurl = "x"\nenabled = false\n')
         result = self.run_cxp()
         self.assertEqual(result.returncode, 1)
         self.assertIn("added_later", result.stderr)
         self.assertFalse(self.marker.exists(), "codex が起動してしまった")
 
+    def test_server_removed_after_generation_stops_before_launching_codex(self):
+        self.write_config('model_provider = "llm_gateway"\n')
+        self.write_profile(
+            '[mcp_servers.removed]\ncommand = "/bin/true"\nenabled = true\n'
+        )
+        result = self.run_cxp()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("removed", result.stderr)
+        self.assertFalse(self.marker.exists(), "codex が起動してしまった")
+
+    def test_transport_changed_after_generation_stops_before_launching_codex(self):
+        self.write_config(
+            '[mcp_servers.known]\nurl = "https://example.invalid/new"\n'
+        )
+        self.write_profile(
+            '[mcp_servers.known]\n'
+            'url = "https://example.invalid/old"\n'
+            'enabled = false\n'
+        )
+        result = self.run_cxp()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("known", result.stderr)
+        self.assertIn("transport", result.stderr)
+        self.assertFalse(self.marker.exists(), "codex が起動してしまった")
+
+    def test_profile_without_transport_stops_before_launching_codex(self):
+        self.write_config('[mcp_servers.known]\nurl = "https://example.invalid/new"\n')
+        self.write_profile('[mcp_servers.known]\nenabled = false\n')
+        result = self.run_cxp()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("known", result.stderr)
+        self.assertIn("transport", result.stderr)
+        self.assertFalse(self.marker.exists(), "codex が起動してしまった")
+
+    def test_profile_without_boolean_enabled_stops_before_launching_codex(self):
+        self.write_config('[mcp_servers.known]\ncommand = "/bin/true"\n')
+        self.write_profile(
+            '[mcp_servers.known]\ncommand = "/bin/true"\nenabled = "false"\n'
+        )
+        result = self.run_cxp()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("known", result.stderr)
+        self.assertIn("enabled", result.stderr)
+        self.assertFalse(self.marker.exists(), "codex が起動してしまった")
+
     def test_fully_covered_profile_launches_codex(self):
         self.write_config('[mcp_servers.known]\nurl = "x"\n')
         self.write_profile(
-            'model_provider = "openai"\n[mcp_servers."known"]\nenabled = false\n'
+            'model_provider = "openai"\n'
+            '[mcp_servers."known"]\nurl = "x"\nenabled = false\n'
         )
         result = self.run_cxp()
         self.assertEqual(result.returncode, 0, result.stderr)

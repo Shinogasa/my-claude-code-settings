@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -125,6 +126,32 @@ class SetupCliTests(unittest.TestCase):
         self.assertTrue((self.home / ".codex" / ".my-claude-code-settings" / "ownership.json").is_file())
         self.assertFalse((self.home / ".codex" / "prompts").exists())
         self.assertFalse((self.home / ".claude" / "CLAUDE.md").exists())
+
+    def test_codex_setup_generates_transport_complete_mcp_entries(self):
+        (self.home / ".codex").mkdir()
+        (self.home / ".codex" / "config.toml").write_text(
+            '[mcp_servers."remote-http"]\n'
+            'url = "https://example.invalid/mcp"\n'
+            '[mcp_servers.local_stdio]\n'
+            'command = "/bin/true"\n',
+            encoding="utf-8",
+        )
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with (self.home / ".codex" / "personal.config.toml").open("rb") as profile:
+            servers = tomllib.load(profile)["mcp_servers"]
+        self.assertEqual(
+            servers,
+            {
+                "local_stdio": {"command": "/bin/true", "enabled": False},
+                "remote-http": {
+                    "url": "https://example.invalid/mcp",
+                    "enabled": False,
+                },
+            },
+        )
 
     def test_all_requires_both_host_directories_before_any_mutation(self):
         (self.home / ".claude").mkdir()
