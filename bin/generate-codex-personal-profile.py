@@ -48,7 +48,7 @@ def read_mcp_servers(path: Path) -> dict:
 
 def quote_toml_string(value: str) -> str:
     """TOML の基本文字列として値をクォートする。"""
-    return json.dumps(value, ensure_ascii=True)
+    return json.dumps(value, ensure_ascii=False)
 
 
 def quote_key(name: str) -> str:
