@@ -352,7 +352,7 @@ code-explorerとplannerのparent read-only証跡、および上表のcode-simpli
 - OpenAI公式の[Plugins](https://developers.openai.com/codex/plugins)は、OpenAI API keyでCodexへsign inすると、対応するOpenAI-curated pluginを閲覧・install・管理できると説明する。実測の`codex login status`は`Not logged in`で、`available`が0件なのはこの条件と整合する。ただし、未認証がsuperpowersの`installed`脱落まで引き起こしたとは確認していない。
 - `codex plugin list --json`は`superpowers@openai-api-curated`を`installed=true` / `enabled=true`として返した。version/cache keyは`1e285826`で、期待値とのinventory不整合は解消済みである。
 
-現時点の仮説は、runtime loaderが旧marketplace IDのcacheを利用できる一方、CLI inventoryは現在のmarketplace IDまたは認証状態と整合せずentryを返していない、というものである。これは原因確定ではない。ID変更だけの効果は、実HOMEを変更せずにreserved marketplace名を再現する試験がCLIに拒否されたため未確認である。再install、config ID変更、plugin enabled state変更は実施していない。
+解消前の仮説（2026-08-27時点）は、runtime loaderが旧marketplace IDのcacheを利用できる一方、CLI inventoryは現在のmarketplace IDまたは認証状態と整合せずentryを返していない、というものだった。現在は343-344および353の実測どおり、現行IDのentryがinstalled/enabledで返され、inventory不整合は解消済みである。この旧仮説は解消前のevidence boundaryとして保持する。
 
 不在主張を次の範囲へ限定する。主張: Codex CLI 0.150.1で取得した`installed` / `available`配列にsuperpowers entryが無かった。探索範囲: sandbox内外の`codex plugin list --json`出力をpluginId/nameで照合し、active configのplugin ID集合とも比較した。範囲の根拠: OpenAI公式Developer commandsが、この2配列を同コマンドのinventory出力として定義している。反証条件: 認証、marketplace refresh、config ID、または別versionの条件を変えた同コマンドがentryを返す場合、今回の観測はその条件を覆わない。runtime loaderやcacheがentryを利用できないという主張はしておらず、実際にcurrent-session利用が反証している。
 

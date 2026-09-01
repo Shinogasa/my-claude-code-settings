@@ -171,6 +171,6 @@ LLM ゲートウェイの予算上限超過（HTTP 429）で実行できず、�
 
 ## スコープ外
 
-- Codex 版（5.1.3）と Claude Code 版（6.2.0）のバージョン差の解消。upstream の更新に任せる
+- [Historical observation 2026-08-05] 当時のCodex版（5.1.3）とClaude Code版（6.2.0）のバージョン差の解消。現行Codex値は `openai-api-curated` / `1e285826` であり、この項目は当時のevidence boundaryとして保持する
 - `~/.codex/config.toml` 自体のリポジトリ管理。認証情報を含むため対象外
 - Codex 用の agents / hooks / output-styles の移植。形式が異なるため従来通り対象外
