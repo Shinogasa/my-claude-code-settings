@@ -11,6 +11,7 @@ Codex のプロファイルは base 設定を「置き換える」のではな�
 
 実行: python3 bin/generate-codex-personal-profile.py <config.toml> <allowlist> <dest>
 """
+import json
 import os
 import sys
 import tomllib
@@ -45,15 +46,40 @@ def read_mcp_servers(path: Path) -> dict:
         return tomllib.load(f).get("mcp_servers", {})
 
 
+def quote_toml_string(value: str) -> str:
+    """TOML の基本文字列として値をクォートする。"""
+    return json.dumps(value, ensure_ascii=True)
+
+
 def quote_key(name: str) -> str:
-    """TOML の基本文字列としてサーバ名をクォートする。
+    """TOML の quoted key としてサーバ名をクォートする。
 
     エスケープせずに埋め込むと、`"` や `\\` を含む名前で生成物が壊れる。
     壊れた場合 cxp 側の tomllib が落ちて起動は止まる(fail closed)が、
     原因が生成側だと分かりにくいため、ここで正しく出す。
     """
-    escaped = name.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    return quote_toml_string(name)
+
+
+def mcp_transport(name: str, definition) -> tuple[str, str]:
+    """MCP 定義から単一の transport discriminator を取得する。"""
+    if not isinstance(definition, dict):
+        raise ValueError(f"MCP サーバ {name!r} の定義がテーブルではありません")
+
+    keys = [key for key in ("command", "url") if key in definition]
+    if len(keys) != 1:
+        raise ValueError(
+            f"MCP サーバ {name!r} の transport は "
+            "command または url のどちらか一方である必要があります"
+        )
+
+    key = keys[0]
+    value = definition[key]
+    if not isinstance(value, str) or not value:
+        raise ValueError(
+            f"MCP サーバ {name!r} の {key} は空でない文字列である必要があります"
+        )
+    return key, value
 
 
 def is_network_facing(definition) -> bool:
@@ -67,7 +93,9 @@ def render(servers: dict, allowed: set[str]) -> str:
     # config.toml にある全サーバを明示的に列挙する。無効なものだけ書くと、cxp の未反映検査が
     # 「許可済みで省略した」と「そもそも反映していない」を区別できなくなる。
     for name in sorted(servers):
+        transport_key, transport_value = mcp_transport(name, servers[name])
         lines.append(f"[mcp_servers.{quote_key(name)}]")
+        lines.append(f"{transport_key} = {quote_toml_string(transport_value)}")
         lines.append(f"enabled = {'true' if name in allowed else 'false'}")
         lines.append("")
     return "\n".join(lines)
@@ -76,8 +104,8 @@ def render(servers: dict, allowed: set[str]) -> str:
 def write_profile(dest: Path, content: str) -> None:
     """生成物を 600 で原子的に置き換える。
 
-    生成元の config.toml は 600。生成物は値を転記しないが、会社の MCP サーバ名は
-    社内トポロジの情報なので、共有マシンで他ユーザーへ見せる理由がない。
+    生成元の config.toml は 600。生成物には transport の値と会社の MCP サーバ名が
+    含まれるため、共有マシンで他ユーザーへ見せる理由がない。
 
     途中で落ちた生成物が残ると cxp が tomllib で落ちる(fail closed)ため実害は無いが、
     原因が読みにくいので一時ファイル経由で置き換える。
