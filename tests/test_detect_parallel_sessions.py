@@ -198,6 +198,29 @@ class TestProductionSelfExclusion(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout or "[]"), [])
 
+    def test_direct_parent_is_excluded_when_ps_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo = make_repo(base, "repo")
+            fixture = Path(base) / "fixture.tsv"
+            fixture.write_text(f"{os.getpid()}\t{repo}\n")
+
+            bindir = Path(base) / "bin"
+            bindir.mkdir()
+            ps = bindir / "ps"
+            ps.write_text("#!/bin/sh\nexit 1\n")
+            ps.chmod(0o755)
+
+            env = dict(os.environ)
+            env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
+            env["DETECT_PARALLEL_SESSIONS_FIXTURE"] = str(fixture)
+            result = subprocess.run(
+                ["bash", str(DETECT)],
+                capture_output=True, text=True, cwd=str(repo), env=env,
+                timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout or "[]"), [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -38,9 +38,9 @@ Identify the project's build tool and run the build:
 
 For each error:
 
-1. **Read the file** — Use Read tool to see error context (10 lines around the error)
+1. **Inspect the file** — Read about 10 lines around the error with the host's file-inspection capability
 2. **Diagnose** — Identify root cause (missing import, wrong type, syntax error)
-3. **Fix minimally** — Use Edit tool for the smallest change that resolves the error
+3. **Fix minimally** — Use the host's file-editing capability for the smallest change that resolves the error
 4. **Re-run build** — Verify the error is gone and no new errors introduced
 5. **Move to next** — Continue with remaining errors
 
@@ -65,9 +65,9 @@ Show results:
 | Situation | Action |
 |-----------|--------|
 | Missing module/import | Check if package is installed; suggest install command |
-| Type mismatch | Read both type definitions; fix the narrower type |
+| Type mismatch | Compare both type definitions; fix the narrower type |
 | Circular dependency | Identify cycle with import graph; suggest extraction |
 | Version conflict | Check `package.json` / `Cargo.toml` for version constraints |
-| Build tool misconfiguration | Read config file; compare with working defaults |
+| Build tool misconfiguration | Inspect the config file; compare with working defaults |
 
 Fix one error at a time for safety. Prefer minimal diffs over refactoring.

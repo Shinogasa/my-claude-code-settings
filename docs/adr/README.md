@@ -73,3 +73,6 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | # | タイトル | 日付 | 状態 |
 |---|---|---|---|
 | [0001](0001-learning-mode-prediction-format.md) | 学習モードの予測フェーズを再認から生成へ変える | 2026-08-14 | accepted |
+| [0002](0002-host-specific-activation-adapters.md) | 共有ポリシーをホスト別アダプターで発火させる | 2026-08-18 | superseded by 0003 |
+| [0003](0003-codex-native-first-activation-policy.md) | Codex移行をnative-firstなallowlistで管理する | 2026-08-18 | accepted |
+| [0004](0004-codex-runtime-enforcement-policy.md) | Codexの起動時規約とセキュリティレビューを段階的に強制する | 2026-08-20 | accepted |

@@ -8,7 +8,193 @@
 
 ---
 
+## フックの誤判定
+
+### P1: ネストしたGitリポジトリで保護ブランチ判定が親リポジトリを参照する
+
+`guard-dangerous-bash` の `git commit` 判定で、PreToolUse payloadの `cwd` と
+実際のコマンド対象リポジトリがずれると、子リポジトリの作業ブランチではなく、
+親リポジトリの `main` / `master` を判定してしまう。エージェントの作業ディレクトリが
+hook payloadの `cwd` に反映されない実行経路で、作業ブランチ上のコミットが
+保護ブランチへの直接コミットとして誤ってブロックされた。
+
+**対策の候補**:
+
+- `git -C` を含むコマンドは明示された対象パスを優先し、相対パスをhookの `cwd` 基準で正規化する
+- plain `git commit` で対象リポジトリを確定できない場合は、親リポジトリのブランチを推測せず、
+  「対象リポジトリを解決できない」として安全側に停止する
+- PreToolUseの `cwd` と実際のコマンド実行ディレクトリの契約を、Claude Code / Codex CLIごとに確認する
+
+**決めること**:
+
+- 対象リポジトリ解決の優先順位（`git -C`、payloadの `cwd`、シェル内の `cd`）
+- 対象を確定できない場合の動作（明示的なエラーで停止するか、別の確認手段を要求するか）
+- 親子リポジトリ、worktree、相対 `git -C` をどのテストマトリクスで固定するか
+
+**完了条件**:
+
+- 子リポジトリのfeatureブランチ上のcommitが親リポジトリのmainを理由に誤ブロックされない
+- main / master上の直接commitのブロックと、検証フックの `--no-verify` 保護は維持される
+- 対象リポジトリを解決できないケースは、推測で親リポジトリを検査せず、理由と安全な次の操作を表示する
+- Claude CodeとCodex CLIの両方で、同じ対象解決ルールと回帰テストが適用される
+
+---
+
 ## Codex CLI 対応の続き
+
+全量監査と判断根拠は `docs/codex-compatibility-audit.md`、設計判断は
+`docs/adr/0003-codex-native-first-activation-policy.md`、実装手順は
+`docs/superpowers/plans/2026-08-18-codex-compatibility-migration.md` を参照。
+
+### P0: `security-guidance` を Codex 側だけ無効化する
+
+`security-guidance@claude-plugins-official` 2.0.7 は SessionStart で最初に
+`{"async": true, "asyncTimeout": 180000}` を返し、Codex 0.147.0 では
+`invalid session start JSON output` になる。`asyncRewake`、rewake message、Claude固有の
+Stop outputにも依存するため、フィールド1個の置換では直らない。
+
+**決めたこと**: Claude Code側は維持し、Codex側のpluginだけ無効化する。cacheは直接patchしない。
+明示的レビューは当面 `security-review` skillと`security-reviewer` agentで代替する。
+
+**完了条件**:
+
+- [x] Codex plugin policyで`deny`になっている
+- [ ] Codexの新規SessionStartで同エラーが出ない
+      （2026-08-26に`config.toml`で`enabled = false`へ変更済み。次回のCodex起動時に確認する）
+- [x] Claude Code側のenabled状態が変わっていない
+
+### P0: 直下 `AGENTS.md` の誤った複製を解消する
+
+現在の `AGENTS.md` は `CLAUDE.md` の機械置換版で、存在しない `~/.Codex` と
+`/Codex-best-practice`、既に解消済みの「Codex hooks未配線」を含む。Codexでは
+グローバル `~/.codex/AGENTS.md`（正本は`CLAUDE.md`）の後にこのファイルも読まれるため、
+単なるREADMEの誤記ではなく、矛盾した実行指示になる。
+
+**決めたこと**: 共通指示を複製せず、このリポジトリ固有のCodex差分だけに縮める。
+
+**完了条件**: 2 KiB未満、`~/.Codex`を含まない、Codex設定監査skillと互換性監査を参照する。
+
+### P1: `setup.sh` の退避がリポジトリ実体を巻き込む
+
+`backup_conflict()` は `os.rename(destination, backup)` するが、`backup_path()` は
+destination が host_root 配下かを**字句的にしか検査しない**。配布先の親がリポジトリを指す
+symlink になっていると、`~/.claude/skills/<name>` の実体はリポジトリ内のディレクトリなので、
+`--replace-conflicts` がリポジトリのソースを `backups/` へ移してしまう。
+その後の `ln -s` は存在しないsourceでも成功するため、壊れたリンクだけが残る。
+
+2026-08-26 のskills個別リンク移行で実際に踏みかけた。親リンクを先に外したため回避したが、
+`~/.claude/commands` は現在もリポジトリ丸ごとリンクのため、**commandsを個別リンク化した
+時点で同じ条件が再現する**。移行時の一時的な事故ではない。
+
+**決めること**: 検査を `classify()` に置くか `backup_conflict()` に置くか。
+前者はpreflightで止められるが、純粋な分類関数がリポジトリの場所を知る必要が出る。
+後者は分類の純粋さを保てるが、停止がapply直前になる。
+
+**完了条件**: destinationのrealpathが `SCRIPT_DIR` 配下のとき、退避せず失敗する回帰テストがある。
+
+### P2: `setup.sh` に dry-run を追加する
+
+現状は実行するまで何が起きるか分からない。特に `setup_claude_plugins()` は
+`claude plugin install` を走らせる外部副作用を持つのに、事前に対象を確認する手段がない。
+「影響が小さい」と見積もる根拠を、実行前に数え上げられない状態になっている。
+
+**完了条件**: 配布先の分類（missing / linked / managed-update / conflict）とplugin導入予定を、
+副作用なしで列挙できる。
+
+### P2: `setup.sh` の failure と policy violation を別の出口にする
+
+`audit_codex_plugins()` は監査ツールのexit 1を `record_failure` に流すため、
+policy違反の検出が「setup completed with failures」として報告される。
+setup自体は成功しているので語が実態とずれており、本物の失敗と区別できない。
+
+**完了条件**: 違反検出と実行失敗が、終了コードか出力かのどちらかで区別できる。
+
+### P1: コード参加を自前学習モードへ統合する
+
+`learning-output-style`のSessionStart注入は動くが、人間にコードを書かせる発火はモデル判断で、
+回数上限・OFF条件・記録がない。既存`learning-mode.md`はこれらを持つため、pluginを二重で
+動かさず、意味のある5〜10行の実装参加だけを共有ruleへ取り込む。
+
+**決めたこと**: コード参加は通常の★ Predictへ追加で重ねず、1回分を消費する代替学習イベントに
+する。実装タスクで周辺コード、関数シグネチャ、目的コメント、TODOを準備してから依頼し、
+設定・ボイラープレート・明白な実装・単純CRUDでは発火させない。`★ Insight`は追加しない。
+
+**完了条件**:
+
+- 学習モードOFF条件と1タスク最大2回がコード参加にも適用される
+- ユーザーがスキップでき、スキップ後はエージェントが実装を完了する
+- `learning-output-style`がClaudeとCodexの両方で無効になっている
+- 実装タスクで1回発火し、設定タスクでは発火しないことを会話上で確認する
+
+### P1: deprecated custom promptsをskillsへ移し切る
+
+`commands/ → ~/.codex/prompts/` は現在動くが、Codex公式ではcustom promptsがdeprecated。
+12 commands中8件は `source-command-*` skillへ変換済み。
+
+残りの扱い:
+
+- `code-review`: Codex組み込み`/review`へ寄せる
+- `quality-gate` / `verify`: `verification-loop`へ統合する
+- `tdd`: `tdd-workflow`へ統合する
+
+`code-review`はEverything Claude Code由来で、PRP成果物、検証、GitHub投稿を一体化した
+289行の外部テンプレートである。Codex側には移植せず、意味レビュー、決定的検査、PR投稿を
+それぞれ標準`/review`、`verification-loop`、公式GitHub連携へ分ける。
+
+**完了条件**: Codex向けprompts linkを外し、Claude Codeのcommandsは維持する。
+
+### P1: Codex-onlyマシンでsetupとSessionStartを完結させる
+
+`setup.sh` は `~/.claude` がないと開始時にexitする。またCodexの
+`detect-parallel-sessions.sh` は既定helperを `~/.claude/bin` から読むが、Codex側に
+`bin/`をリンクしていない。現在の両ホスト導入済みマシンでは隠れる故障である。
+
+**決めたこと**: Claude/Codexの検出と設定処理を独立させ、Codex側にも`bin/`を配る。
+
+**完了条件**: 一時HOME相当のfixtureで `~/.codex` だけ存在するsetup testが通り、
+SessionStart helperがClaude pathなしで起動する。
+
+### P1: Codex設定監査skillを追加する
+
+追加した `codex-cli-best-practice` submoduleは有用だが、0.147.0より古い記述を含む。
+具体的には `codex_hooks`、`[profiles.*]`、marketplace `list`、`type: shell`、
+`/skill-name` などが現行仕様とずれている。
+
+**決めたこと**: Codex設定作業用skillを追加し、公式資料、ローカル`--help`、submoduleの順で
+根拠を採る。submoduleの例を無検証で転記しない。
+
+### P2: `context7` / `serena` のCodex向け候補を個別評価する
+
+両者は有用候補だが、Claude版のimportをそのまま使わない。Codex公式・curated・公開pluginを
+含めて候補を探し、version、起動、認証、代表read-only操作、エラー伝播、副作用を1件ずつ
+確認してからallowへ移す。
+
+**着手条件**: Codex移行が完了し、どちらかの機能が実務タスクで必要になったとき。
+
+### P2: Codex agentsのruntime適用を検証する
+
+生成ドリフトとschemaのテストは通っている。read-onlyの`code-explorer`、write可能な
+`code-simplifier`、高reasoningの`planner`を実際にspawnし、modelとsandboxを確認する。
+静的TOML検査だけで完了扱いにしない。
+
+### Codex statuslineの自前化 → 着手条件待ち
+
+当面はCodex公式のデフォルトstatuslineを使い、`statusline.js`はClaude専用のまま維持する。
+公式footerで足りない項目が実務上の事故や継続的な不便を起こした場合だけadapterを検討する。
+
+**着手条件**: 不足している表示項目と、それにより起きた具体的な問題を記録できたとき、
+またはCodex公式がcustom providerを公開したとき。
+
+### Everything Claude Code由来資産を棚卸しする
+
+commit `0ca03372e3ecb09c00ffedb707dc819a4b664334` で、skills 8件、agents 8件、commands 10件、
+rules 3件、contexts 3件を含む34ファイルを導入した。自前`code-review`がCodex標準reviewと
+重複していたように、Codex native機能、Superpowers、現在の自前ruleとの競合がありうる。
+
+**決めたこと**: Codex移行中には一括削除しない。導入元、現行upstream、実利用記録、
+代替機能、発火競合を資産ごとに確認し、keep / replace / removeへ分類する。
+
+**着手条件**: Codex互換性移行の実装とruntime smoke testが完了したとき。
 
 ### `agents/` の Codex 移植 → 完了（2026-08-18）
 
@@ -76,7 +262,7 @@ Claude Code 側（`settings.json`）は従来どおり有効で、そちらの�
 ```
 codex
 `superpowers:using-superpowers` を先に確認し、このセッションのスキル適用ルールに従います。
-exec /bin/zsh -lc "sed -n '1,240p' .../superpowers/11c74d6b/skills/using-superpowers/SKILL.md"
+exec /bin/zsh -lc "sed -n '1,240p' .../superpowers/1e285826/skills/using-superpowers/SKILL.md"
 ```
 
 `AGENTS.md` の `## superpowers` 節（「応答を始める前に自分で読むこと」）だけで
@@ -91,7 +277,7 @@ Codex は**プラグイン同梱の `hooks/hooks.json` を読む**（実測: `[h
 `security-guidance@claude-plugins-official:hooks/hooks.json` と
 `learning-output-style@claude-plugins-official:hooks/hooks.json` のエントリがある）。
 
-一方、採用している `superpowers@openai-curated` は**配布物に `hooks/` を含まない**
+一方、採用している `superpowers@openai-api-curated` は**配布物に `hooks/` を含まない**
 （`assets` / `CODE_OF_CONDUCT.md` / `LICENSE` / `README.md` / `skills` のみ）。
 `superpowers@claude-plugins-official` の方は `hooks/hooks.json` を同梱し、
 `SessionStart` で `run-hook.cmd session-start` を呼ぶ形になっていた。

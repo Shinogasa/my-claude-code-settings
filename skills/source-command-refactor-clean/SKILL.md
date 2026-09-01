@@ -26,7 +26,7 @@ Run analysis tools based on project type:
 | deadcode | Unused Go code | `deadcode ./...` |
 | cargo-udeps | Unused Rust dependencies | `cargo +nightly udeps` |
 
-If no tool is available, use Grep to find exports with zero imports:
+If no analyzer is available, search project text for exports with zero imports:
 ```
 # Find exports, then check if they're imported anywhere
 ```
@@ -46,9 +46,9 @@ Sort findings into safety tiers:
 For each SAFE item:
 
 1. **Run full test suite** — Establish baseline (all green)
-2. **Delete the dead code** — Use Edit tool for surgical removal
+2. **Delete the dead code** — Use the host's file-editing capability for surgical removal
 3. **Re-run test suite** — Verify nothing broke
-4. **If tests fail** — Immediately revert with `git checkout -- <file>` and skip this item
+4. **If tests fail** — Immediately undo only that deletion with the file-editing capability and skip this item
 5. **If tests pass** — Move to next item
 
 ## Step 4: Handle CAUTION Items

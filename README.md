@@ -54,11 +54,25 @@ bash setup.sh
 | リポジトリ | リンク先 | 備考 |
 |---|---|---|
 | `skills/` | `~/.agents/skills/` | Agent Skills オープン標準。Codex はスキャン時にシンボリックリンクを追従する |
-| `commands/` | `~/.codex/prompts/` | `description` / `argument-hint` の frontmatter が同形式 |
-| `rules/` | `~/.codex/rules/` | `AGENTS.md` から `rules/...` の相対参照で辿れるよう同じ階層に置く |
+| `rules/` | `~/.codex/rules/` | `AGENTS.md` から Markdown を相対参照するための配置。Codex の Starlark `.rules` とは別物 |
 | `CLAUDE.md` | `~/.codex/AGENTS.md` | Codex のグローバル指示 |
+| `hooks/` | `~/.codex/hooks/` | Claude Code と共有するhookスクリプト本体 |
+| `codex/hooks.json` | `~/.codex/hooks.json` | Codex向けのイベント配線。`/hooks` で定義ごとの承認が必要 |
+| `codex/agents/` | `~/.codex/agents/` | `agents/*.md` から生成したCodex TOML |
 
 `~/.agents/` は Codex が自動生成しないため、Codex 検出時に `setup.sh` が作成する。
+
+Codex custom prompts は deprecated のため、`commands/` は `~/.codex/prompts/` へ配布しない。
+Claude Codeでは既存commandを維持し、Codexでは次のnative機能または共有skillを使う。
+
+| Claude command | Codexの入口 |
+|---|---|
+| `code-review` | Codex組み込み `/review` |
+| `quality-gate` | `verification-loop` |
+| `verify` | `verification-loop` |
+| `tdd` | `tdd-workflow` |
+
+その他のcommandは `skills/source-command-*` として共有し、Codexのskill discoveryから利用する。
 
 ### Claude Code 向けプラグイン
 
@@ -77,16 +91,22 @@ bash setup.sh
 
 ### Codex CLI 向けプラグイン
 
-`setup.sh` は Codex 公式マーケットプレイス（`openai-curated`）から以下を冪等に導入する。
+`setup.sh` は Codex 公式マーケットプレイス（`openai-api-curated`）から以下を冪等に導入する。
 導入先は `~/.codex/config.toml` だが、同ファイルは認証情報を平文で持つためリポジトリ管理下には
 置かない。「リポジトリが状態を持つ」のではなく「冪等なコマンドを `setup.sh` が叩く」形にしている。
 
 | プラグイン | 備考 |
 |---|---|
-| `superpowers@openai-curated` | Claude Code 側は `settings.json.template` の `enabledPlugins` で管理 |
+| `superpowers@openai-api-curated` | Codex側のpolicyで管理 |
 
 導入済みのものはスキップする。ユーザーが `enabled = false` にした場合も「導入済み」と判定される
 ため、明示的な無効化を `setup.sh` が上書きすることはない。
+
+Codex の `/import` は、Claude Code 側のプラグインを Codex のローカル設定へ取り込むことがある。
+取り込まれた enabled 状態は Claude 側と独立して残り、Claude 側で無効化しても自動では止まらない。
+特に `security-guidance@claude-plugins-official` 2.0.7 は Claude 固有の非同期hook契約に依存するため、
+Codex 側では無効化する。詳細と全プラグインの判定は
+[Codex互換性監査](docs/codex-compatibility-audit.md)を参照。
 
 **発火方式がホストで異なる。** Claude Code 版は SessionStart hook が `using-superpowers` を
 自動注入するが、Codex 版の配布物は hook を同梱していないため、skills がインデックスに載るだけで
@@ -94,14 +114,16 @@ bash setup.sh
 実際に使っている。superpowers が使っていないだけ）。この差は `CLAUDE.md` の
 `## superpowers` 節（＝ `~/.codex/AGENTS.md`）でホスト別に併記して埋めている。
 
-**未対応（形式が異なる / 相当機能がない）**
+**ホスト別アダプターで扱う資産**
 
-| 資産 | 理由 |
+| 資産 | 現在の扱い |
 |---|---|
-| `agents/` | Codex は `config.toml` の `[agents]` / `.codex/agents/` で TOML 定義 |
-| `hooks/` | 配線先が `hooks.json` / `config.toml`。スクリプト本体は流用できる見込み |
-| `output-styles/` `statusline.js` | Codex に相当機能なし |
-| `settings.json` | Codex は `~/.codex/config.toml`。キー空間が対応しない。APIキーが平文で入るためリポジトリ管理対象にしない |
+| `agents/` | Markdownを正本にし、`bin/generate-codex-agents.py` で `codex/agents/*.toml` を生成する。実機spawnは未検証 |
+| `hooks/` | スクリプト本体は共有し、イベント定義を `settings.json.template` と `codex/hooks.json` に分ける |
+| `output-styles/` | Codexへ直接は配らない。必要な挙動をAGENTS、skills、plugin hooksへ分解する |
+| `statusline.js` | Claude payload専用。Codexには組み込み `/statusline` があるため別設定として扱う |
+| `settings.json` | Codexは `~/.codex/config.toml`。認証値を含むためファイル全体をリポジトリ管理しない |
+| Claude由来plugins | Codex側で互換性を再判定する。cacheの存在やClaude側enabledを実行許可とみなさない |
 
 これらを共有ソース（`skills/` `commands/` `rules/` `CLAUDE.md`）に書くときは、
 特定ホスト固有のツール名・パスに依存させない。Codex は未対応の frontmatter キーや設定を
@@ -172,7 +194,9 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 
 ```
 ├── CLAUDE.md                    # グローバル指示
+├── AGENTS.md                    # このリポジトリのCodex project guidance
 ├── claude-code-best-practice/   # ベストプラクティス（git submodule）
+├── codex-cli-best-practice/      # Codexベストプラクティス（git submodule、補助資料）
 ├── skills/                      # カスタムスキル
 │   ├── api-design/              #   REST API設計パターン
 │   ├── architecture-decision-records/  # ADR記録
@@ -207,6 +231,9 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 │   ├── security-reviewer.md     #   セキュリティレビュー
 │   ├── build-error-resolver.md  #   ビルドエラー解決
 │   └── silent-failure-hunter.md #   サイレント障害検出
+├── codex/                       # Codex固有アダプター
+│   ├── agents/                  #   agents/*.mdから生成したTOML
+│   └── hooks.json               #   Codex向けhookイベント定義
 ├── rules/                       # 常時適用ルール
 │   ├── learning-mode.md         #   学習モード詳細仕様
 │   ├── proving-absence.md       #   「無い」と主張するときの形式
@@ -243,6 +270,17 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 - **CLIフラグ / パワーアップ** — 起動オプション、実験的機能
 
 `skills/claude-code-best-practice/` スキルにより、Claude Code設定の作業時に自動参照される。手動で呼び出す場合は `/claude-code-best-practice` を使用する。
+
+## codex-cli-best-practice（submodule）
+
+[shanraisshan/codex-cli-best-practice](https://github.com/shanraisshan/codex-cli-best-practice) を
+Codex固有設定の補助資料として内包している。AGENTS、skills、subagents、hooks、plugins、MCP、
+config、memoryの例を横断して確認できる。
+
+ただし、固定したHEADはCodex CLI 0.147.0より古く、旧feature名、旧profile形式、
+現在存在するmarketplace `list`を否定する記述などがある。**Codex公式資料とローカルCLIの
+`--help`を優先し、このsubmoduleだけを根拠に設定しない。** 差分の一覧は
+[Codex互換性監査](docs/codex-compatibility-audit.md#codex-cli-best-practice-の評価)を参照。
 
 最新化:
 
@@ -363,4 +401,5 @@ paths:
 
 - https://github.com/obra/superpowers — エージェント向けスキルフレームワーク（`superpowers`プラグインとして導入）
 - https://github.com/shanraisshan/claude-code-best-practice — Claude Code設定ベストプラクティス（submodule）
+- https://github.com/shanraisshan/codex-cli-best-practice — Codex CLI設定の補助資料（submodule、公式資料を優先）
 - https://github.com/affaan-m/everything-claude-code — Claude Code設定集
