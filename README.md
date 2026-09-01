@@ -226,6 +226,13 @@ Codex のプロファイルは base 設定を**置き換えるのではなく重
 各エントリには `enabled` に加え、HTTP サーバなら `url`、stdio サーバなら `command` を
 転記する。Codex CLI 0.151.0 の TUI が設定保存時に profile を単体検証するためである。
 認証ヘッダー、token 環境変数、引数、環境変数は転記せず、base から継承する。
+URL に userinfo、query、fragment がある場合は、endpoint と秘密値を安全に分離できないため
+生成を拒否する。個人 profile 側の MCP エントリも `{url, enabled}` または
+`{command, enabled}` 以外のキーがあれば `cxp` が起動前に拒否する。
+
+allowlist 外のサーバは継承した設定を持っていても `enabled = false` のため起動しない。
+allowlist へ追加したサーバは base の headers、token 環境変数、args、env も実行時に利用する。
+したがって allowlist への追加は、そのサーバの接続先と実行パラメータをまとめて信頼する判断である。
 
 生成後にサーバが追加・削除された場合、または `url` / `command` が変わった場合、
 `cxp` は起動前に不一致を検出し、`setup.sh` の再実行を促して停止する。

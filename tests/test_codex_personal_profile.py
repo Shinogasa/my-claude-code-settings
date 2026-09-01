@@ -116,6 +116,17 @@ class TestGenerator(unittest.TestCase):
                 set(),
             )
 
+    def test_url_with_unredactable_components_is_rejected(self):
+        # profile は URL 全体を transport として複写するため、認証情報を分離できない
+        # userinfo / query / fragment を許すと秘密値まで個人側へ持ち出してしまう。
+        for url in (
+            "https://user:pass@example.invalid/mcp",
+            "https://example.invalid/mcp?access_token=secret",
+            "https://example.invalid/mcp#credential",
+        ):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                self.gen.render({"remote": {"url": url}}, set())
+
     def test_every_server_is_listed_explicitly(self):
         # 許可済みを省略すると、cxp の未反映検査が「許可して省いた」と
         # 「そもそも反映していない」を区別できなくなる。
@@ -350,6 +361,45 @@ class TestCxpGuard(unittest.TestCase):
         self.assertIn("known", result.stderr)
         self.assertIn("enabled", result.stderr)
         self.assertFalse(self.marker.exists(), "codex が起動してしまった")
+
+    def test_profile_with_extra_mcp_keys_stops_before_launching_codex(self):
+        # generator 以外から追記された秘密・実行パラメータも実行時に拒否する。
+        cases = (
+            (
+                '[mcp_servers.known]\nurl = "https://example.invalid/mcp"\n',
+                'http_headers = { Authorization = "secret" }\n',
+            ),
+            (
+                '[mcp_servers.known]\ncommand = "/bin/true"\n',
+                'env = { TOKEN = "secret" }\n',
+            ),
+            (
+                '[mcp_servers.known]\ncommand = "/bin/true"\n',
+                'args = ["--token", "secret"]\n',
+            ),
+        )
+        for base, extra in cases:
+            with self.subTest(extra=extra):
+                self.write_config(base)
+                self.write_profile(base + "enabled = false\n" + extra)
+                result = self.run_cxp()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("known", result.stderr)
+                self.assertFalse(self.marker.exists(), "codex が起動してしまった")
+
+    def test_url_with_unredactable_components_stops_before_launching_codex(self):
+        for url in (
+            "https://user:pass@example.invalid/mcp",
+            "https://example.invalid/mcp?access_token=secret",
+            "https://example.invalid/mcp#credential",
+        ):
+            with self.subTest(url=url):
+                definition = f'[mcp_servers.known]\nurl = "{url}"\nenabled = false\n'
+                self.write_config(definition)
+                self.write_profile(definition)
+                result = self.run_cxp()
+                self.assertEqual(result.returncode, 1)
+                self.assertFalse(self.marker.exists(), "codex が起動してしまった")
 
     def test_fully_covered_profile_launches_codex(self):
         self.write_config('[mcp_servers.known]\nurl = "x"\n')

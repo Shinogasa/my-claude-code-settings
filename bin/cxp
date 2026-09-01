@@ -29,6 +29,7 @@ python3 - "$BASE_CONFIG" "$PROFILE_FILE" <<'PY'
 import pathlib
 import sys
 import tomllib
+from urllib.parse import urlsplit
 
 
 def stop(message: str) -> None:
@@ -65,6 +66,21 @@ def transport(name: str, definition, source: pathlib.Path) -> tuple[str, str]:
     value = definition[key]
     if not isinstance(value, str) or not value:
         stop(f"{source} の MCP サーバ {name} の {key} が不正です")
+    if key == "url":
+        try:
+            parsed = urlsplit(value)
+        except ValueError:
+            stop(f"{source} の MCP サーバ {name} の url が不正です")
+        if (
+            parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            stop(
+                f"{source} の MCP サーバ {name} の url に "
+                "個人プロファイルへ複写できない要素があります"
+            )
     return key, value
 
 
@@ -94,9 +110,12 @@ for name in sorted(base_servers):
     if not isinstance(profile_definition.get("enabled"), bool):
         stop(f"個人プロファイルの MCP サーバ {name} に boolean の enabled がありません")
 
-    if transport(name, base_servers[name], base_config) != transport(
-        name, profile_definition, profile
-    ):
+    base_transport = transport(name, base_servers[name], base_config)
+    profile_transport = transport(name, profile_definition, profile)
+    if set(profile_definition) != {profile_transport[0], "enabled"}:
+        stop(f"個人プロファイルの MCP サーバ {name} に許可されていない設定があります")
+
+    if base_transport != profile_transport:
         mismatched.append(name)
 
 if mismatched:

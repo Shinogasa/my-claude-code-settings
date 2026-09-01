@@ -16,6 +16,7 @@ import os
 import sys
 import tomllib
 from pathlib import Path
+from urllib.parse import urlsplit
 
 # 個人セッションで有効にしても、外部へ出ていくサーバかどうかの判定に使うキー。
 # config.toml にある remote サーバは会社のゲートウェイ上にある可能性が高い。
@@ -79,6 +80,20 @@ def mcp_transport(name: str, definition) -> tuple[str, str]:
         raise ValueError(
             f"MCP サーバ {name!r} の {key} は空でない文字列である必要があります"
         )
+    if key == "url":
+        try:
+            parsed = urlsplit(value)
+        except ValueError as error:
+            raise ValueError(f"MCP サーバ {name!r} の url が不正です") from error
+        if (
+            parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                f"MCP サーバ {name!r} の url に個人プロファイルへ複写できない要素があります"
+            )
     return key, value
 
 

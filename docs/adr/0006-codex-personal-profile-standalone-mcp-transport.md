@@ -27,8 +27,14 @@ ADR 0005 の deny-by-default と base 設定非変更を維持する。
 認証ヘッダー、token 環境変数、stdio の引数・環境変数は転記せず、runtime merge で
 base から継承する。
 
+URL は transport として値全体を転記する必要がある。userinfo、query、fragment を持つ URL は
+endpoint と認証値を分離できないため、生成時と `cxp` 起動時の両方で拒否する。
+URL path は endpoint 識別子として必要なので、秘密値を埋め込まない base 設定を信頼する。
+
 `cxp` は起動前に、base と profile の MCP サーバ名集合、transport の種別と値、profile の
-明示的な boolean の `enabled` を検査する。不一致は再生成を促して停止する。
+明示的な boolean の `enabled` を検査する。profile の各 MCP 定義は `{url, enabled}` または
+`{command, enabled}` の完全一致だけを許可し、それ以外のキーがあれば停止する。不一致は
+再生成を促して停止する。
 
 ## 検討した代替案
 
@@ -68,8 +74,21 @@ deny-by-default を破る。profile への未記載は無効化を意味しな�
 
 - profile だけでも transport を持つため、base から削除したサーバが古い profile に残り得る
 - `url` / `command` を変更した場合も profile の再生成が必要になる
+- userinfo、query、fragment を必要とする HTTP MCP はこの個人プロファイルでは扱えない
 
 いずれも `cxp` の起動前完全一致検査で fail closed にする。
+
+**残る前提とリスク**
+
+- URL の path と `command` は transport 自体なので転記する。秘密値を埋め込まない base 設定を
+  信頼境界とし、生成物は mode 0600 で配置する
+- allowlist 外のサーバは `enabled = false` で起動しない。allowlist へ追加したサーバは、base の
+  headers、token 環境変数、args、env を実行時に継承するため、追加操作をサーバ定義全体への
+  明示的な信頼判断として扱う
+- `cxp` の検査後、Codex が設定を再読込するまでに同一ユーザーがファイルを置換する TOCTOU は
+  残る。現状は同一 OS ユーザーを信頼し、事故による設定 drift を防ぐ境界として扱う
+- 同一ユーザーを信頼できない環境へ広げる場合は、検証済み snapshot を runtime へ渡せる
+  upstream 機構、または分離した `CODEX_HOME` を再検討する
 
 ## 根拠
 
