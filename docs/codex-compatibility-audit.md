@@ -1,7 +1,7 @@
 # Claude Code 資産の Codex 互換性監査
 
 調査日: 2026-08-18（RTKは2026-09-02追補）
-対象: `my-claude-code-settings` at `e5a5289`（RTK追補はADR 0007参照）
+対象: `my-claude-code-settings` at `e5a5289`（RTK追補はADR 0008参照）
 実機: Codex CLI 0.147.0（RTK追補はCodex CLI 0.151.0 / RTK 0.45.0）
 参照スナップショット: `codex-cli-best-practice` at `b79f473`
 
@@ -175,7 +175,7 @@ trust が必要で、未承認時はスキップされる。したがって配�
 RTKはhook非互換のまま放置するのではなく、0.45.0で公式に案内されている
 `AGENTS.md` + `RTK.md`方式へ切り替えた。圧縮自体はClaude Codeと同じRTKバイナリが行うが、
 Codexで`rtk`が選ばれるかは指示遵守に依存する。詳細は
-[ADR 0007](adr/0007-codex-rtk-prompt-integration.md)を参照。
+[ADR 0008](adr/0008-codex-rtk-prompt-integration.md)を参照。
 
 ### Claude 由来プラグイン
 

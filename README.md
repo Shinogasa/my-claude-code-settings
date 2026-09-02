@@ -92,7 +92,7 @@ RTK 0.45.0 の公式Codex統合は、Claude Codeの`PreToolUse` hookとは異な
 
 コンテナ側は`cw-workspace-local`がRTKバイナリの導入を担当する。このリポジトリは
 `~/.codex`へ指示ファイルを配布し、コンテナがそのディレクトリをmountすることで設定を共有する。
-責務と却下案は[ADR 0007](docs/adr/0007-codex-rtk-prompt-integration.md)に記録した。
+責務と却下案は[ADR 0008](docs/adr/0008-codex-rtk-prompt-integration.md)に記録した。
 
 ### Claude Code 向けプラグイン
 
