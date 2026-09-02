@@ -140,6 +140,14 @@ class SetupCliTests(unittest.TestCase):
             (self.repository / "codex" / "RTK.md").resolve(),
         )
 
+    def test_codex_setup_reports_signing_skip_without_config(self):
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SSH署名設定をスキップ", result.stderr)
+
     def test_codex_setup_generates_transport_complete_mcp_entries(self):
         (self.home / ".codex").mkdir()
         (self.home / ".codex" / "config.toml").write_text(
