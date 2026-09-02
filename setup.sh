@@ -151,6 +151,7 @@ build_targets() {
   if selected_codex; then
     add_link_target codex "$SCRIPT_DIR/rules" "$CODEX_DIR/rules"
     add_link_target codex "$SCRIPT_DIR/CLAUDE.md" "$CODEX_DIR/AGENTS.md"
+    add_link_target codex "$SCRIPT_DIR/codex/RTK.md" "$CODEX_DIR/RTK.md"
     add_link_target codex "$SCRIPT_DIR/hooks" "$CODEX_DIR/hooks"
     add_link_target codex "$SCRIPT_DIR/codex/hooks.json" "$CODEX_DIR/hooks.json"
     add_link_target codex "$SCRIPT_DIR/codex/agents" "$CODEX_DIR/agents"

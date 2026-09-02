@@ -134,7 +134,10 @@ class SetupCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         installed = self.home / ".codex" / "RTK.md"
         self.assertTrue(installed.is_symlink())
-        self.assertEqual(installed.resolve(), self.repository / "codex" / "RTK.md")
+        self.assertEqual(
+            installed.resolve(),
+            (self.repository / "codex" / "RTK.md").resolve(),
+        )
 
     def test_all_requires_both_host_directories_before_any_mutation(self):
         (self.home / ".claude").mkdir()
