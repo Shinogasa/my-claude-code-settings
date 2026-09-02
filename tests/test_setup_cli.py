@@ -127,6 +127,19 @@ class SetupCliTests(unittest.TestCase):
         self.assertFalse((self.home / ".codex" / "prompts").exists())
         self.assertFalse((self.home / ".claude" / "CLAUDE.md").exists())
 
+    def test_codex_installs_global_rtk_instructions(self):
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        installed = self.home / ".codex" / "RTK.md"
+        self.assertTrue(installed.is_symlink())
+        self.assertEqual(
+            installed.resolve(),
+            (self.repository / "codex" / "RTK.md").resolve(),
+        )
+
     def test_codex_setup_generates_transport_complete_mcp_entries(self):
         (self.home / ".codex").mkdir()
         (self.home / ".codex" / "config.toml").write_text(

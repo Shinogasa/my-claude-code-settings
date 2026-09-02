@@ -1,8 +1,8 @@
 # Claude Code 資産の Codex 互換性監査
 
-調査日: 2026-08-18
-対象: `my-claude-code-settings` at `e5a5289`
-実機: Codex CLI 0.147.0
+調査日: 2026-08-18（RTKは2026-09-02追補）
+対象: `my-claude-code-settings` at `e5a5289`（RTK追補はADR 0008参照）
+実機: Codex CLI 0.147.0（RTK追補はCodex CLI 0.151.0 / RTK 0.45.0）
 参照スナップショット: `codex-cli-best-practice` at `b79f473`
 
 ## 結論
@@ -50,6 +50,7 @@ default denyにする。`learning-output-style`はpluginとして維持せず、
 | 正本・流入元 | Claude Code | Codex | 注意点 |
 |---|---|---|---|
 | `CLAUDE.md` | `~/.claude/CLAUDE.md` | `~/.codex/AGENTS.md` | 同一ソース。ホスト差は本文中で明示する |
+| `codex/RTK.md` | 使用しない | `~/.codex/RTK.md` | RTK公式のCodex向け指示をsymlink配布する |
 | 直下 `AGENTS.md` | 読まない | このリポジトリの project guidance | グローバル指示への Codex 固有差分だけにする |
 | `skills/` | `~/.claude/skills` | `~/.agents/skills` | 基本形式は共有可。本文のホスト固有語は別途監査する |
 | `commands/` | `~/.claude/commands` | `~/.codex/prompts` | Codex custom prompts は deprecated。skills へ移す |
@@ -165,10 +166,16 @@ Claude Code の `commands/` はそのまま維持できる。
 | `detect-parallel-sessions.sh` | アダプター必要 | SessionStart の成功時は exit 0 + 無出力で正しい。既定ヘルパーが `~/.claude/bin` を向き、Codex 専用マシンでは静かに無効化される |
 | `bin/detect-parallel-sessions` | アダプター必要 | Codex 側にも `bin/` を配るか、hook がホスト別パスを解決する必要がある |
 | `rtk hook claude` | Codex で無効 | Claude の書き換え出力を Codex PreToolUse が受理せず、エラーだけを出すため `codex/hooks.json` から除外済み |
+| `codex/RTK.md` | アダプター必要 | RTK 0.45.0の公式Codex統合。`AGENTS.md`から読み、モデルが`rtk`付きコマンドを選ぶ。hookの強制書き換えではない |
 
 Codex hooks は 0.147.0 で既定有効であり、正規 feature key は `features.hooks`。
 `features.codex_hooks` は deprecated alias である。非 managed hook は定義ハッシュごとに `/hooks` の
 trust が必要で、未承認時はスキップされる。したがって配置成功だけでは防御の有効性を証明しない。
+
+RTKはhook非互換のまま放置するのではなく、0.45.0で公式に案内されている
+`AGENTS.md` + `RTK.md`方式へ切り替えた。圧縮自体はClaude Codeと同じRTKバイナリが行うが、
+Codexで`rtk`が選ばれるかは指示遵守に依存する。詳細は
+[ADR 0008](adr/0008-codex-rtk-prompt-integration.md)を参照。
 
 ### Claude 由来プラグイン
 

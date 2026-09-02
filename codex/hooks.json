@@ -1,5 +1,5 @@
 {
-  "description": "Codex CLI 向けのフック配線。Claude Code の settings.json と同じスクリプトを共有する。rtk は出力形式が Codex と非互換のため含めない。",
+  "description": "Codex CLI 向けのフック配線。Claude Code の settings.json と同じスクリプトを共有する。rtk hook claude は出力形式が非互換のため含めず、RTKはAGENTS.mdとRTK.mdで配布する。",
   "hooks": {
     "PreToolUse": [
       {
