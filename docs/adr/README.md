@@ -78,3 +78,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0004](0004-codex-runtime-enforcement-policy.md) | Codexの起動時規約とセキュリティレビューを段階的に強制する | 2026-08-20 | accepted |
 | [0005](0005-codex-personal-profile-mcp-inheritance.md) | 個人プロファイルが会社設定の MCP サーバを継承する既定 | 2026-08-31 | accepted |
 | [0006](0006-codex-personal-profile-standalone-mcp-transport.md) | Codex個人プロファイルのMCP定義を単体検証可能にする | 2026-09-01 | accepted |
+| [0007](0007-learning-mode-decision-layer-gate.md) | 判断点を層で選別し、実装レベルの経験は定石欄で供給する | 2026-08-21 | accepted |
