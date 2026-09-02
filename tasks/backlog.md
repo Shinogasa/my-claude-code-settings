@@ -46,6 +46,47 @@ hook payloadの `cwd` に反映されない実行経路で、作業ブランチ�
 `docs/adr/0003-codex-native-first-activation-policy.md`、実装手順は
 `docs/superpowers/plans/2026-08-18-codex-compatibility-migration.md` を参照。
 
+### P1: Codexの子プロセスへBitwarden SSH agent socketを配布する
+
+Codex内のGit署名コミットが失敗または待機し、実装担当subagentが
+`git -c commit.gpgsign=false commit`へ退避した結果、コミットが未署名になった。
+Git側は`gpg.format=ssh`、`commit.gpgsign=true`、公開署名鍵を設定済みだが、
+Codexの子プロセスでは`SSH_AUTH_SOCK`が未設定で、`ssh-add -l`は
+`Could not open a connection to your authentication agent.`になった。
+
+macOS上のBitwarden socketは
+`$HOME/Library/Containers/com.bitwarden.desktop/Data/.bitwarden-ssh-agent.sock`にあり、
+このpathを`SSH_AUTH_SOCK`へ明示すると設定済みの署名鍵を取得できる。一時Git repositoryでは
+同じ環境変数を付けた署名コミットが成功し、`git log --show-signature`で`G`と検証できた。
+Codex 0.152.1では`[shell_environment_policy.set]`に同pathを設定すると、freshな
+`codex sandbox`の子commandからも鍵を取得できることを実測した。
+
+**決めたこと**:
+
+- 根本対策の仕組みは、このrepositoryのCodex向けhost adapterが持つ
+- 認証情報を含む`~/.codex/config.toml`本体は従来どおりGit管理しない
+- `setup.sh`がマシンローカルのBitwarden socketを検出し、
+  `shell_environment_policy.set.SSH_AUTH_SOCK`だけを冪等に設定・検証する
+- repositoryへユーザー名を含む絶対path、秘密鍵、token、agent応答を保存しない
+- 既存の未署名commitは自動rewriteしない。対象branch側で明示承認を得て扱う
+
+**決めること**:
+
+- Bitwarden socketが無い、Bitwardenがlock中、鍵が0件の場合にsetupを停止するか警告にするか
+- 既に別の`SSH_AUTH_SOCK`が設定されている場合に保持、選択、上書きのどれを採るか
+- macOS以外を未対応として明示するか、OS別socket discoveryを同時に設計するか
+- 現行Codex sessionへ反映するための再起動案内をsetup結果へ常に出すか
+
+**完了条件**:
+
+- 一時HOMEの`config.toml` fixtureで、無関係な設定と秘密値を変更せず対象keyだけを追加・更新できる
+- setupを複数回実行しても差分が増えず、modeやownerを悪化させない
+- socket pathは`$HOME`基準で導出し、repositoryとlogへ秘密情報を出さない
+- socketの存在だけで成功扱いにせず、`SSH_AUTH_SOCK=<path> ssh-add -l`でagent疎通を検証する
+- freshなCodex sessionの子commandとsubagentの両方で署名commitを作成できる
+- `git log --show-signature --format='%G?'`が`G`になり、署名なしfallbackを使わない
+- READMEへBitwarden Desktopのunlock、Codex再起動、診断方法、未署名commitを自動rewriteしないことを記載する
+
 ### P0: `security-guidance` を Codex 側だけ無効化する
 
 `security-guidance@claude-plugins-official` 2.0.7 は SessionStart で最初に
@@ -73,6 +114,56 @@ Stop outputにも依存するため、フィールド1個の置換では直ら�
 **決めたこと**: 共通指示を複製せず、このリポジトリ固有のCodex差分だけに縮める。
 
 **完了条件**: 2 KiB未満、`~/.Codex`を含まない、Codex設定監査skillと互換性監査を参照する。
+
+### P1: `gpt-5.6-sol` で全ターンが失敗する回避設定を `setup.sh` で恒久化する
+
+`~/.codex/config.toml` に次が無いと、`gpt-5.6-sol` を使う**全ターン**がモデルの推論前に失敗する。
+
+```toml
+[features.multi_agent_v2]
+tool_namespace = "agents"
+```
+
+codex の MultiAgentV2 は自前生成した `spawn_agent` を既定で `collaboration` 名前空間に置くが、
+このモデルは `collaboration.spawn_agent` を予約済みとして扱い、送られたスキーマが
+モデル側の設定と完全一致しないと HTTP 500 で拒否する。上流は
+[openai/codex#31864](https://github.com/openai/codex/issues/31864)（2026-09-02 時点 Open、修正PRなし）。
+codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**バージョンを上げても下げても回避できない**。
+
+**調査コストが高い理由**（次に踏む人がここで溶かさないために残す）:
+
+拒否は SSE の `error` イベントで返り、**ストリーム自体は正常に閉じる**。codex はこのエラー本文を
+表示せず `stream disconnected before completion: stream closed before response.completed`
+に畳むため、原因が見えないまま5回リトライして毎回12〜17秒で失敗する。
+この「約13秒」はタイムアウトではなく**リトライ予算の枯渇時間**であり、
+ネットワーク・プロキシ・DNS・アイドルタイムアウトの調査へ強く誘導される。
+2026-09-02 に1セッション丸ごと費やして特定した。特定の決め手は、
+リクエストとレスポンスを中継プロキシで丸ごと記録して SSE の生バイト列を見ることだった。
+上位レイヤのエラー文言からは辿れない。
+
+**なぜこのリポジトリの管轄か**:
+
+障害は作業ディレクトリに依存しない（ワークスペース外でも同一の失敗を実測済み）ため、
+特定プロジェクトの設定ではなくホストの codex 全体の性質。`config.toml` は認証ヘッダを
+平文で持つためリポジトリ管理下に置けないが、このキーは非機密なので、既存方針の
+「リポジトリが状態を持つのではなく、冪等なコマンドを `setup.sh` が叩く」
+（Codex プラグイン導入と同じ形）に収まる。方針の例外にはならない。
+
+**決めること**:
+
+- 既に `tool_namespace` が別の値で存在する場合、上書きするか、警告して残すか
+- 適用を無条件にするか、`model` が該当モデルのときだけにするか
+  （無条件でもローカルのツール名前空間が変わるだけで他モデルには無害と考えられるが**未確認**）
+- 上流が #31864 を修正してキー名または既定値が変わったとき、この上書きは**黙って無効になり**
+  再び不透明な13秒失敗へ戻る。検知手段を持つか（`codex features list` の値を検査する等）
+
+**完了条件**:
+
+- [ ] `bash setup.sh` の実行で `~/.codex/config.toml` に該当キーが入る（冪等）
+- [ ] `codex` 自身（`codex features enable/disable`）と GUI アプリも同じファイルへ書き込むため、
+      それらによる書き換えの後でも壊れない。素朴な追記だとキー重複やコメント消失が起きうる
+- [ ] 未設定のマシンで `codex exec "..."` が成功する
+      （設定前は12〜17秒で失敗することを再現できる。成功/失敗が判別できる検査であること）
 
 ### P1: `setup.sh` の退避がリポジトリ実体を巻き込む
 
