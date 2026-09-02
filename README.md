@@ -94,6 +94,34 @@ RTK 0.45.0 の公式Codex統合は、Claude Codeの`PreToolUse` hookとは異な
 `~/.codex`へ指示ファイルを配布し、コンテナがそのディレクトリをmountすることで設定を共有する。
 責務と却下案は[ADR 0008](docs/adr/0008-codex-rtk-prompt-integration.md)に記録した。
 
+### Codex CLI の Git SSH 署名（Bitwarden Desktop）
+
+Codexのshell sandboxや子プロセスは、親シェルの`SSH_AUTH_SOCK`をそのまま継承しないことがある。
+Codex公式の[`shell_environment_policy.set`](https://developers.openai.com/codex/config-reference/)
+へ明示値を設定すると、shell tool・fresh session・subagentから同じSSH agentを利用できる。
+
+`setup.sh --codex` はmacOSのBitwarden Desktop socketを`$HOME`から導出し、次の順で処理する。
+
+- Bitwarden Desktopをunlockし、SSH agentと署名鍵を利用可能にしてからsetupを実行する
+- `SSH_AUTH_SOCK=<socket> ssh-add -l`が成功したときだけ、`~/.codex/config.toml`の
+  `[shell_environment_policy.set]`にある`SSH_AUTH_SOCK`だけを追加・更新する
+- configのコメント、無関係な設定、認証情報は再シリアライズせず保持する。config本体はGit管理しない
+- configが無い、macOS以外、socketが無い、Bitwardenがlock中、鍵が0件、agentへ接続できない場合は
+  警告して設定を変更しない（setup全体は継続する）
+- 既存の別socketは、Bitwarden agentの鍵を確認できた場合だけ管理対象keyとして置き換える。確認できない場合は既存値を保持する
+
+反映後は新しいCodexセッションが必要なため、setupが成功または設定済みと報告したら、実行中のCodexを終了して再起動する。
+診断はローカル端末で行い、fingerprintをログやチャットへ貼り付けない。
+
+```bash
+SSH_AUTH_SOCK="$HOME/Library/Containers/com.bitwarden.desktop/Data/.bitwarden-ssh-agent.sock" ssh-add -l
+git log --show-signature --format='%G?' -n 5
+```
+
+未署名の既存commitをsetupが自動rewriteすることはない。署名を直す場合は対象branchと履歴の扱いを明示的に決める。
+ホストのBitwarden socketをコンテナへ直接持ち込む設定はこのリポジトリの責務ではない。
+開発コンテナ側のrelayとRTKバイナリは`cw-workspace-local`で管理し、そこで追加対応が必要ならそのリポジトリへ引き継ぐ。
+
 ### Claude Code 向けプラグイン
 
 `settings.json` の `enabledPlugins` は「有効にしろ」という**宣言**でしかなく、実体の取得はしない。
@@ -331,7 +359,8 @@ plugin 由来のサーバを有効化する場合は、その素性を自分で�
 │   └── guard-dangerous-bash.py  #   危険コマンド判定の実処理
 ├── bin/                         # 起動ラッパー（PATHを通して使う）
 │   ├── ccp                      #   個人Anthropicアカウントで Claude Code を起動する
-│   └── cxp                      #   個人ChatGPTアカウントで Codex CLI を起動する
+│   ├── cxp                      #   個人ChatGPTアカウントで Codex CLI を起動する
+│   └── configure_codex_signing.py #   Bitwarden SSH agentをCodex子プロセスへ配布する
 ├── output-styles/               # カスタムアウトプットスタイル
 │   ├── review-and-design.md     #   Review & Design（コードレビュー・設計判断特化）
 │   └── fast.md                  #   高速実行（説明最小限）

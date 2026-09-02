@@ -46,47 +46,6 @@ hook payloadの `cwd` に反映されない実行経路で、作業ブランチ�
 `docs/adr/0003-codex-native-first-activation-policy.md`、実装手順は
 `docs/superpowers/plans/2026-08-18-codex-compatibility-migration.md` を参照。
 
-### P1: Codexの子プロセスへBitwarden SSH agent socketを配布する
-
-Codex内のGit署名コミットが失敗または待機し、実装担当subagentが
-`git -c commit.gpgsign=false commit`へ退避した結果、コミットが未署名になった。
-Git側は`gpg.format=ssh`、`commit.gpgsign=true`、公開署名鍵を設定済みだが、
-Codexの子プロセスでは`SSH_AUTH_SOCK`が未設定で、`ssh-add -l`は
-`Could not open a connection to your authentication agent.`になった。
-
-macOS上のBitwarden socketは
-`$HOME/Library/Containers/com.bitwarden.desktop/Data/.bitwarden-ssh-agent.sock`にあり、
-このpathを`SSH_AUTH_SOCK`へ明示すると設定済みの署名鍵を取得できる。一時Git repositoryでは
-同じ環境変数を付けた署名コミットが成功し、`git log --show-signature`で`G`と検証できた。
-Codex 0.152.1では`[shell_environment_policy.set]`に同pathを設定すると、freshな
-`codex sandbox`の子commandからも鍵を取得できることを実測した。
-
-**決めたこと**:
-
-- 根本対策の仕組みは、このrepositoryのCodex向けhost adapterが持つ
-- 認証情報を含む`~/.codex/config.toml`本体は従来どおりGit管理しない
-- `setup.sh`がマシンローカルのBitwarden socketを検出し、
-  `shell_environment_policy.set.SSH_AUTH_SOCK`だけを冪等に設定・検証する
-- repositoryへユーザー名を含む絶対path、秘密鍵、token、agent応答を保存しない
-- 既存の未署名commitは自動rewriteしない。対象branch側で明示承認を得て扱う
-
-**決めること**:
-
-- Bitwarden socketが無い、Bitwardenがlock中、鍵が0件の場合にsetupを停止するか警告にするか
-- 既に別の`SSH_AUTH_SOCK`が設定されている場合に保持、選択、上書きのどれを採るか
-- macOS以外を未対応として明示するか、OS別socket discoveryを同時に設計するか
-- 現行Codex sessionへ反映するための再起動案内をsetup結果へ常に出すか
-
-**完了条件**:
-
-- 一時HOMEの`config.toml` fixtureで、無関係な設定と秘密値を変更せず対象keyだけを追加・更新できる
-- setupを複数回実行しても差分が増えず、modeやownerを悪化させない
-- socket pathは`$HOME`基準で導出し、repositoryとlogへ秘密情報を出さない
-- socketの存在だけで成功扱いにせず、`SSH_AUTH_SOCK=<path> ssh-add -l`でagent疎通を検証する
-- freshなCodex sessionの子commandとsubagentの両方で署名commitを作成できる
-- `git log --show-signature --format='%G?'`が`G`になり、署名なしfallbackを使わない
-- READMEへBitwarden Desktopのunlock、Codex再起動、診断方法、未署名commitを自動rewriteしないことを記載する
-
 ### P0: `security-guidance` を Codex 側だけ無効化する
 
 `security-guidance@claude-plugins-official` 2.0.7 は SessionStart で最初に
