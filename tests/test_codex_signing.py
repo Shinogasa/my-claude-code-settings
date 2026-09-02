@@ -113,6 +113,19 @@ class CodexSigningTests(unittest.TestCase):
             str(self.socket_path),
         )
 
+    def test_preserves_crlf_when_adding_missing_table(self):
+        self.config.write_bytes(b'model = "gpt-test"\r\n')
+
+        with patch.object(signing, "_probe_agent", return_value=True):
+            result = signing.configure(self.config, self.socket_path)
+
+        self.assertEqual(result.kind, "updated")
+        updated = self.config.read_bytes()
+        self.assertIn(b"model = \"gpt-test\"\r\n", updated)
+        self.assertIn(b"[shell_environment_policy.set]\r\n", updated)
+        self.assertIn(b"SSH_AUTH_SOCK = ", updated)
+        self.assertNotIn(b"\n[shell_environment_policy.set]", updated.replace(b"\r\n", b""))
+
     def test_second_run_is_byte_and_mtime_idempotent(self):
         self.config.write_text(
             '[shell_environment_policy.set]\n'

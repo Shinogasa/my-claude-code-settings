@@ -220,9 +220,13 @@ def _patched_text(text: str, document: dict[str, object], socket_path: str) -> s
         policy = document.get("shell_environment_policy")
         if isinstance(policy, dict) and "set" in policy:
             raise ConfigurationError("target table is represented by an inline or dotted value")
-        separator = "" if not text or text.endswith(("\n", "\r")) else "\n"
+        newline = "\r\n" if "\r\n" in text else "\n"
+        separator = "" if not text or text.endswith(("\n", "\r")) else newline
         candidate = text + separator
-        candidate += f"[shell_environment_policy.set]\nSSH_AUTH_SOCK = {_toml_string(socket_path)}\n"
+        candidate += (
+            f"[shell_environment_policy.set]{newline}"
+            f"SSH_AUTH_SOCK = {_toml_string(socket_path)}{newline}"
+        )
     else:
         header_index = target_headers[0]
         table_end = len(lines)
