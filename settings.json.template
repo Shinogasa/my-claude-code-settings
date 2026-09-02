@@ -6,7 +6,7 @@
   },
   "enabledPlugins": {
     "code-review@claude-plugins-official": true,
-    "learning-output-style@claude-plugins-official": true,
+    "learning-output-style@claude-plugins-official": false,
     "security-guidance@claude-plugins-official": true,
     "context7@claude-plugins-official": true,
     "serena@claude-plugins-official": true,

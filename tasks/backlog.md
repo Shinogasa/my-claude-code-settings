@@ -8,6 +8,38 @@
 
 ---
 
+## フックの誤判定
+
+### P1: ネストしたGitリポジトリで保護ブランチ判定が親リポジトリを参照する
+
+`guard-dangerous-bash` の `git commit` 判定で、PreToolUse payloadの `cwd` と
+実際のコマンド対象リポジトリがずれると、子リポジトリの作業ブランチではなく、
+親リポジトリの `main` / `master` を判定してしまう。エージェントの作業ディレクトリが
+hook payloadの `cwd` に反映されない実行経路で、作業ブランチ上のコミットが
+保護ブランチへの直接コミットとして誤ってブロックされた。
+
+**対策の候補**:
+
+- `git -C` を含むコマンドは明示された対象パスを優先し、相対パスをhookの `cwd` 基準で正規化する
+- plain `git commit` で対象リポジトリを確定できない場合は、親リポジトリのブランチを推測せず、
+  「対象リポジトリを解決できない」として安全側に停止する
+- PreToolUseの `cwd` と実際のコマンド実行ディレクトリの契約を、Claude Code / Codex CLIごとに確認する
+
+**決めること**:
+
+- 対象リポジトリ解決の優先順位（`git -C`、payloadの `cwd`、シェル内の `cd`）
+- 対象を確定できない場合の動作（明示的なエラーで停止するか、別の確認手段を要求するか）
+- 親子リポジトリ、worktree、相対 `git -C` をどのテストマトリクスで固定するか
+
+**完了条件**:
+
+- 子リポジトリのfeatureブランチ上のcommitが親リポジトリのmainを理由に誤ブロックされない
+- main / master上の直接commitのブロックと、検証フックの `--no-verify` 保護は維持される
+- 対象リポジトリを解決できないケースは、推測で親リポジトリを検査せず、理由と安全な次の操作を表示する
+- Claude CodeとCodex CLIの両方で、同じ対象解決ルールと回帰テストが適用される
+
+---
+
 ## Codex CLI 対応の続き
 
 全量監査と判断根拠は `docs/codex-compatibility-audit.md`、設計判断は
@@ -26,9 +58,10 @@ Stop outputにも依存するため、フィールド1個の置換では直ら�
 
 **完了条件**:
 
-- Codex plugin policyで`deny`になっている
-- Codexの新規SessionStartで同エラーが出ない
-- Claude Code側のenabled状態が変わっていない
+- [x] Codex plugin policyで`deny`になっている
+- [ ] Codexの新規SessionStartで同エラーが出ない
+      （2026-08-26に`config.toml`で`enabled = false`へ変更済み。次回のCodex起動時に確認する）
+- [x] Claude Code側のenabled状態が変わっていない
 
 ### P0: 直下 `AGENTS.md` の誤った複製を解消する
 
@@ -41,27 +74,40 @@ Stop outputにも依存するため、フィールド1個の置換では直ら�
 
 **完了条件**: 2 KiB未満、`~/.Codex`を含まない、Codex設定監査skillと互換性監査を参照する。
 
-### P1: Codex plugin allowlistとread-only監査を導入する
+### P1: `setup.sh` の退避がリポジトリ実体を巻き込む
 
-Claude `/import` 由来の plugin enabled 状態は、Claude側の `enabledPlugins` と独立して残る。
-現状は `asana`、`claude-md-management`、`code-review`、`context7`、`gopls-lsp`、
-`learning-output-style`、`security-guidance`、`serena` がCodex側にも流入している。
+`backup_conflict()` は `os.rename(destination, backup)` するが、`backup_path()` は
+destination が host_root 配下かを**字句的にしか検査しない**。配布先の親がリポジトリを指す
+symlink になっていると、`~/.claude/skills/<name>` の実体はリポジトリ内のディレクトリなので、
+`--replace-conflicts` がリポジトリのソースを `backups/` へ移してしまう。
+その後の `ln -s` は存在しないsourceでも成功するため、壊れたリンクだけが残る。
 
-**決めたこと**: `codex/plugin-policy.json` に `allow / deny / review` と理由を記録し、
-`setup.sh` は状態を監査する。`review`も実行許可ではなく、明示的に`allow`へ変更するまで
-無効にする。`claude-plugins-official`はdefault denyとし、未知のpluginも明示allowまでは停止する。
-別marketplaceの未知user pluginは勝手に変更せず、いずれのpluginもcacheから削除しない。
+2026-08-26 のskills個別リンク移行で実際に踏みかけた。親リンクを先に外したため回避したが、
+`~/.claude/commands` は現在もリポジトリ丸ごとリンクのため、**commandsを個別リンク化した
+時点で同じ条件が再現する**。移行時の一時的な事故ではない。
 
-**完了条件**: default-deny marketplaceで明示allowされていないpluginが有効なら検査が失敗し、
-`/plugins`で無効化した後もinstall記録とcacheが残る。Claude側の設定変更だけではCodex側を
-無効化できないことがREADMEに残っている。
+**決めること**: 検査を `classify()` に置くか `backup_conflict()` に置くか。
+前者はpreflightで止められるが、純粋な分類関数がリポジトリの場所を知る必要が出る。
+後者は分類の純粋さを保てるが、停止がapply直前になる。
 
-確定した分類:
+**完了条件**: destinationのrealpathが `SCRIPT_DIR` 配下のとき、退避せず失敗する回帰テストがある。
 
-- allow: `superpowers@openai-curated`
-- review・無効: `context7`、`serena`
-- deny: `learning-output-style`、`security-guidance`、`claude-md-management`、`asana`、
-  `code-review`、`gopls-lsp`
+### P2: `setup.sh` に dry-run を追加する
+
+現状は実行するまで何が起きるか分からない。特に `setup_claude_plugins()` は
+`claude plugin install` を走らせる外部副作用を持つのに、事前に対象を確認する手段がない。
+「影響が小さい」と見積もる根拠を、実行前に数え上げられない状態になっている。
+
+**完了条件**: 配布先の分類（missing / linked / managed-update / conflict）とplugin導入予定を、
+副作用なしで列挙できる。
+
+### P2: `setup.sh` の failure と policy violation を別の出口にする
+
+`audit_codex_plugins()` は監査ツールのexit 1を `record_failure` に流すため、
+policy違反の検出が「setup completed with failures」として報告される。
+setup自体は成功しているので語が実態とずれており、本物の失敗と区別できない。
+
+**完了条件**: 違反検出と実行失敗が、終了コードか出力かのどちらかで区別できる。
 
 ### P1: コード参加を自前学習モードへ統合する
 
@@ -216,7 +262,7 @@ Claude Code 側（`settings.json`）は従来どおり有効で、そちらの�
 ```
 codex
 `superpowers:using-superpowers` を先に確認し、このセッションのスキル適用ルールに従います。
-exec /bin/zsh -lc "sed -n '1,240p' .../superpowers/11c74d6b/skills/using-superpowers/SKILL.md"
+exec /bin/zsh -lc "sed -n '1,240p' .../superpowers/1e285826/skills/using-superpowers/SKILL.md"
 ```
 
 `AGENTS.md` の `## superpowers` 節（「応答を始める前に自分で読むこと」）だけで
@@ -231,7 +277,7 @@ Codex は**プラグイン同梱の `hooks/hooks.json` を読む**（実測: `[h
 `security-guidance@claude-plugins-official:hooks/hooks.json` と
 `learning-output-style@claude-plugins-official:hooks/hooks.json` のエントリがある）。
 
-一方、採用している `superpowers@openai-curated` は**配布物に `hooks/` を含まない**
+一方、採用している `superpowers@openai-api-curated` は**配布物に `hooks/` を含まない**
 （`assets` / `CODE_OF_CONDUCT.md` / `LICENSE` / `README.md` / `skills` のみ）。
 `superpowers@claude-plugins-official` の方は `hooks/hooks.json` を同梱し、
 `SessionStart` で `run-hook.cmd session-start` を呼ぶ形になっていた。

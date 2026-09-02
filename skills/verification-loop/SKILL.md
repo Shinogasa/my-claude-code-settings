@@ -1,13 +1,13 @@
 ---
 name: verification-loop
-description: "A comprehensive verification system for Claude Code sessions. Runs a build/type/lint/test/security CI-style gate across the full diff — for launching and confirming the app actually works, use the official /verify skill instead."
+description: "Run a build/type/lint/test/security CI-style gate across the full diff before completion or review. Use a host-native runtime verification capability separately when the task requires launching the app."
 metadata:
   origin: ECC
 ---
 
 # Verification Loop Skill
 
-A comprehensive verification system for Claude Code sessions.
+A comprehensive verification system for coding-agent sessions.
 
 ## When to Use
 
@@ -118,7 +118,7 @@ Set a mental checkpoint:
 - After finishing a component
 - Before moving to next task
 
-Run: /verify
+Run the `verification-loop` skill directly.
 ```
 
 ## Integration with Hooks

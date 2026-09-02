@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -126,6 +127,32 @@ class SetupCliTests(unittest.TestCase):
         self.assertFalse((self.home / ".codex" / "prompts").exists())
         self.assertFalse((self.home / ".claude" / "CLAUDE.md").exists())
 
+    def test_codex_setup_generates_transport_complete_mcp_entries(self):
+        (self.home / ".codex").mkdir()
+        (self.home / ".codex" / "config.toml").write_text(
+            '[mcp_servers."remote-http"]\n'
+            'url = "https://example.invalid/mcp"\n'
+            '[mcp_servers.local_stdio]\n'
+            'command = "/bin/true"\n',
+            encoding="utf-8",
+        )
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with (self.home / ".codex" / "personal.config.toml").open("rb") as profile:
+            servers = tomllib.load(profile)["mcp_servers"]
+        self.assertEqual(
+            servers,
+            {
+                "local_stdio": {"command": "/bin/true", "enabled": False},
+                "remote-http": {
+                    "url": "https://example.invalid/mcp",
+                    "enabled": False,
+                },
+            },
+        )
+
     def test_all_requires_both_host_directories_before_any_mutation(self):
         (self.home / ".claude").mkdir()
         result = run_setup(self.repository, self.home, "--all")
@@ -227,7 +254,7 @@ class SetupCliTests(unittest.TestCase):
     def test_claude_plugin_list_skips_installed_and_aggregates_independent_failures(self):
         (self.home / ".claude").mkdir()
         installed = '[{"id":"code-review@claude-plugins-official"}]'
-        failed = "learning-output-style@claude-plugins-official"
+        failed = "context7@claude-plugins-official"
         result = run_setup(
             self.repository, self.home, "--claude",
             extra_env={"CLAUDE_PLUGIN_LIST": installed, "CLAUDE_FAIL_PLUGIN": failed},
@@ -236,6 +263,7 @@ class SetupCliTests(unittest.TestCase):
         commands = (self.home.parent / "commands.log").read_text(encoding="utf-8")
         self.assertIn("claude plugin list --json", commands)
         self.assertNotIn("claude plugin install code-review@claude-plugins-official", commands)
+        self.assertNotIn("claude plugin install learning-output-style@claude-plugins-official", commands)
         self.assertIn("claude plugin install context7@claude-plugins-official", commands)
         self.assertIn(f"plugin={failed} operation=install", result.stderr)
         self.assertIn(f"retry: claude plugin install {failed}", result.stderr)

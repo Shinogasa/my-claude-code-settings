@@ -155,7 +155,7 @@ class TestCodexPluginPolicy(unittest.TestCase):
         data = json.loads(POLICY.read_text(encoding="utf-8"))
         actual = {name: entry["status"] for name, entry in data["plugins"].items()}
         self.assertEqual(actual, {
-            "superpowers@openai-curated": "allow",
+            "superpowers@openai-api-curated": "allow",
             "learning-output-style@claude-plugins-official": "deny",
             "security-guidance@claude-plugins-official": "deny",
             "claude-md-management@claude-plugins-official": "deny",
@@ -173,13 +173,13 @@ class TestCodexPluginPolicy(unittest.TestCase):
         policy = {
             "defaultDenyMarketplaces": ["claude-plugins-official"],
             "plugins": {
-                "allowed@openai-curated": {"status": "allow", "reason": "native"},
+                "allowed@openai-api-curated": {"status": "allow", "reason": "native"},
                 "deferred@claude-plugins-official": {"status": "review", "reason": "not tested"},
                 "blocked@claude-plugins-official": {"status": "deny", "reason": "incompatible"},
             },
         }
         installed = [
-            {"pluginId": "allowed@openai-curated", "marketplaceName": "openai-curated", "enabled": True},
+            {"pluginId": "allowed@openai-api-curated", "marketplaceName": "openai-api-curated", "enabled": True},
             {"pluginId": "deferred@claude-plugins-official", "marketplaceName": "claude-plugins-official", "enabled": True},
             {"pluginId": "blocked@claude-plugins-official", "marketplaceName": "claude-plugins-official", "enabled": True},
             {"pluginId": "future@claude-plugins-official", "marketplaceName": "claude-plugins-official", "enabled": True},
@@ -220,7 +220,7 @@ Expected: FAIL because the policy and auditor do not exist.
   "schemaVersion": 1,
   "defaultDenyMarketplaces": ["claude-plugins-official"],
   "plugins": {
-    "superpowers@openai-curated": {"status": "allow", "reason": "Codex native skill distribution"},
+    "superpowers@openai-api-curated": {"status": "allow", "reason": "Codex native skill distribution"},
     "learning-output-style@claude-plugins-official": {"status": "deny", "reason": "Code participation moves to the shared learning-mode rule"},
     "security-guidance@claude-plugins-official": {"status": "deny", "reason": "Claude asyncRewake and SessionStart handshake are incompatible"},
     "claude-md-management@claude-plugins-official": {"status": "deny", "reason": "CLAUDE.md-only workflow does not model Codex AGENTS.md hierarchy"},
@@ -476,7 +476,7 @@ class TestSetupHostIndependence(unittest.TestCase):
             codex.write_text(
                 "#!/bin/sh\n"
                 "if [ \"$1 $2\" = \"plugin list\" ]; then\n"
-                "  printf '%s\\n' '{\"installed\":[{\"pluginId\":\"superpowers@openai-curated\",\"marketplaceName\":\"openai-curated\",\"enabled\":true}]}'\n"
+                "  printf '%s\\n' '{\"installed\":[{\"pluginId\":\"superpowers@openai-api-curated\",\"marketplaceName\":\"openai-api-curated\",\"enabled\":true}]}'\n"
                 "  exit 0\n"
                 "fi\n"
                 "exit 1\n",
@@ -680,7 +680,7 @@ python3 bin/audit-codex-plugins.py
 codex plugin list --json
 ```
 
-Expected: the auditor exits 0; `superpowers@openai-curated` may be enabled; every installed plugin from a
+Expected: the auditor exits 0; `superpowers@openai-api-curated` may be enabled; every installed plugin from a
 default-deny marketplace is disabled unless explicitly `allow`. Disabled entries remain installed in the cache.
 Start a fresh session and confirm there is no SessionStart JSON error and no `learning-output-style` developer
 instruction. Do not enable `context7` or `serena` in this migration; their selection is a separate backlog item.

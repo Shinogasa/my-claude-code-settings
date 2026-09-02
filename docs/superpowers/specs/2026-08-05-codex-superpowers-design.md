@@ -17,15 +17,15 @@ Claude Code 側では superpowers を公式マーケットプレイス経由で�
 upstream の README は `/plugins` の対話 UI を案内しているが、CLI サブコマンドが存在する。
 
 ```bash
-codex plugin add superpowers@openai-curated
+codex plugin add superpowers@openai-api-curated
 ```
 
-`openai-curated` は Codex が自前で同期するスナップショット（`codex plugin marketplace list`
+`openai-api-curated` は Codex が自前で同期するスナップショット（`codex plugin list --json`
 に自動で現れる。`config.toml` への marketplace 登録は不要）。したがってこのセレクタは
 Codex CLI が入っているマシンなら追加設定なしで解決できる。
 
 `codex plugin list --json` は `installed[]` / `available[]` を返し、各要素が `pluginId`
-（例 `superpowers@openai-curated`）を持つ。冪等判定にはこれを使う。
+（例 `superpowers@openai-api-curated`）を持つ。冪等判定にはこれを使う。
 
 ### 2. Codex 版 superpowers は hook を同梱していない（本設計の中心的な制約）
 
@@ -44,7 +44,7 @@ Codex のプラグイン hook 機構自体は存在する。ただし `plugin.js
 
 - `hooks.json` を持つプラグイン: `figma` `replayio`（実在する。機構は生きている）
 - `plugin.json` に `hooks` 系キーを持つプラグイン: **ゼロ**（定義場所が別ファイルのため）
-- `superpowers` の導入実体（`~/.codex/plugins/cache/openai-curated/superpowers/<hash>/`）:
+- `superpowers` の導入実体（`~/.codex/plugins/cache/openai-api-curated/superpowers/1e285826/`）:
   `skills/` `assets/` `.codex-plugin/` のみ。**`hooks.json` は無い**
 
 つまり「Codex に hook 機構が無い」のではなく「**superpowers の Codex 配布物が hook を
@@ -60,7 +60,7 @@ Codex のプラグイン hook 機構自体は存在する。ただし `plugin.js
 | ホスト | マーケットプレイス | バージョン |
 |---|---|---|
 | Claude Code | `claude-plugins-official` | 6.2.0 |
-| Codex CLI | `openai-curated` | 5.1.3 |
+| Codex CLI | `openai-api-curated` | `1e285826` |
 
 skills のディレクトリ構成は 14 個で一致している。ワークフロー手順の細部に差がある可能性は
 あるが、本タスクでは追随しない（upstream の更新に任せる）。
@@ -126,7 +126,7 @@ Codex 側へ反映されなくなる。Claude Code は即時反映されるた�
 - 実行条件: `~/.codex` が存在し、かつ `codex` が PATH にあること。
   どちらか欠ける場合は警告を出してスキップする（`setup.sh` の主責務はリンク作成であり、
   プラグイン導入の失敗で全体を止めない）
-- 冪等性: `codex plugin list --json` の `installed[]` に `superpowers@openai-curated` が
+- 冪等性: `codex plugin list --json` の `installed[]` に `superpowers@openai-api-curated` が
   含まれていればスキップ。`codex plugin add` を無条件に叩かないのは、既導入時の終了コードが
   未確認で `set -euo pipefail` 下では全体停止のリスクがあるため
 - 導入済みかつユーザーが `enabled = false` にしている場合も `installed[]` には現れるため
@@ -156,11 +156,11 @@ hook 差分により発火方式が異なることを追記する。
 ## 検証手順
 
 1. `bash setup.sh` を実行し、プラグイン導入セクションが成功終了すること
-2. `codex plugin list --json` の `installed[]` に `pluginId: "superpowers@openai-curated"` が
+2. `codex plugin list --json` の `installed[]` に `pluginId: "superpowers@openai-api-curated"` が
    現れること
 3. `bash setup.sh` を再実行し、2 回目が「導入済み」としてスキップされること（冪等）
 4. `grep -c superpowers ~/.codex/AGENTS.md` が 1 以上を返すこと（リンク経由で節が届いている）
-5. `~/.codex/plugins/cache/openai-curated/superpowers/<hash>/skills/` に skills が
+5. `~/.codex/plugins/cache/openai-api-curated/superpowers/1e285826/skills/` に skills が
    展開されていること（Codex がスキャンする位置に実体があることの確認）
 
 ### 検証結果（2026-08-05 実施）
@@ -171,6 +171,6 @@ LLM ゲートウェイの予算上限超過（HTTP 429）で実行できず、�
 
 ## スコープ外
 
-- Codex 版（5.1.3）と Claude Code 版（6.2.0）のバージョン差の解消。upstream の更新に任せる
+- [Historical observation 2026-08-05] 当時のCodex版（5.1.3）とClaude Code版（6.2.0）のバージョン差の解消。現行Codex値は `openai-api-curated` / `1e285826` であり、この項目は当時のevidence boundaryとして保持する
 - `~/.codex/config.toml` 自体のリポジトリ管理。認証情報を含むため対象外
 - Codex 用の agents / hooks / output-styles の移植。形式が異なるため従来通り対象外

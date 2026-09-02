@@ -32,13 +32,14 @@ Codex plugin policyを次のように固定する。
 
 | plugin | 状態 | 理由 |
 |---|---|---|
-| `superpowers@openai-curated` | allow | Codex向け配布物で、skillsの利用を確認済み |
+| `superpowers@openai-api-curated` | allow | Codex向け配布物で、skillsの利用を確認済み |
 | `learning-output-style@claude-plugins-official` | deny | 自前学習モードと重複・競合する。コード参加だけ共有ruleへ統合する |
 | `security-guidance@claude-plugins-official` | deny | Claude固有の非同期hook契約でSessionStartが失敗する |
 | `claude-md-management@claude-plugins-official` | deny | `CLAUDE.md`だけを対象にし、Codexの`AGENTS.md`階層を扱わない |
 | `asana@claude-plugins-official` | deny | Codexで使える構成要素を確認できない |
 | `code-review@claude-plugins-official` | deny | Claude commandのみで、Codex標準reviewと重複する |
 | `gopls-lsp@claude-plugins-official` | deny | Go開発上の具体的な不足が出ておらず、公開仕様でのruntime契約も未確認 |
+| `atlassian@claude-plugins-official` | deny | Codexは `atlassian-http` を MCP として直接設定済みで、plugin版とは重複する |
 | `context7@claude-plugins-official` | review | 有用候補だが、Codex向け候補を個別評価するまで導入しない |
 | `serena@claude-plugins-official` | review | 有用候補だが、Codex向け候補を個別評価するまで導入しない |
 

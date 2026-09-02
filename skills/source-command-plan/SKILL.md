@@ -11,7 +11,8 @@ Use this skill when the user asks to run the migrated source command `plan`.
 
 # Plan Command
 
-This command invokes the **planner** agent to create a comprehensive implementation plan before writing any code.
+Create a comprehensive implementation plan before writing any code. Delegate the initial draft to a
+planning-capable subagent when the host provides one; otherwise create it in the current agent.
 
 ## What This Command Does
 
@@ -31,7 +32,7 @@ Use `/plan` when:
 
 ## How It Works
 
-The planner agent will:
+The planning agent will:
 
 1. **Analyze the request** and restate requirements in clear terms
 2. **Break down into phases** with specific, actionable steps
@@ -100,7 +101,9 @@ Agent (planner):
 
 ## Important Notes
 
-**CRITICAL**: The planner agent will **NOT** write any code until you explicitly confirm the plan with "yes" or "proceed" or similar affirmative response.
+**CRITICAL**: Do **NOT** write code until the user explicitly confirms the plan with "yes", "proceed",
+or a similar affirmative response. Use the host's blocking interaction mechanism when available; otherwise
+end the turn immediately after requesting confirmation. Never continue into implementation in the same response.
 
 If you want changes, respond with:
 - "modify: [your changes]"
@@ -110,15 +113,12 @@ If you want changes, respond with:
 ## Integration with Other Commands
 
 After planning:
-- Use `/tdd` to implement with test-driven development
-- Use `/build-fix` if build errors occur
-- Use `/code-review` to review completed implementation
-
-> **Need deeper planning?** Use `/prp-plan` for artifact-producing planning with PRD integration, codebase analysis, and pattern extraction. Use `/prp-implement` to execute those plans with rigorous validation loops.
+- Apply the `tdd-workflow` skill for test-driven implementation
+- Apply the `source-command-build-fix` skill if build errors occur
+- Use the host's native semantic review capability (Codex: `/review`)
+- Apply the `verification-loop` skill for deterministic quality gates
 
 ## Related Agents
 
-This command invokes the `planner` agent provided by ECC.
-
-For manual installs, the source file lives at:
-`agents/planner.md`
+When a planning-capable subagent is available, delegate only the plan draft and keep confirmation in the
+parent interaction. If no such subagent exists, the current agent performs the same steps directly.

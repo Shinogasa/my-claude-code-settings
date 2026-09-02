@@ -1,5 +1,5 @@
 ---
-adr: 5
+adr: 7
 date: 2026-08-21
 status: accepted
 ---

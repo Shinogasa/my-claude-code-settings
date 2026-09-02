@@ -28,7 +28,7 @@ bash setup.sh
 2. シンボリックリンクを `~/.claude/` 配下に作成
 3. `settings.json.template` から共通設定を `~/.claude/settings.json` へ生成（`.env` の有無に関わらず常に実行）
 4. `.env` が存在する場合のみ、`env.json.template` から生成した `env` ブロック（APIキー等）を追加マージ
-5. `~/.claude/settings.personal.json` を生成（[認証プロファイルの切り替え](#認証プロファイルの切り替え)用）
+5. `~/.claude/settings.personal.json` と `~/.codex/personal.config.toml` を生成（[認証プロファイルの切り替え](#認証プロファイルの切り替え)用）
 
 | リポジトリ | リンク先 | 内容 |
 |---|---|---|
@@ -38,7 +38,7 @@ bash setup.sh
 | `rules/` | `~/.claude/rules/` | 条件付きルール |
 | `agents/` | `~/.claude/agents/` | サブエージェント定義 |
 | `hooks/` | `~/.claude/hooks/` | 危険コマンドブロック等のhooksスクリプト（rtkフックはsettings.json.template側で管理） |
-| `bin/` | `~/.claude/bin/` | 起動ラッパー（`ccp` = 個人アカウントでの起動） |
+| `bin/` | `~/.claude/bin/` | 起動ラッパー（`ccp` / `cxp` = 個人アカウントでの起動） |
 | `statusline.js` | `~/.claude/statusline.js` | ステータスライン表示スクリプト |
 | `output-styles/` | `~/.claude/output-styles/` | カスタムアウトプットスタイル |
 | `claude-code-best-practice/` | `~/.claude/claude-code-best-practice/` | ベストプラクティス参照（submodule） |
@@ -54,7 +54,6 @@ bash setup.sh
 | リポジトリ | リンク先 | 備考 |
 |---|---|---|
 | `skills/` | `~/.agents/skills/` | Agent Skills オープン標準。Codex はスキャン時にシンボリックリンクを追従する |
-| `commands/` | `~/.codex/prompts/` | 現在は互換配線しているが、Codex custom prompts は deprecated。`skills/source-command-*` へ移行中 |
 | `rules/` | `~/.codex/rules/` | `AGENTS.md` から Markdown を相対参照するための配置。Codex の Starlark `.rules` とは別物 |
 | `CLAUDE.md` | `~/.codex/AGENTS.md` | Codex のグローバル指示 |
 | `hooks/` | `~/.codex/hooks/` | Claude Code と共有するhookスクリプト本体 |
@@ -62,6 +61,18 @@ bash setup.sh
 | `codex/agents/` | `~/.codex/agents/` | `agents/*.md` から生成したCodex TOML |
 
 `~/.agents/` は Codex が自動生成しないため、Codex 検出時に `setup.sh` が作成する。
+
+Codex custom prompts は deprecated のため、`commands/` は `~/.codex/prompts/` へ配布しない。
+Claude Codeでは既存commandを維持し、Codexでは次のnative機能または共有skillを使う。
+
+| Claude command | Codexの入口 |
+|---|---|
+| `code-review` | Codex組み込み `/review` |
+| `quality-gate` | `verification-loop` |
+| `verify` | `verification-loop` |
+| `tdd` | `tdd-workflow` |
+
+その他のcommandは `skills/source-command-*` として共有し、Codexのskill discoveryから利用する。
 
 ### Claude Code 向けプラグイン
 
@@ -80,13 +91,13 @@ bash setup.sh
 
 ### Codex CLI 向けプラグイン
 
-`setup.sh` は Codex 公式マーケットプレイス（`openai-curated`）から以下を冪等に導入する。
+`setup.sh` は Codex 公式マーケットプレイス（`openai-api-curated`）から以下を冪等に導入する。
 導入先は `~/.codex/config.toml` だが、同ファイルは認証情報を平文で持つためリポジトリ管理下には
 置かない。「リポジトリが状態を持つ」のではなく「冪等なコマンドを `setup.sh` が叩く」形にしている。
 
 | プラグイン | 備考 |
 |---|---|
-| `superpowers@openai-curated` | Claude Code 側は `settings.json.template` の `enabledPlugins` で管理 |
+| `superpowers@openai-api-curated` | Codex側のpolicyで管理 |
 
 導入済みのものはスキップする。ユーザーが `enabled = false` にした場合も「導入済み」と判定される
 ため、明示的な無効化を `setup.sh` が上書きすることはない。
@@ -120,8 +131,10 @@ Codex 側では無効化する。詳細と全プラグインの判定は
 
 ## 認証プロファイルの切り替え
 
-会社PCのように1台のマシンで「LiteLLM経由（業務）」と「個人Anthropicアカウント」を
-使い分けたい場合、起動コマンドで切り替えられる。
+会社PCのように1台のマシンで「業務のゲートウェイ経由」と「個人アカウント」を
+使い分けたい場合、起動コマンドで切り替えられる。Claude Code / Codex CLI の両方に用意してある。
+
+### Claude Code
 
 | コマンド | 接続先 | 仕組み |
 |---|---|---|
@@ -179,6 +192,66 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 
 詳細は `docs/superpowers/specs/2026-08-01-auth-profile-switching-design.md` を参照。
 
+### Codex CLI
+
+| コマンド | 接続先 | 仕組み |
+|---|---|---|
+| `codex` | LLM gateway経由（会社） | `~/.codex/config.toml` の `model_provider` がそのまま効く |
+| `cxp` | 個人ChatGPTアカウント | `codex -p personal` で `~/.codex/personal.config.toml` を重ね、`model_provider` を `openai` へ切り替える |
+
+初回は個人アカウントでのログインが要る（`~/.codex/auth.json` に入る）。
+
+```bash
+codex login          # 個人ChatGPTアカウントでログイン
+cxp                  # 個人アカウントで起動
+```
+
+会社経路は `auth.json` を読まない（`codex doctor` が
+`model provider requires OpenAI auth false` と報告する）ため、
+個人ログインを追加しても業務側には影響しない。`~/.codex` は共有のままでよい。
+
+現在どちらに繋がっているかは `codex doctor` の `default model provider` で確認する。
+
+#### 会社の MCP サーバは明示的に無効化する
+
+Codex のプロファイルは base 設定を**置き換えるのではなく重ねる**。プロファイルに書いて
+いない `[mcp_servers.*]` は個人セッションでもそのまま起動する（実測: プロファイル未記載の
+サーバが接続を試みた）。会社のゲートウェイ上にあるサーバや会社アカウントで認証するサーバが
+残ると、**個人作業が会社インフラを会社の鍵で叩く**。エラーも通知も出ないため気づけない。
+
+そのため `setup.sh` は `~/.codex/config.toml` の `[mcp_servers.*]` を全列挙し、
+**deny by default** でプロファイルを生成する。個人セッションで有効にするサーバだけを
+`codex/personal-mcp-allowlist.txt` に列挙する。
+
+各エントリには `enabled` に加え、HTTP サーバなら `url`、stdio サーバなら `command` を
+転記する。Codex CLI 0.151.0 の TUI が設定保存時に profile を単体検証するためである。
+認証ヘッダー、token 環境変数、引数、環境変数は転記せず、base から継承する。
+URL に userinfo、query、fragment がある場合は、endpoint と秘密値を安全に分離できないため
+生成を拒否する。個人 profile 側の MCP エントリも `{url, enabled}` または
+`{command, enabled}` 以外のキーがあれば `cxp` が起動前に拒否する。
+
+allowlist 外のサーバは継承した設定を持っていても `enabled = false` のため起動しない。
+allowlist へ追加したサーバは base の headers、token 環境変数、args、env も実行時に利用する。
+したがって allowlist への追加は、そのサーバの接続先と実行パラメータをまとめて信頼する判断である。
+
+生成後にサーバが追加・削除された場合、または `url` / `command` が変わった場合、
+`cxp` は起動前に不一致を検出し、`setup.sh` の再実行を促して停止する。
+
+**検査の範囲**: `config.toml` の `[mcp_servers.*]` のみ。プラグイン marketplace 由来の
+MCP サーバ（`~/.codex/plugins/` 配下で定義され `codex mcp list` には出る）は
+`config.toml` に現れないため、この生成にも検査にも**含まれない**。
+plugin 由来のサーバを有効化する場合は、その素性を自分で確認すること。
+
+#### 設計上の判断
+
+`claude` / `ccp` と同じ向きにしてある。素の `codex` を会社設定のままにするのは、
+逆向きにするとシェル統合が読み込まれなかったときに `codex` が黙って個人アカウントで
+動くため。この向きなら `cxp: command not found` で気づける。
+
+加えて Codex 固有の事情がある。`codex -p` は**存在しないプロファイル名を渡しても
+エラーにせず base 設定で起動する**（実測: exit 0、provider は会社のまま）。
+`cxp` はプロファイルの実在を自分で検査して落とす。
+
 ## ディレクトリ構成
 
 ```
@@ -235,7 +308,8 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 │   ├── guard-dangerous-bash.sh  #   PreToolUse(Bash)フックのエントリポイント
 │   └── guard-dangerous-bash.py  #   危険コマンド判定の実処理
 ├── bin/                         # 起動ラッパー（PATHを通して使う）
-│   └── ccp                      #   個人Anthropicアカウントで起動する
+│   ├── ccp                      #   個人Anthropicアカウントで Claude Code を起動する
+│   └── cxp                      #   個人ChatGPTアカウントで Codex CLI を起動する
 ├── output-styles/               # カスタムアウトプットスタイル
 │   ├── review-and-design.md     #   Review & Design（コードレビュー・設計判断特化）
 │   └── fast.md                  #   高速実行（説明最小限）
