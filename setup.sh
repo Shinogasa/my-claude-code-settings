@@ -285,6 +285,10 @@ validate_sources() {
     red "Codex 個人プロファイル生成スクリプトが存在しません"
     return 1
   fi
+  if selected_codex && [ ! -f "$SCRIPT_DIR/bin/configure_codex_signing.py" ]; then
+    red "Codex SSH署名設定スクリプトが存在しません"
+    return 1
+  fi
 }
 
 recorded_checksum() {
@@ -754,6 +758,20 @@ audit_codex_plugins() {
   fi
 }
 
+setup_codex_signing() {
+  local signing_status
+  if python3 "$SCRIPT_DIR/bin/configure_codex_signing.py" "$CODEX_DIR/config.toml"; then
+    yellow 'Codexの新しいセッションへBitwarden SSH署名設定を反映するため、既存セッションを再起動してください。'
+    return
+  else
+    signing_status=$?
+  fi
+  if [ "$signing_status" -eq 10 ]; then
+    return
+  fi
+  record_failure 'host=codex signing operation=configure retry: python3 bin/configure_codex_signing.py'
+}
+
 validate_host_directories || exit 1
 build_targets
 validate_sources true || exit 1
@@ -800,6 +818,7 @@ if selected_claude; then
   setup_claude_plugins
 fi
 if selected_codex; then
+  setup_codex_signing
   audit_codex_plugins
   yellow 'Codex hooks を配置しました。trust state は変更していません。/hooks で review して承認してください。'
 fi

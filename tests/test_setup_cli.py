@@ -140,6 +140,32 @@ class SetupCliTests(unittest.TestCase):
             (self.repository / "codex" / "RTK.md").resolve(),
         )
 
+    def test_codex_setup_reports_signing_skip_without_config(self):
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SSH署名設定をスキップ", result.stderr)
+
+    def test_codex_setup_preserves_config_when_bitwarden_agent_is_unavailable(self):
+        (self.home / ".codex").mkdir()
+        config = self.home / ".codex" / "config.toml"
+        original = (
+            'model = "gpt-test"\n'
+            '[private]\n'
+            'token = "must-stay-local"\n'
+            '[shell_environment_policy.set]\n'
+            'SSH_AUTH_SOCK = "/tmp/old-agent.sock"\n'
+        )
+        config.write_text(original, encoding="utf-8")
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(config.read_text(encoding="utf-8"), original)
+        self.assertIn("agentの鍵を確認できない", result.stderr)
+
     def test_codex_setup_generates_transport_complete_mcp_entries(self):
         (self.home / ".codex").mkdir()
         (self.home / ".codex" / "config.toml").write_text(

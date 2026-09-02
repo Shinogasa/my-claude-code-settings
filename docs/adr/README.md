@@ -80,3 +80,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0006](0006-codex-personal-profile-standalone-mcp-transport.md) | Codex個人プロファイルのMCP定義を単体検証可能にする | 2026-09-01 | accepted |
 | [0007](0007-learning-mode-decision-layer-gate.md) | 判断点を層で選別し、実装レベルの経験は定石欄で供給する | 2026-08-21 | accepted |
 | [0008](0008-codex-rtk-prompt-integration.md) | CodexのRTK統合を指示アダプターで管理する | 2026-09-02 | accepted |
+| [0009](0009-codex-bitwarden-signing-agent.md) | Codex子プロセスへBitwarden SSH agentを配布する | 2026-09-03 | accepted |
