@@ -59,10 +59,11 @@ enumerate() {
 }
 
 # 自分自身と祖先の pid 集合を作る。
+# 直接親は sandbox で ps が拒否されても取れる PPID を使い、ps はそれより上を補完する。
 # comm 名の一致に依存しないため claude が node 等で動いていても効き、
 # pgrep が祖先を返すかどうかにも依存しない。
-ancestors=" $$ "
-p=$$
+ancestors=" $$ $PPID "
+p=$PPID
 while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null; do
   p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
   [ -n "$p" ] && ancestors="${ancestors}${p} "

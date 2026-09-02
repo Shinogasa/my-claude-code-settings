@@ -102,5 +102,6 @@ Future extensions: [この判断が将来に与える影響]
 - ユーザーが明確に急いでいる場合は教育要素を最小限にする
 - 基礎的すぎる説明はしない（ミドルエンジニアとして扱う）
 - 全てのコード変更にReviewブロックを付けない（意味のある変更のみ）
-- TODO(human) や ★ Insight は learning-output-style プラグインが管理するため、このスタイルでは出力しない
-- ★ Predict / ★ Delta（rules/learning-mode.md）が発動する場合、質問プロンプトは省略する
+- コード参加・★ Predict・★ Delta は `rules/learning-mode.md` が管理するため、このスタイルでは重複させない
+- ★ Insight は ★ Delta と役割が重複するため出力しない
+- ★ Predict / ★ Delta が発動する場合、質問プロンプトは省略する

@@ -20,7 +20,7 @@ HOOK = REPO_ROOT / "hooks" / "detect-parallel-sessions.sh"
 
 
 def git(cwd, *args):
-    subprocess.run(["git", "-C", str(cwd), *args], check=True,
+    subprocess.run(["git", "-c", "commit.gpgSign=false", "-c", "core.hooksPath=/dev/null", "-C", str(cwd), *args], check=True,
                    capture_output=True, text=True)
 
 
@@ -56,6 +56,21 @@ def run_hook(cwd, detect_cmd, exclude_path):
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.strip()
+
+
+def run_hook_with_default_detect(cwd, home):
+    payload = {"hook_event_name": "SessionStart", "source": "startup"}
+    env = dict(os.environ)
+    env["HOME"] = str(home)
+    env["PARALLEL_SESSIONS_EXCLUDE_PATH"] = str(home / "missing-rules")
+    env["CODEX_DETECT_CALLED"] = str(home / "codex-detector-called")
+    env["CLAUDE_DETECT_CALLED"] = str(home / "claude-detector-called")
+    result = subprocess.run(
+        ["bash", str(HOOK)], input=json.dumps(payload), capture_output=True,
+        text=True, cwd=str(cwd), env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip(), Path(env["CODEX_DETECT_CALLED"])
 
 
 # 通知が無いときは stdout に何も出さない。
@@ -106,6 +121,28 @@ class TestHook(unittest.TestCase):
     def test_silent_when_detect_command_missing(self):
         missing = Path(self._tmp.name) / "no-such-command"
         self.assertEqual(run_hook(self.repo, missing, self.settings_repo), QUIET)
+
+    def test_resolves_codex_detector_before_claude_detector(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            home = Path(temporary_directory) / "home"
+            codex_detector = home / ".codex" / "bin" / "detect-parallel-sessions"
+            codex_detector.parent.mkdir(parents=True)
+            codex_detector.write_text(
+                "#!/bin/sh\nprintf 'called' > \"$CODEX_DETECT_CALLED\"\nprintf '%s' '[]'\n",
+                encoding="utf-8",
+            )
+            codex_detector.chmod(0o755)
+            claude_detector = home / ".claude" / "bin" / "detect-parallel-sessions"
+            claude_detector.parent.mkdir(parents=True)
+            claude_detector.write_text(
+                "#!/bin/sh\nprintf 'called' > \"$CLAUDE_DETECT_CALLED\"\nprintf '%s' '[]'\n",
+                encoding="utf-8",
+            )
+            claude_detector.chmod(0o755)
+            output, called = run_hook_with_default_detect(self.repo, home)
+            self.assertEqual(output, QUIET)
+            self.assertEqual(called.read_text(encoding="utf-8"), "called")
+            self.assertFalse((home / "claude-detector-called").exists())
 
 
 if __name__ == "__main__":

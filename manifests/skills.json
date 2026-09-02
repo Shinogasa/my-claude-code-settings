@@ -1,0 +1,30 @@
+{
+    "schemaVersion": 1,
+    "shared": [
+        "api-design",
+        "architecture-decision-records",
+        "backend-patterns",
+        "coding-standards",
+        "database-migrations",
+        "deployment-patterns",
+        "grill-me",
+        "hexagonal-architecture",
+        "security-review",
+        "source-command-aside",
+        "source-command-build-fix",
+        "source-command-explain",
+        "source-command-feature-dev",
+        "source-command-plan",
+        "source-command-pr-create",
+        "source-command-refactor-clean",
+        "source-command-test-coverage",
+        "tdd-workflow",
+        "verification-loop"
+    ],
+    "claude": [
+        "claude-code-best-practice"
+    ],
+    "codex": [
+        "codex-cli-best-practice"
+    ]
+}

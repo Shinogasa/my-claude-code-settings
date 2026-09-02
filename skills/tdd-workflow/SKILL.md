@@ -17,6 +17,8 @@ This skill ensures all code development follows TDD principles with comprehensiv
 - Adding API endpoints
 - Creating new components
 
+Invoke `tdd-workflow` directly as a skill. Do not depend on a host-specific slash-command shim.
+
 ## The Iron Law
 
 ```

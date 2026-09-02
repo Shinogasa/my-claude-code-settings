@@ -172,3 +172,36 @@ fail-close かを確認せよ」という警告と着手条件が明記されて
 「追記するために開く」のではなく、**「同じことが既に調べられていないか」を
 最初に確かめる**。設定リポジトリでは特に、過去の自分が既に踏んだ地雷が
 文書化されている可能性が高い。
+
+### 2026-08-26 | preflight後の非原子的な更新でraceを残した
+
+**間違えた内容:**
+適用直前にpathのfingerprintを再検査すれば安全だと考え、検査後は
+`os.replace`、hardlinkでは`copy2`→`unlink`を別操作として実行した。
+その間にpathを差し替えられると、検査していない新しいfileを上書き・削除できた。
+
+**指摘・修正:**
+レビューで各filesystem操作の間へ更新を差し込む再現が示された。
+現行pathを先に同一filesystem内へatomic renameしてinodeを固定し、隔離後に
+fingerprintを検証した。新規配置はno-overwriteの`os.link`を使い、遅延fileを保持した。
+
+**教訓:**
+ユーザー所有pathを守るとき、preflightとmutationを一つの安全境界として扱わない。
+「検査→破壊的操作」の間へ更新を差し込むテストを作り、検証対象inodeをatomic操作で
+固定する。比較と更新が別syscallなら、直前検査でもTOCTOUは残る。
+
+### 2026-08-28 | PUBLIC証跡へ実HOMEの絶対パスを書いた
+
+**間違えた内容:**
+runtime証跡へactive hook sourceを正確に残そうとして、個人ユーザー名を含む実HOMEの
+絶対パスを2箇所書いた。commit hookがPUBLICリポジトリの禁止パターンとしてブロックした。
+
+**指摘・修正:**
+sourceの意味を失わない`~/.codex/hooks.json`表記へ一般化し、同じ禁止パターンが
+diffに残っていないことを再検査した。
+
+**教訓:**
+PUBLICな証跡では、hashやstatusの正確さと端末固有pathの転記を分離する。
+実HOME、ユーザー名、一時ディレクトリは、再現に不可欠でない限り`~`や役割名へ
+一般化してからstageする。commit hookだけに頼らず、docs差分の禁止パターン検査を
+commit前チェックへ含める。
