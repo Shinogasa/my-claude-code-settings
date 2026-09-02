@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Codex の Bitwarden SSH agent 設定ヘルパーを検証する。"""
 import importlib.util
+import io
 import os
-import socket
 import stat
-import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,17 +19,17 @@ spec = importlib.util.spec_from_file_location("configure_codex_signing", SCRIPT)
 if spec is None or spec.loader is None:
     raise ImportError(f"failed to load {SCRIPT}")
 signing = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = signing
 spec.loader.exec_module(signing)
 
 
 @contextmanager
 def bound_unix_socket(path: Path):
-    agent_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    agent_socket.bind(str(path))
+    # sandboxではAF_UNIXのbindが禁止されるため、agent検査は個別にmockする。
+    path.touch()
     try:
         yield
     finally:
-        agent_socket.close()
         path.unlink(missing_ok=True)
 
 
@@ -58,19 +59,15 @@ class CodexSigningTests(unittest.TestCase):
         ssh_add.chmod(0o755)
 
     def run_helper(self, *extra_args: str):
-        environment = os.environ.copy()
-        environment.update(
-            {
-                "HOME": str(self.home),
-                "PATH": f"{self.bin}{os.pathsep}{environment['PATH']}",
-            }
-        )
-        return subprocess.run(
-            [sys.executable, str(SCRIPT), str(self.config), *extra_args],
-            text=True,
-            capture_output=True,
-            env=environment,
-            check=False,
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(signing, "_probe_agent", return_value=True):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                returncode = signing.main([str(self.config), *extra_args])
+        return SimpleNamespace(
+            returncode=returncode,
+            stdout=stdout.getvalue(),
+            stderr=stderr.getvalue(),
         )
 
     def test_updates_only_target_key_and_preserves_comments_and_unrelated_values(self):
@@ -141,10 +138,18 @@ class CodexSigningTests(unittest.TestCase):
     def test_skips_without_agent_identity_and_does_not_mutate_config(self):
         original = '[shell_environment_policy.set]\nSSH_AUTH_SOCK = "/tmp/old.sock"\n'
         self.config.write_text(original, encoding="utf-8")
-        self.install_ssh_add(exit_code=1)
 
         with bound_unix_socket(self.socket_path):
-            result = self.run_helper("--socket", str(self.socket_path))
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with patch.object(signing, "_probe_agent", return_value=False):
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    returncode = signing.main([str(self.config), "--socket", str(self.socket_path)])
+            result = SimpleNamespace(
+                returncode=returncode,
+                stdout=stdout.getvalue(),
+                stderr=stderr.getvalue(),
+            )
 
         self.assertEqual(result.returncode, signing.SKIPPED_EXIT)
         self.assertEqual(self.config.read_text(encoding="utf-8"), original)
@@ -178,6 +183,22 @@ class CodexSigningTests(unittest.TestCase):
         expected = self.home / "Library/Containers/com.bitwarden.desktop/Data/.bitwarden-ssh-agent.sock"
         self.assertEqual(signing.discover_socket(self.home, system="Darwin"), expected)
         self.assertIsNone(signing.discover_socket(self.home, system="Linux"))
+
+    def test_agent_probe_suppresses_agent_output(self):
+        self.install_ssh_add()
+        with bound_unix_socket(self.socket_path):
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with patch.object(Path, "is_socket", return_value=True):
+                with patch.dict(
+                    os.environ,
+                    {"PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}"},
+                ):
+                    with redirect_stdout(stdout), redirect_stderr(stderr):
+                        available = signing._probe_agent(self.socket_path)
+        self.assertTrue(available)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue(), "")
 
 
 if __name__ == "__main__":
