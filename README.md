@@ -37,7 +37,7 @@ bash setup.sh
 | `commands/` | `~/.claude/commands/` | カスタムスラッシュコマンド |
 | `rules/` | `~/.claude/rules/` | 条件付きルール |
 | `agents/` | `~/.claude/agents/` | サブエージェント定義 |
-| `hooks/` | `~/.claude/hooks/` | 危険コマンドブロック等のhooksスクリプト（rtkフックはsettings.json.template側で管理） |
+| `hooks/` | `~/.claude/hooks/` | 危険コマンドブロック等のhooksスクリプト（Claude向けrtkフックはsettings.json.template側で管理） |
 | `bin/` | `~/.claude/bin/` | 起動ラッパー（`ccp` = 個人アカウントでの起動） |
 | `statusline.js` | `~/.claude/statusline.js` | ステータスライン表示スクリプト |
 | `output-styles/` | `~/.claude/output-styles/` | カスタムアウトプットスタイル |
@@ -56,6 +56,7 @@ bash setup.sh
 | `skills/` | `~/.agents/skills/` | Agent Skills オープン標準。Codex はスキャン時にシンボリックリンクを追従する |
 | `rules/` | `~/.codex/rules/` | `AGENTS.md` から Markdown を相対参照するための配置。Codex の Starlark `.rules` とは別物 |
 | `CLAUDE.md` | `~/.codex/AGENTS.md` | Codex のグローバル指示 |
+| `codex/RTK.md` | `~/.codex/RTK.md` | RTK公式のCodex向けシェル指示 |
 | `hooks/` | `~/.codex/hooks/` | Claude Code と共有するhookスクリプト本体 |
 | `codex/hooks.json` | `~/.codex/hooks.json` | Codex向けのイベント配線。`/hooks` で定義ごとの承認が必要 |
 | `codex/agents/` | `~/.codex/agents/` | `agents/*.md` から生成したCodex TOML |
@@ -73,6 +74,25 @@ Claude Codeでは既存commandを維持し、Codexでは次のnative機能また
 | `tdd` | `tdd-workflow` |
 
 その他のcommandは `skills/source-command-*` として共有し、Codexのskill discoveryから利用する。
+
+### Codex CLI の RTK
+
+RTK 0.45.0 の公式Codex統合は、Claude Codeの`PreToolUse` hookとは異なり、
+`AGENTS.md`から`RTK.md`を読ませてCodex自身に`rtk`付きのコマンドを選ばせる方式である。
+このリポジトリでは`~/.codex/AGENTS.md`をsymlink管理しているため、
+`rtk init --global --codex`でホームを直接書き換えず、同等の指示を`codex/RTK.md`として管理し、
+`setup.sh --codex`で`~/.codex/RTK.md`へリンクする。反映には新しいCodexセッションが必要。
+
+`rtk`経由でコマンドが実行された場合の圧縮処理はClaude Codeと共通で、同じトークン節約を得られる。
+ただしCodex側はモデルが指示に従うことが前提で、hookによる強制書き換えではない。
+また公式の「最大90%」は対応シェルコマンドの**出力バイト数**の削減率であり、セッション全体の
+トークン消費や料金の削減率ではない。実績は`rtk gain`、フィルターなしの出力は
+`rtk proxy <command>`で確認する。失敗時の全出力は既定でローカルへ保存されるため、
+機密を含むコマンドではRTKのtee設定と保存先も確認する。
+
+コンテナ側は`cw-workspace-local`がRTKバイナリの導入を担当する。このリポジトリは
+`~/.codex`へ指示ファイルを配布し、コンテナがそのディレクトリをmountすることで設定を共有する。
+責務と却下案は[ADR 0005](docs/adr/0005-codex-rtk-prompt-integration.md)に記録した。
 
 ### Claude Code 向けプラグイン
 
@@ -120,6 +140,7 @@ Codex 側では無効化する。詳細と全プラグインの判定は
 |---|---|
 | `agents/` | Markdownを正本にし、`bin/generate-codex-agents.py` で `codex/agents/*.toml` を生成する。実機spawnは未検証 |
 | `hooks/` | スクリプト本体は共有し、イベント定義を `settings.json.template` と `codex/hooks.json` に分ける |
+| RTK | Claudeは`PreToolUse` hook、Codexは`AGENTS.md` + `RTK.md`の公式方式を使う |
 | `output-styles/` | Codexへ直接は配らない。必要な挙動をAGENTS、skills、plugin hooksへ分解する |
 | `statusline.js` | Claude payload専用。Codexには組み込み `/statusline` があるため別設定として扱う |
 | `settings.json` | Codexは `~/.codex/config.toml`。認証値を含むためファイル全体をリポジトリ管理しない |
@@ -232,6 +253,7 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 │   ├── build-error-resolver.md  #   ビルドエラー解決
 │   └── silent-failure-hunter.md #   サイレント障害検出
 ├── codex/                       # Codex固有アダプター
+│   ├── RTK.md                   #   RTK公式のCodex向けシェル指示
 │   ├── agents/                  #   agents/*.mdから生成したTOML
 │   └── hooks.json               #   Codex向けhookイベント定義
 ├── rules/                       # 常時適用ルール
@@ -242,7 +264,7 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 │   ├── ecc-coding-style.md      #   コーディングスタイル
 │   ├── ecc-development-workflow.md  # 開発ワークフロー
 │   └── ecc-testing.md           #   テスト要件
-├── hooks/                       # 危険コマンドブロック等のhooksスクリプト（rtkフックはsettings.json.template側で管理）
+├── hooks/                       # 危険コマンドブロック等のhooksスクリプト（Claude向けrtkフックはsettings.json.template側で管理）
 │   ├── guard-dangerous-bash.sh  #   PreToolUse(Bash)フックのエントリポイント
 │   └── guard-dangerous-bash.py  #   危険コマンド判定の実処理
 ├── bin/                         # 起動ラッパー（PATHを通して使う）
