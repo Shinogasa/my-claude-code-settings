@@ -515,6 +515,31 @@ class SetupPreflightTests(unittest.TestCase):
         self.assertEqual(backups[0].read_text(encoding="utf-8"), "unowned\n")
         self.assertTrue(agent_skill.is_symlink())
 
+    def test_codex_rejects_agent_skills_parent_symlink_to_repository(self):
+        agent_skills = self.home / ".agents" / "skills"
+        agent_skills.parent.mkdir()
+        agent_skills.symlink_to(self.repository / "skills", target_is_directory=True)
+
+        result = run_setup(
+            self.repository,
+            self.home,
+            "--codex",
+            "--replace-conflicts",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(str(agent_skills), result.stderr)
+        self.assertTrue(agent_skills.is_symlink())
+        self.assertEqual(
+            agent_skills.resolve(),
+            (self.repository / "skills").resolve(),
+        )
+        self.assertTrue(
+            (self.repository / "skills" / "api-design" / "SKILL.md").is_file()
+        )
+        self.assertFalse((self.home / ".codex" / "backups").exists())
+        self.assertFalse((self.home / ".codex" / "AGENTS.md").exists())
+
     def test_actual_setup_keeps_correct_link_and_rejects_wrong_link_without_plugins(self):
         first = run_setup(self.repository, self.home, "--claude")
         self.assertEqual(first.returncode, 0, first.stderr)

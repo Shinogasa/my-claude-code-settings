@@ -388,6 +388,42 @@ validate_directory_path() {
   done
 }
 
+validate_link_target_topology() {
+  local index
+  for index in "${!TARGET_SOURCES[@]}"; do
+    [ "${TARGET_GENERATED[$index]}" = false ] || continue
+    python3 - "${TARGET_SOURCES[$index]}" "${TARGET_DESTINATIONS[$index]}" <<'PY' || return 1
+from pathlib import Path
+import sys
+
+source, destination = (Path(value) for value in sys.argv[1:])
+try:
+    source_resolved = source.resolve(strict=False)
+    destination_parent = destination.parent.resolve(strict=False)
+except (OSError, RuntimeError) as error:
+    print(
+        f"link path resolution failed: {destination}: {error}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+# 宛先の親がソース配下を指すと、ln -s がソース自身へ自己参照リンクを作る。
+candidate = destination_parent / destination.name
+if (
+    candidate == source_resolved
+    or candidate.is_relative_to(source_resolved)
+    or source_resolved.is_relative_to(candidate)
+):
+    print(
+        "link source and destination overlap after symlink resolution: "
+        f"source={source} destination={destination}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+PY
+  done
+}
+
 validate_state_path() {
   local path
   path="$(state_path "$1")"
@@ -405,6 +441,7 @@ validate_apply_paths() {
   for index in "${!TARGET_DESTINATIONS[@]}"; do
     validate_directory_path "$(dirname "${TARGET_DESTINATIONS[$index]}")" || return 1
   done
+  validate_link_target_topology || return 1
   if selected_claude; then
     validate_state_path claude || return 1
   fi
