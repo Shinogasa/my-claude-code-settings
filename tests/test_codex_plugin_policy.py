@@ -14,6 +14,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / "codex" / "plugin-policy.json"
 AUDITOR_PATH = ROOT / "bin" / "audit-codex-plugins.py"
+README_PATH = ROOT / "README.md"
+COMPATIBILITY_AUDIT_PATH = ROOT / "docs" / "codex-compatibility-audit.md"
 
 
 def load_auditor():
@@ -242,6 +244,26 @@ class CodexPluginPolicyTests(unittest.TestCase):
         source = AUDITOR_PATH.read_text(encoding="utf-8")
         for mutation in ("enable", "disable", "remove", "install"):
             self.assertNotIn(f'"{mutation}"', source)
+
+
+class CodexPluginDocumentationTests(unittest.TestCase):
+    """Codex pluginの現行管理経路を文書が説明していることを検証する。"""
+
+    def test_docs_describe_audit_only_setup(self):
+        readme = README_PATH.read_text(encoding="utf-8")
+        audit = COMPATIBILITY_AUDIT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("読み取り専用監査", readme)
+        self.assertIn("bin/audit-codex-plugins.py", readme)
+        self.assertIn("bash setup.sh --claude", readme)
+        self.assertIn("bash setup.sh --codex", readme)
+        self.assertIn("bash setup.sh --all", readme)
+        self.assertNotIn("cd my-claude-code-settings\nbash setup.sh\n", readme)
+        self.assertNotIn("公式マーケットプレイス（`openai-api-curated`）から以下を冪等に導入する", readme)
+        self.assertNotIn("導入済みのものはスキップする", readme)
+
+        self.assertIn("setup.sh --codex", audit)
+        self.assertIn("plugin stateを変更しない", audit)
 
 
 if __name__ == "__main__":
