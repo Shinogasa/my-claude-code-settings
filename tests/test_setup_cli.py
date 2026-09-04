@@ -148,6 +148,17 @@ class SetupCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("SSH署名設定をスキップ", result.stderr)
 
+    def test_codex_setup_audits_without_mutating_plugin_state(self):
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commands = (self.home.parent / "commands.log").read_text(encoding="utf-8")
+        self.assertIn("codex plugin list --json", commands)
+        self.assertNotIn("codex plugin add", commands)
+        self.assertNotIn("codex plugin remove", commands)
+
     def test_codex_setup_preserves_config_when_bitwarden_agent_is_unavailable(self):
         (self.home / ".codex").mkdir()
         config = self.home / ".codex" / "config.toml"
