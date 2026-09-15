@@ -8,8 +8,16 @@
 ```bash
 git clone --recursive <this-repo>
 cd my-claude-code-settings
-bash setup.sh
+# Claude Codeだけを設定する
+bash setup.sh --claude
+# Codex CLIだけを設定する
+bash setup.sh --codex
+# 両方を設定する
+bash setup.sh --all
 ```
+
+対象ホストを一度起動して `~/.claude/` または `~/.codex/` を作成してから、対象のセレクタを指定する。
+`setup.sh` は `--claude`、`--codex`、`--all` のいずれかを必須とする。
 
 `.env` はLiteLLM等のAPIキー経由でClaude Codeを利用する場合（会社PC等）のみ必要。
 個人のAnthropicアカウント（Pro/Maxプランの通常ログイン）を使う場合は `.env` 不要で、
@@ -19,16 +27,17 @@ bash setup.sh
 # LiteLLM/APIキー経由で使う場合のみ
 cp .env.example .env
 # .env を編集して ANTHROPIC_AUTH_TOKEN 等を設定
-bash setup.sh
+bash setup.sh --claude
 ```
 
-`setup.sh` は以下を実行する：
+`setup.sh` は選択したホストだけを対象に、以下を実行する：
 
 1. git submodule の初期化・更新
-2. シンボリックリンクを `~/.claude/` 配下に作成
-3. `settings.json.template` から共通設定を `~/.claude/settings.json` へ生成（`.env` の有無に関わらず常に実行）
-4. `.env` が存在する場合のみ、`env.json.template` から生成した `env` ブロック（APIキー等）を追加マージ
-5. `~/.claude/settings.personal.json` と `~/.codex/personal.config.toml` を生成（[認証プロファイルの切り替え](#認証プロファイルの切り替え)用）
+2. 選択したホストの設定ディレクトリへシンボリックリンクを作成
+3. Claudeを選択した場合、`settings.json.template` から `~/.claude/settings.json` を生成し、
+   `.env` が存在すれば `env` ブロック（APIキー等）を追加マージ
+4. Claudeを選択した場合、`~/.claude/settings.personal.json` を生成する
+5. Codexを選択した場合、`~/.codex/personal.config.toml` を生成する（[認証プロファイルの切り替え](#認証プロファイルの切り替え)用）
 
 | リポジトリ | リンク先 | 内容 |
 |---|---|---|
@@ -43,13 +52,15 @@ bash setup.sh
 | `output-styles/` | `~/.claude/output-styles/` | カスタムアウトプットスタイル |
 | `claude-code-best-practice/` | `~/.claude/claude-code-best-practice/` | ベストプラクティス参照（submodule） |
 
-- 何度実行しても安全（冪等）
-- 既存ファイルは `~/.claude/backups/` に自動バックアップ
+- 所有権を確認できる管理対象は何度実行しても安全（冪等）
+- 未管理の既存ファイルとの衝突は、通常は変更せず停止する
+- `--replace-conflicts` を指定した場合だけ、選択ホストごとのbackupへ退避して置換する
 
 ### Codex CLI 向けリンク
 
-`~/.codex/` が存在する場合のみ、同じソースを Codex 向けにもリンクする（内容は二重管理しない）。
-未導入マシンでは何も作成せず、スキップした旨を表示する。
+`--codex` または `--all` を選んだ場合、`~/.codex/` が存在することを事前に検査してから、
+同じソースを Codex 向けにもリンクする（内容は二重管理しない）。未導入マシンでは設定を変更せず、
+Codexを一度起動してから再実行するようエラーを表示する。`--claude` だけならCodex側へは触れない。
 
 | リポジトリ | リンク先 | 備考 |
 |---|---|---|
@@ -139,28 +150,46 @@ git log --show-signature --format='%G?' -n 5
 
 ### Codex CLI 向けプラグイン
 
-`setup.sh` は Codex 公式マーケットプレイス（`openai-api-curated`）から以下を冪等に導入する。
-導入先は `~/.codex/config.toml` だが、同ファイルは認証情報を平文で持つためリポジトリ管理下には
-置かない。「リポジトリが状態を持つ」のではなく「冪等なコマンドを `setup.sh` が叩く」形にしている。
+`setup.sh --codex` は Codex プラグインの導入・更新・削除・有効化を行わない。
+Codex側のプラグイン状態は Codex CLI のユーザー設定（主に `~/.codex/config.toml`）と
+ローカルキャッシュで管理されるため、これらはGit管理しない。
+
+このリポジトリが管理するのは、実行を許可するプラグインの方針である。
+`codex/plugin-policy.json` は `superpowers@openai-api-curated` を明示的に許可し、
+`claude-plugins-official` をdefault denyとする。`review`も実行許可ではなく、個別評価が
+終わるまで無効として扱う。
 
 | プラグイン | 備考 |
 |---|---|
 | `superpowers@openai-api-curated` | Codex側のpolicyで管理 |
 
-導入済みのものはスキップする。ユーザーが `enabled = false` にした場合も「導入済み」と判定される
-ため、明示的な無効化を `setup.sh` が上書きすることはない。
+`bin/audit-codex-plugins.py` は `codex plugin list --json` の現在状態を読み取り、policy違反を
+報告する読み取り専用監査である。`setup.sh --codex` もリンク配置後にこの監査を実行するだけで、
+Codex側のプラグイン状態を変更しない。違反があれば対象IDを表示して非ゼロ終了する。
 
-Codex の `/import` は、Claude Code 側のプラグインを Codex のローカル設定へ取り込むことがある。
-取り込まれた enabled 状態は Claude 側と独立して残り、Claude 側で無効化しても自動では止まらない。
-特に `security-guidance@claude-plugins-official` 2.0.7 は Claude 固有の非同期hook契約に依存するため、
-Codex 側では無効化する。詳細と全プラグインの判定は
+プラグインの操作はCodex側で行う。
+
+- `/plugins` でインストール・有効化・無効化する
+- `codex plugin add <plugin>@<marketplace>` でインストールする
+- `codex plugin marketplace upgrade` でマーケットプレイスのスナップショットを更新する
+- `codex plugin list --json` で現在の状態を確認する
+- `codex plugin remove <plugin>@<marketplace>` でキャッシュを含めて削除する
+
+操作後は `python3 bin/audit-codex-plugins.py` または `bash setup.sh --codex` で監査する。
+意図的にCodexの許可対象を変える場合だけ `codex/plugin-policy.json` を編集してコミットする。
+Codexのプラグイン状態をこのリポジトリへ自動同期する経路は設けていない。
+
+Codex のプラグイン状態は Claude Code 側の `settings.json.template` と独立している。
+Claude側で有効化・無効化してもCodexへ自動同期されない。特に
+`security-guidance@claude-plugins-official` は Claude 固有の非同期hook契約に依存するため、
+Codex側ではpolicyで無効とする。詳細と全プラグインの判定は
 [Codex互換性監査](docs/codex-compatibility-audit.md)を参照。
 
 **発火方式がホストで異なる。** Claude Code 版は SessionStart hook が `using-superpowers` を
-自動注入するが、Codex 版の配布物は hook を同梱していないため、skills がインデックスに載るだけで
-自動発火しない（Codex 自体はプラグイン直下の `hooks.json` で hook を定義でき、他のプラグインは
-実際に使っている。superpowers が使っていないだけ）。この差は `CLAUDE.md` の
-`## superpowers` 節（＝ `~/.codex/AGENTS.md`）でホスト別に併記して埋めている。
+自動注入する。Codex 版の公式配布物自体は hook を同梱していないが、このリポジトリの
+`codex/hooks.json` と `hooks/inject-superpowers.sh` がCodexのSessionStartで
+`superpowers:using-superpowers` の読込指示を注入する。プラグインの導入経路と、
+リポジトリで管理するhook配線は別の責務として扱う。
 
 **ホスト別アダプターで扱う資産**
 
@@ -481,7 +510,7 @@ paths:
 
 ### 有効化
 
-`bash setup.sh` が `core.hooksPath` を `.githooks` に設定し、`patterns-local.txt` を
+`bash setup.sh --all` などのセットアップ実行が `core.hooksPath` を `.githooks` に設定し、`patterns-local.txt` を
 ひな形から初期化する（既存があれば保持）。初期化直後は固有名詞が未記入なので、
 `patterns-local.txt` を編集して実際の語を追加する。
 
@@ -500,7 +529,12 @@ paths:
 
 ## Superpowers由来の強化
 
-[obra/superpowers](https://github.com/obra/superpowers)（MIT License）は`superpowers@claude-plugins-official`プラグインとして丸ごと導入している（`settings.json.template`の`enabledPlugins`参照）。プラグイン本体が`systematic-debugging`・`subagent-driven-development`等のスキルを提供するため、同名で重複する独自skillは置かない。
+[obra/superpowers](https://github.com/obra/superpowers)（MIT License）は、Claude Codeでは
+`superpowers@claude-plugins-official`、Codex CLIでは`superpowers@openai-api-curated`として
+それぞれのホスト側へ導入する。Claude側は`settings.json.template`、Codex側は
+`codex/plugin-policy.json`で管理し、両ホストのプラグイン状態は自動同期しない。
+プラグイン本体が`systematic-debugging`・`subagent-driven-development`等のスキルを提供するため、
+同名で重複する独自skillは置かない。
 
 一方、学習モードやoutput-styleなど本リポジトリ独自の仕組みと組み合わせる形で、以下の要素は独自ファイルに部分的に取り込んでいる。
 
@@ -513,7 +547,7 @@ paths:
 
 ## 参考
 
-- https://github.com/obra/superpowers — エージェント向けスキルフレームワーク（`superpowers`プラグインとして導入）
+- https://github.com/obra/superpowers — エージェント向けスキルフレームワーク（Claude/Codexの各公式プラグインとして導入）
 - https://github.com/shanraisshan/claude-code-best-practice — Claude Code設定ベストプラクティス（submodule）
 - https://github.com/shanraisshan/codex-cli-best-practice — Codex CLI設定の補助資料（submodule、公式資料を優先）
 - https://github.com/affaan-m/everything-claude-code — Claude Code設定集

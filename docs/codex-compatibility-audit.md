@@ -58,14 +58,25 @@ default denyにする。`learning-output-style`はpluginとして維持せず、
 | `agents/*.md` | 直接ロード | 直接は使用しない | `codex/agents/*.toml` の正本 |
 | `codex/agents/*.toml` | 使用しない | `~/.codex/agents` | 生成物。権限写像は情報を失う |
 | `hooks/` | `settings.json` から起動 | `codex/hooks.json` から起動 | スクリプト共有、イベント定義はホスト別 |
-| Claude `enabledPlugins` | Claude plugin install | `/import` で Codex に流入しうる | Codex 側の enabled 状態は独立して残る |
-| `CODEX_PLUGINS` | 使用しない | Codex marketplace から導入 | 現在は `superpowers@openai-api-curated` のみ |
+| Claude `enabledPlugins` | Claude plugin install | 旧調査時点では `/import` で流入しうる | Codex 側の enabled 状態は独立して残る |
+| `codex/plugin-policy.json` | 使用しない | Codex pluginのallowlist | `claude-plugins-official`をdefault denyし、Codex native版だけを明示allowする |
 | MCP | マシンローカルまたはプラグイン | マシンローカルまたはプラグイン | リポジトリ内に共通の MCP 正本はない |
 
-`setup.sh` 以外に、Codex の `/import` が第二の流入経路になる。Claude 側でプラグインを
-`false` にしても、既に Codex の `config.toml` と cache へ移行された状態は自動では消えない。
-Codexのinstall状態とenabled状態は別であり、`/plugins`でSpaceを押すとcacheを残したまま
-個別pluginを無効化できる。`codex plugin remove`はconfigとcacheを削除するため、この移行では使わない。
+この調査時点では、`setup.sh` 以外に Codex の `/import` が第二の流入経路になると記録した。
+現行のCodex CLIでは `/plugins` と `codex plugin add` がプラグイン操作の入口であり、
+Claude側でプラグインを `false` にしても、Codexの設定とcacheへ既に反映された状態は自動では消えない。
+Codexのinstall状態とenabled状態は別であり、`/plugins`で個別pluginを無効化できる。
+
+## 現行実装との同期（2026-09-04）
+
+上記の調査記録以降、Codexのプラグイン導入処理はリポジトリの `setup.sh` から分離した。
+現在の管理境界は次のとおりである。
+
+- `setup.sh --codex` はリンク配置、Codex署名設定、`bin/audit-codex-plugins.py` の監査だけを行う。
+- `bin/audit-codex-plugins.py` は `codex plugin list --json` を読むだけで、Codex plugin stateを変更しない。
+- プラグインの導入・更新・削除・有効化は `/plugins` または `codex plugin` サブコマンドで行う。
+- リポジトリへ保存するのは `codex/plugin-policy.json` の許可方針であり、`~/.codex/config.toml` とcacheは保存しない。
+- 監査違反を意図的に許可する場合は、policyを更新してレビュー・コミットする。Codexの状態を自動でリポジトリへ書き戻すhookは持たない。
 
 ## 互換性マトリクス
 
