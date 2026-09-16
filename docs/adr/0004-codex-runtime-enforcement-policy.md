@@ -6,6 +6,10 @@ status: accepted
 
 # Codexの起動時規約とセキュリティレビューを段階的に強制する
 
+> **部分置換:** `security-reviewer`のモデルと推論強度に関する決定は、
+> [ADR 0010](0010-codex-adaptive-model-routing.md)によりTerra + highへ置換された。
+> 発火境界と人間確認の境界は、このADRの決定を引き続き適用する。
+
 ## 背景
 
 `superpowers@openai-api-curated` v1e285826 はCodex向けskillを配るが、manifestは`skills`だけを宣言し、

@@ -227,6 +227,32 @@ SessionStart helperがClaude pathなしで起動する。
 `code-simplifier`、高reasoningの`planner`を実際にspawnし、modelとsandboxを確認する。
 静的TOML検査だけで完了扱いにしない。
 
+### P2: `codex/agents/*.toml`のモデル・推論ペアを公式基準で再評価する
+
+現行8 roleの固定ペアは、個別roleを同じ深さで比較して決めたものではない。
+`security-reviewer`はOpenAI公式のcorrectness/security reviewer例に合わせて
+`gpt-5.6-terra` + `high`へ先行是正したが、他roleは暫定値として残っている。
+
+**調べること**:
+
+- OpenAI公式のモデル選択・推論強度・custom agent例と各roleの責務を照合する
+- Luna / Terra / Solの品質、待ち時間、コストを代表タスクで比較する
+- 固定roleが必要な範囲と、動的ルーターへ委ねる範囲を分ける
+- `sandbox_mode`とdeveloper instructionsも、モデル変更と独立に再監査する
+
+**決めること**:
+
+- 各roleの基準ペアを維持・変更・統合のどれにするか
+- 公式例から外すroleに、どの実測根拠を必須とするか
+- 新しいモデル世代が出たときの再評価条件をどう検知するか
+
+**完了条件**:
+
+- 8 roleすべてに公式根拠または再現可能な実測根拠がある
+- 生成元、生成済みTOML、テスト、モデルルーティング文書、ADRが一致する
+- read-only / workspace-writeの権限がモデル選択の都合で広がっていない
+- runtime smoke testで実際のmodel、reasoning effort、sandboxを確認する
+
 ### Codex statuslineの自前化 → 着手条件待ち
 
 当面はCodex公式のデフォルトstatuslineを使い、`statusline.js`はClaude専用のまま維持する。

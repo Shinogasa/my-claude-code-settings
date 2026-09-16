@@ -57,6 +57,9 @@ class TestSharedInstructionIndex(unittest.TestCase):
             with self.subTest(rule=rule):
                 self.assertIn(rule, self.text)
 
+    def test_codex_requires_model_routing_instructions(self):
+        self.assertIn("~/.codex/MODEL_ROUTING.md", self.text)
+
     def test_retains_existing_shared_summary_headings(self):
         for heading in (
             "## 言語",

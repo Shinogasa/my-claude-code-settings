@@ -75,9 +75,11 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0001](0001-learning-mode-prediction-format.md) | 学習モードの予測フェーズを再認から生成へ変える | 2026-08-14 | accepted |
 | [0002](0002-host-specific-activation-adapters.md) | 共有ポリシーをホスト別アダプターで発火させる | 2026-08-18 | superseded by 0003 |
 | [0003](0003-codex-native-first-activation-policy.md) | Codex移行をnative-firstなallowlistで管理する | 2026-08-18 | accepted |
-| [0004](0004-codex-runtime-enforcement-policy.md) | Codexの起動時規約とセキュリティレビューを段階的に強制する | 2026-08-20 | accepted |
+| [0004](0004-codex-runtime-enforcement-policy.md) | Codexの起動時規約とセキュリティレビューを段階的に強制する | 2026-08-20 | accepted（モデル選択は0010で部分置換） |
 | [0005](0005-codex-personal-profile-mcp-inheritance.md) | 個人プロファイルが会社設定の MCP サーバを継承する既定 | 2026-08-31 | accepted |
 | [0006](0006-codex-personal-profile-standalone-mcp-transport.md) | Codex個人プロファイルのMCP定義を単体検証可能にする | 2026-09-01 | accepted |
 | [0007](0007-learning-mode-decision-layer-gate.md) | 判断点を層で選別し、実装レベルの経験は定石欄で供給する | 2026-08-21 | accepted |
 | [0008](0008-codex-rtk-prompt-integration.md) | CodexのRTK統合を指示アダプターで管理する | 2026-09-02 | accepted |
 | [0009](0009-codex-bitwarden-signing-agent.md) | Codex子プロセスへBitwarden SSH agentを配布する | 2026-09-03 | accepted |
+| [0010](0010-codex-adaptive-model-routing.md) | Codexサブエージェントのモデルと推論強度を適応的に選ぶ | 2026-09-14 | accepted |
+| [0011](0011-codex-cross-model-handoff.md) | Codexのモデル間移行を検証可能なMarkdown handoffで行う | 2026-09-15 | accepted |

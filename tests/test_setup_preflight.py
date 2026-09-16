@@ -203,7 +203,9 @@ class SetupStateTests(unittest.TestCase):
 class SetupPreflightTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.base = Path(self.temporary.name)
+        # macOSのtempfileは`/var`を返すが、`/var`は`/private/var`へのsymlink。
+        # setup対象HOMEの安全検査が中間symlinkを正しく拒否するため、fixtureは実体パスで作る。
+        self.base = Path(self.temporary.name).resolve()
         self.repository = copy_repository(self.base)
         self.home = self.base / "home"
         self.home.mkdir()

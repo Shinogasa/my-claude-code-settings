@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -44,6 +45,9 @@ def make_stub_commands(base: Path) -> Path:
         encoding="utf-8",
     )
     codex.chmod(0o755)
+    ssh_add = bindir / "ssh-add"
+    ssh_add.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    ssh_add.chmod(0o755)
     git = bindir / "git"
     git.write_text(
         "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\n"
@@ -78,7 +82,9 @@ def run_setup(repository: Path, home: Path, *args: str, extra_env=None) -> subpr
 class SetupCliTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.base = Path(self.temporary.name)
+        # macOSのtempfileは`/var`を返すが、`/var`は`/private/var`へのsymlink。
+        # setup対象HOMEの安全検査が中間symlinkを正しく拒否するため、fixtureは実体パスで作る。
+        self.base = Path(self.temporary.name).resolve()
         self.repository = copy_repository(self.base)
         self.home = self.base / "home"
         self.home.mkdir()
@@ -140,6 +146,52 @@ class SetupCliTests(unittest.TestCase):
             (self.repository / "codex" / "RTK.md").resolve(),
         )
 
+    def test_codex_installs_model_routing_instructions(self):
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        installed = self.home / ".codex" / "MODEL_ROUTING.md"
+        self.assertTrue(installed.is_symlink())
+        self.assertEqual(
+            installed.resolve(),
+            (self.repository / "codex" / "MODEL_ROUTING.md").resolve(),
+        )
+
+    def test_codex_installs_runnable_handoff_validator_at_agent_path(self):
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        installed = self.home / ".codex" / "bin" / "validate-codex-handoff.py"
+        self.assertTrue(installed.is_file())
+        self.assertEqual(
+            installed.resolve(),
+            (self.repository / "bin" / "validate-codex-handoff.py").resolve(),
+        )
+        help_result = subprocess.run(
+            ["python3", str(installed), "--help"],
+            cwd=self.repository,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("モデル間handoff", help_result.stdout)
+
+    def test_codex_setup_configures_default_subagent_pair(self):
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with (self.home / ".codex" / "config.toml").open("rb") as config_file:
+            agents = tomllib.load(config_file)["agents"]
+        self.assertEqual(agents["default_subagent_model"], "gpt-5.6-luna")
+        self.assertEqual(agents["default_subagent_reasoning_effort"], "medium")
+
     def test_codex_setup_reports_signing_skip_without_config(self):
         (self.home / ".codex").mkdir()
 
@@ -170,22 +222,100 @@ class SetupCliTests(unittest.TestCase):
             'SSH_AUTH_SOCK = "/tmp/old-agent.sock"\n'
         )
         config.write_text(original, encoding="utf-8")
+        config.chmod(0o600)
 
         result = run_setup(self.repository, self.home, "--codex")
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(config.read_text(encoding="utf-8"), original)
+        updated = config.read_text(encoding="utf-8")
+        self.assertIn('token = "must-stay-local"', updated)
+        self.assertIn('SSH_AUTH_SOCK = "/tmp/old-agent.sock"', updated)
+        parsed = tomllib.loads(updated)
+        self.assertEqual(parsed["model"], "gpt-test")
+        self.assertEqual(parsed["private"]["token"], "must-stay-local")
+        self.assertEqual(parsed["agents"]["default_subagent_model"], "gpt-5.6-luna")
+        self.assertEqual(
+            parsed["agents"]["default_subagent_reasoning_effort"],
+            "medium",
+        )
         self.assertIn("agentの鍵を確認できない", result.stderr)
+
+    def test_codex_setup_preserves_metadata_when_signing_update_succeeds(self):
+        xattr = shutil.which("xattr")
+        chmod = shutil.which("chmod")
+        ls = shutil.which("ls")
+        if sys.platform != "darwin" or None in {xattr, chmod, ls}:
+            self.skipTest("macOSのsetup metadata保持検査ではない")
+        codex_dir = self.home / ".codex"
+        codex_dir.mkdir()
+        config = codex_dir / "config.toml"
+        config.write_text(
+            'model = "gpt-test"\n'
+            '[private]\n'
+            'token = "must-stay-local"\n',
+            encoding="utf-8",
+        )
+        config.chmod(0o600)
+        subprocess.run(
+            [xattr, "-w", "com.example.codex-setup-test", "preserve-me", config],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            [chmod, "+a", "everyone deny write", config],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        socket_path = (
+            self.home
+            / "Library/Containers/com.bitwarden.desktop/Data/.bitwarden-ssh-agent.sock"
+        )
+        socket_path.parent.mkdir(parents=True)
+        host_socket = Path(os.environ.get("SSH_AUTH_SOCK", ""))
+        if not host_socket.is_absolute() or not host_socket.is_socket():
+            self.skipTest("実socketが無いためsetup成功分岐を検証できない")
+        try:
+            socket_path.symlink_to(host_socket)
+            result = run_setup(self.repository, self.home, "--codex")
+        finally:
+            socket_path.unlink(missing_ok=True)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        parsed = tomllib.loads(config.read_text(encoding="utf-8"))
+        self.assertEqual(parsed["private"]["token"], "must-stay-local")
+        self.assertEqual(
+            parsed["shell_environment_policy"]["set"]["SSH_AUTH_SOCK"],
+            str(socket_path),
+        )
+        self.assertEqual(parsed["agents"]["default_subagent_model"], "gpt-5.6-luna")
+        attribute = subprocess.run(
+            [xattr, "-p", "com.example.codex-setup-test", config],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        acl = subprocess.run(
+            [ls, "-le", config],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(attribute.stdout.rstrip("\n"), "preserve-me")
+        self.assertIn("deny write", acl.stdout)
 
     def test_codex_setup_generates_transport_complete_mcp_entries(self):
         (self.home / ".codex").mkdir()
-        (self.home / ".codex" / "config.toml").write_text(
+        config = self.home / ".codex" / "config.toml"
+        config.write_text(
             '[mcp_servers."remote-http"]\n'
             'url = "https://example.invalid/mcp"\n'
             '[mcp_servers.local_stdio]\n'
             'command = "/bin/true"\n',
             encoding="utf-8",
         )
+        config.chmod(0o600)
 
         result = run_setup(self.repository, self.home, "--codex")
 
@@ -283,6 +413,36 @@ class SetupCliTests(unittest.TestCase):
         self.assertIn("patterns-local.txt.example", result.stderr)
         self.assertFalse((self.home.parent / "commands.log").exists())
         self.assertEqual(list((self.home / ".claude").iterdir()), [])
+
+    def test_missing_agent_defaults_helper_stops_before_home_mutation(self):
+        (self.home / ".codex").mkdir()
+        (self.repository / "bin" / "configure_codex_agent_defaults.py").unlink()
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("configure_codex_agent_defaults.py", result.stderr)
+        self.assertEqual(list((self.home / ".codex").iterdir()), [])
+
+    def test_missing_handoff_validator_stops_before_home_mutation(self):
+        (self.home / ".codex").mkdir()
+        (self.repository / "bin" / "validate-codex-handoff.py").unlink(missing_ok=True)
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("validate-codex-handoff.py", result.stderr)
+        self.assertEqual(list((self.home / ".codex").iterdir()), [])
+
+    def test_missing_config_io_helper_stops_before_home_mutation(self):
+        (self.home / ".codex").mkdir()
+        (self.repository / "bin" / "codex_config_io.py").unlink()
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("codex_config_io.py", result.stderr)
+        self.assertEqual(list((self.home / ".codex").iterdir()), [])
 
     def test_declared_missing_submodule_is_initialized_after_preflight(self):
         (self.home / ".claude").mkdir()

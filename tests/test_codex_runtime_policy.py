@@ -174,12 +174,13 @@ class TestSecurityReviewPolicy(unittest.TestCase):
         )
         self.assertIn(
             "`security-reviewer` が Critical findings または `Confidence: insufficient` を報告した場合は、\n"
-            "結果を人間へ提示して確認を得る。強いモデルを使う追加レビューは、人間の確認前に\n"
+            "結果を人間へ提示して確認を得る。Solなど上位モデルを使う追加レビューは、人間の確認前に\n"
             "自動でspawnしてはいけない。",
             self.text,
         )
         self.assertIn(
-            "`security-reviewer` は軽量モデルによる意味レビューであり、静的解析、テスト、secret scan、\n"
+            "`security-reviewer` は `gpt-5.6-terra` + `high` による意味レビューであり、\n"
+            "静的解析、テスト、secret scan、\n"
             "依存関係監査などの決定的検査を置き換えない。",
             self.text,
         )
