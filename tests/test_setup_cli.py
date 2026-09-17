@@ -133,6 +133,22 @@ class SetupCliTests(unittest.TestCase):
         self.assertFalse((self.home / ".codex" / "prompts").exists())
         self.assertFalse((self.home / ".claude" / "CLAUDE.md").exists())
 
+    def test_code_learning_skill_is_linked_for_both_hosts(self):
+        (self.home / ".claude").mkdir()
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--all")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        source = (self.repository / "skills" / "code-learning").resolve()
+        for installed in (
+            self.home / ".claude" / "skills" / "code-learning",
+            self.home / ".agents" / "skills" / "code-learning",
+        ):
+            with self.subTest(installed=installed):
+                self.assertTrue(installed.is_symlink())
+                self.assertEqual(installed.resolve(), source)
+
     def test_codex_installs_global_rtk_instructions(self):
         (self.home / ".codex").mkdir()
 
