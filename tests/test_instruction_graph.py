@@ -21,6 +21,7 @@ EXPECTED_AGENTS = """# Codex project guidance
 
 SESSION_RULES = (
     "rules/learning-mode.md",
+    "rules/code-learning.md",
     "rules/proving-absence.md",
     "rules/task-management.md",
     "rules/parallel-worktree.md",

@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "code-learning" / "SKILL.md"
+ROUTER = ROOT / "rules" / "code-learning.md"
 
 
 class CodeLearningSkillContract(unittest.TestCase):
@@ -32,6 +33,15 @@ class CodeLearningSkillContract(unittest.TestCase):
         )
         positions = [text.index(step) for step in steps]
         self.assertEqual(positions, sorted(positions))
+
+    def test_router_has_only_activation_responsibilities(self):
+        self.assertTrue(ROUTER.is_file(), "コード学習の常時ruleが存在する")
+        text = ROUTER.read_text(encoding="utf-8")
+        self.assertIn("skills/code-learning/SKILL.md", text)
+        self.assertIn("学習なし", text)
+        self.assertIn("生成物", text)
+        self.assertNotIn("paths:", text)
+        self.assertLess(len(text), 3000)
 
 
 if __name__ == "__main__":

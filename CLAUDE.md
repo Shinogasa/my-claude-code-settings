@@ -31,6 +31,7 @@ skills / commands / rules / CLAUDE.md は単一ソースを両ホストへリン
 `~/.claude/`、Codex CLIでは `~/.codex/` を起点に解決する。
 
 - `rules/learning-mode.md`
+- `rules/code-learning.md`
 - `rules/proving-absence.md`
 - `rules/task-management.md`
 - `rules/parallel-worktree.md`
@@ -97,6 +98,11 @@ skills の発火方式がホストで異なる。
 - 「全部やって」「任せる」「急ぎ」「予測なしで」→ **OFF**（そのタスク中のみ）
 - 1タスク完了後は自動的にONに戻る
 - 詳細仕様は `rules/learning-mode.md`、設計の経緯は `docs/adr/0001-learning-mode-prediction-format.md` を参照
+
+コード学習は別レイヤー。実装・修正・レビューで真正かつ検証可能な能力を見つけたら、
+本質部分を確定する前に `rules/code-learning.md` に従ってskillを読む。
+設計Predictと同じ箇所で二重に出題しない。pilot中の合計上限は2回を目安とし、
+ユーザーが学習なしを望んだタスクでは両方OFFにする。
 
 ## 不在の主張
 
