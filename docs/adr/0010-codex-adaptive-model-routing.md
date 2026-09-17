@@ -104,9 +104,43 @@ Terra + highを使っている。認可や秘密情報など複数ファイル�
   この場合はルーティングで回避せず、gatewayの互換性問題として扱う
 - モデル世代が更新されたら、基準ペアと公式の位置づけを再評価する必要がある
 
+## 後続のコード学習モードとの接続制約
+
+このADRの採用後に検討を始めたコード学習モードには、モデルルーティング側でも扱うべき
+横断的な懸念がある。安価なモデルへ実装を委譲した場合、そのモデルが学習対象の選定、
+AI生成コードの模範判定、ユーザー回答の採点、専門的な定石の説明まで兼ねると、同じ誤りを
+生成と評価の両方で見逃し、誤った説明を学習内容として固定する閉ループになりうる。
+
+一方、現時点の調査は「弱いモデルほど必ず誤る」とは示していない。モデルtierを安全性の
+証明にせず、実際の対象言語とrepositoryから作った代表ケースで、誤feedback率、正しいコードへの
+誤警告率、根拠なし一般化率、費用、時間を比較する必要がある。
+
+後続設計では、次をルーティング要件として再検討する。
+
+- 安価な実装agentには、機械的な候補検出、検証可能なlearning packet作成、決定的検査を残す
+- 教材選定、模範コードの妥当性確認、採点、専門的feedbackは、必要な能力を持つread-only agentへ
+  限定的に昇格する
+- 局所的なコード意味とedge caseはTerra + high、architecture、design pattern、複数成立解の評価は
+  Sol + highを初期候補とするが、正式routeは代表ケースevalで決める
+- compiler、test、static analysis、benchmark、一次資料で確認できない主張は、上位モデルの
+  自然言語説明だけで正解にしない。確認不能なら学習イベントを見送る
+- cross-model移行ではADR 0011の検証可能なhandoffを再利用し、会話要約だけで教材文脈を渡さない
+- code-learning用教師agentは、通常のverificationやsecurity reviewを代替しない
+
+また、現在はrouting文書がarchitectureをSol + highへ分類する一方、`code-architect` custom agentは
+Luna + highに固定されており、custom agentの固定値が明示spawn値より優先する。ADR本文で既に
+他roleのモデル再評価を後続taskとしているため、この暫定不一致を解消するまでは
+「設計工程は全経路でfrontier modelにより実行される」と保証しない。
+
+コード学習側の調査、根拠、反証条件、learning packet案、routing eval案の正本は
+`docs/research/2026-09-16-code-learning-mode-design.md` の「モデルルーティングとの統合」とする。
+本節はその内容を複製する仕様ではなく、ルーティング作業を再開したときに接続検討を落とさないための
+索引である。コード学習モード自体の採用や具体的な教師roleは、このADRでは決定しない。
+
 ## 根拠
 
 - OpenAI Docs: https://developers.openai.com/codex/subagents
 - `docs/adr/0004-codex-runtime-enforcement-policy.md`
 - `docs/adr/0005-codex-personal-profile-mcp-inheritance.md`
+- `docs/research/2026-09-16-code-learning-mode-design.md`
 - Codex CLI 0.154.0でのLuna未指定effortが`xhigh`へ解決された実測
