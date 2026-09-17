@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "code-learning" / "SKILL.md"
 ROUTER = ROOT / "rules" / "code-learning.md"
+REVIEW_STYLE = ROOT / "output-styles" / "review-and-design.md"
 
 
 class CodeLearningSkillContract(unittest.TestCase):
@@ -42,6 +43,11 @@ class CodeLearningSkillContract(unittest.TestCase):
         self.assertIn("生成物", text)
         self.assertNotIn("paths:", text)
         self.assertLess(len(text), 3000)
+
+    def test_review_style_does_not_reveal_a_review_exercise_early(self):
+        text = REVIEW_STYLE.read_text(encoding="utf-8")
+        self.assertIn("code-learning", text)
+        self.assertIn("ユーザーの指摘後", text)
 
 
 if __name__ == "__main__":

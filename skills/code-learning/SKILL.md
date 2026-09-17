@@ -24,7 +24,7 @@ description: Use when implementation, bug fixing, refactoring, or code review ex
 
 同じ箇所で設計判断用の `rules/learning-mode.md` と二重出題しない。
 設計Predictは結論と判断基準を、ここでは実際のコードの理解・変更・検証を扱う。
-pilot中はコード学習を1タスク最大1イベント、設計Predictと合計2イベントを目安にする。
+pilot中はコード学習を1タスク最大1イベント、設計Predictと合計2イベントまでとする。
 「全部やって」「任せる」「急ぎ」「学習なし」等の明示があれば、そのタスクではOFFにする。
 ユーザーはいつでもスキップでき、スキップ後は通常の実装を完了する。
 
