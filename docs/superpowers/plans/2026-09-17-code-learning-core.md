@@ -16,7 +16,7 @@
 - 共有rule/skillにホスト固有のAPI名・パスを単独で書かず、必要なら両ホストの経路を併記する。
 - TDD、debugging、security、verificationの順序と責務を変更しない。コード学習はその中の学習方法だけを決める。
 - 対話の停止には実際に応答を待つ仕組みを使う。Codexでは環境にその仕組みが無い場合、通常のターン終了で回答を待ち、作業が進んだと偽らない。
-- 初期値はコード学習1イベント/タスク、設計学習との合計2イベント/タスク。「全部やって」「任せる」「急ぎ」「学習なし」はそのタスク中OFF。ユーザーの明示的な承認要求は教育イベントと数えない。
+- 初期案はコード学習1イベント/タスク、設計学習との合計2イベント/タスク。「全部やって」「任せる」「急ぎ」「学習なし」はそのタスク中OFF。ユーザーの明示的な承認要求は教育イベントと数えない。数値はADR 0012では未決定であり、ADR承認時に再確認する。
 - Write → Modify → Review → Explain は、真正で安全な形式のうち成立するものを選ぶ優先順位であり、ユーザーへ無理にコードを書かせない。
 - skill作成時に `skill-creator` と `superpowers:writing-skills`、設定変更時に `codex-cli-best-practice` を読み、両ホストの実動作を確認する。
 - この計画は実装承認ではない。Task 1のADRをレビュー・承認してからrule/skillの実装へ進む。モデルrouteは別計画の代表ケース評価まで暫定案とする。
@@ -25,7 +25,7 @@
 
 | ファイル | 責務 |
 |---|---|
-| `docs/adr/0012-code-learning-mode.md` / `docs/adr/README.md` | C案、旧コード参加の移管、合計予算、却下案と制約を永続記録 |
+| `docs/adr/0012-code-learning-mode.md` / `docs/adr/README.md` | C案、旧コード参加の移管、却下案と制約を永続記録。合計予算は初期案 |
 | `rules/code-learning.md` | 常時有効な候補検出・OFF・安全ゲートだけ |
 | `skills/code-learning/SKILL.md` | 1能力の演習、自己説明、検証、feedback、転移、記録の手順 |
 | `rules/learning-mode.md` / `CLAUDE.md` | 設計判断モードとの境界、起動時読み込み、共通予算 |
@@ -36,14 +36,14 @@
 
 ## Task 1: 設計判断をADRとして確定する
 
-**Files:** Create `docs/adr/0012-code-learning-mode.md`; Modify `docs/adr/README.md`.
+**Files:** Review and modify proposed `docs/adr/0012-code-learning-mode.md`; Modify `docs/adr/README.md`.
 
 **Interfaces:** Consumes research文書、ADR 0001/0007。Produces後続taskが従う決定と却下案。
 
-- [ ] **Step 1:** `docs/adr/README.md` の末尾番号を再確認し、0012が空いていることを確認する。新しいADRには下記の決定表を入れ、statusはレビュー前 `proposed` とする。
+- [ ] **Step 1:** 既存のADR 0012案と下記の初期案を比較し、未決定の運用値を採用決定と混同していないことを確認する。ユーザーが数値を承認した場合だけ、ADRの決定節へ移す。
 
 ```markdown
-| 論点 | 初期決定 |
+| 論点 | 初期案 |
 |---|---|
 | 構成 | 短い常時rule + 詳細skill（C案） |
 | 旧コード参加 | 新skillへ完全移管。設計Predictとの二重出題を禁止 |

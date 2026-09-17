@@ -83,3 +83,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0009](0009-codex-bitwarden-signing-agent.md) | Codex子プロセスへBitwarden SSH agentを配布する | 2026-09-03 | accepted |
 | [0010](0010-codex-adaptive-model-routing.md) | Codexサブエージェントのモデルと推論強度を適応的に選ぶ | 2026-09-14 | accepted |
 | [0011](0011-codex-cross-model-handoff.md) | Codexのモデル間移行を検証可能なMarkdown handoffで行う | 2026-09-15 | accepted |
+| [0012](0012-code-learning-mode.md) | 実作業でコード理解を鍛える学習モードを独立させる | 2026-09-17 | proposed |
