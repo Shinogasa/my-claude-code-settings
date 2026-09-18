@@ -292,3 +292,20 @@ clean判定もHEAD tree・index・生bytes比較へ変更した。全path compon
 read-only境界では「明示的に止めたhelper」だけでなく、依存ツールが入力から起動できる全hookを
 脅威として扱う。fileの範囲検査は文字列上の正規化で終えず、その検査とopenを同じdirectory FDの
 系譜へ束ねる。安全性を列挙型の無効化で作るより、commandを起動しないprimitiveへ境界を下げる。
+
+### 2026-09-18 | Markdownのbacktickをdouble-quoted shell引数へ埋め込んだ
+
+**間違えた内容:**
+設計specの見出しを`rg`で検査する際、Markdownのbacktickを含む正規表現をdouble quoteで囲んだ
+shell commandとして渡した。shellがbacktick内の`codex exec`をcommand substitutionとして実行し、
+promptなしで即終了した。file変更やmodel turnは発生しなかったが、read-only検査が意図しない
+外部process起動になり、その検査結果も無効になった。
+
+**修正:**
+同じ見出し検査を、backtickを含まないsingle-quoted patternへ分解して再実行した。誤って起動した
+commandの出力は成功証拠に数えず、関連testとdiff検査もfreshにやり直す。
+
+**教訓:**
+Markdown、正規表現、Git messageなど任意文字列をshell commandへ埋め込む前に、backtick、`$()`、
+redirect、control operatorの有無を確認する。literal patternはsingle quoteかpattern fileで渡し、
+表示上のquotingではなくshellが解釈する最終文字列を基準に安全性を判断する。

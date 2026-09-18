@@ -114,3 +114,6 @@ commandを起動しないため、Gitはindex manifestの列挙だけに使い�
 - OpenAI Docs: https://developers.openai.com/codex/subagents
 - `docs/adr/0010-codex-adaptive-model-routing.md`
 - Superpowers `subagent-driven-development` skill
+
+入力handoffを受け取った後の`codex exec`起動、最終回答回収、resume、重複実行抑止は、
+`docs/adr/0013-codex-review-runner.md`の専用runnerが担当する。
