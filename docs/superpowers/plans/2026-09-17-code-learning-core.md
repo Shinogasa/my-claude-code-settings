@@ -10,6 +10,12 @@
 
 **Spec:** `docs/research/2026-09-16-code-learning-mode-design.md`、`docs/research/2026-09-15-mattpocock-skills-evaluation.md`、`docs/adr/0001-learning-mode-prediction-format.md`、`docs/adr/0007-learning-mode-decision-layer-gate.md`
 
+**実装状況（2026-09-17）:** Task 1〜4のADR承認、skill、常時rule、旧コード参加の移管は実装済み。
+Task 5の記録schema・静的契約・一時HOMEでの両ホスト配布検査・読み取り専用simulationも実施済み。
+ただし実ホストの新規sessionでの暗黙発火と実ユーザー回答による採点・転移は未検証。
+このためTask 5のscenario実測とTask 6の5〜10件pilotは未完了であり、導入効果を宣言しない。
+教師routeのモデル割当は別計画 `2026-09-17-code-learning-teacher-routing.md` で扱う。
+
 ## Global Constraints
 
 - このリポジトリは公開設定リポジトリ。学習記録に業務コード、内部パス、顧客名、非公開の型名・データ名を保存しない。

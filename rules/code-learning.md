@@ -8,6 +8,10 @@ alwaysApply: true
 デバッグ可能性などへ実質的に影響し、別の仕事にも転用できる未実証のコード能力があれば、
 小さく真正で検証可能な課題にできるかを確認する。候補が成立したら本質部分の確定前に
 `skills/code-learning/SKILL.md` を全文読み、その手順に従う。
+導入後の解決先は Claude Code では `~/.claude/skills/code-learning/SKILL.md`、
+Codex CLI では `~/.agents/skills/code-learning/SKILL.md`。skillを発見できない場合は
+学習イベントを見送り、そのセッションで一度だけ導入未完了をユーザーへ明示してから、
+通常の実装・検証を続ける。見送りを「候補が無かった」と記録しない。
 
 生成物、vendored code、lockfile、ボイラープレート、機械的変更、単純な設定・文言変更、
 検証できない好みの評価では発火しない。検査や一次資料で重要な主張を裏付けられず、

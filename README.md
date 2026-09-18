@@ -383,6 +383,7 @@ plugin 由来のサーバを有効化する場合は、その素性を自分で�
 │   ├── architecture-decision-records/  # ADR記録
 │   ├── backend-patterns/        #   バックエンドパターン
 │   ├── claude-code-best-practice/  # 設定ベストプラクティス参照
+│   ├── code-learning/           #   実作業でのコード理解・変更・レビュー演習
 │   ├── coding-standards/        #   コーディング規約
 │   ├── database-migrations/     #   DBマイグレーション
 │   ├── deployment-patterns/     #   デプロイパターン
@@ -418,6 +419,7 @@ plugin 由来のサーバを有効化する場合は、その素性を自分で�
 │   └── hooks.json               #   Codex向けhookイベント定義
 ├── rules/                       # 常時適用ルール
 │   ├── learning-mode.md         #   学習モード詳細仕様
+│   ├── code-learning.md         #   コード学習の常時発火入口
 │   ├── proving-absence.md       #   「無い」と主張するときの形式
 │   ├── output-formatting.md     #   URL表示フォーマット
 │   ├── task-management.md       #   タスク管理手順
@@ -434,6 +436,9 @@ plugin 由来のサーバを有効化する場合は、その素性を自分で�
 ├── output-styles/               # カスタムアウトプットスタイル
 │   ├── review-and-design.md     #   Review & Design（コードレビュー・設計判断特化）
 │   └── fast.md                  #   高速実行（説明最小限）
+├── learning/                    # 学習ログ（公開可能な抽象化済み記録）
+│   ├── entries/                 #   設計Predict / ★ Delta
+│   └── code/                    #   コード学習の実証記録とschema
 ├── statusline.js                # ステータスライン表示
 ├── settings.json.template       # settings.jsonテンプレート（共通設定、.env不要）
 ├── env.json.template            # envブロックテンプレート（LiteLLM等APIキー利用時のみ、.env必要）
@@ -513,6 +518,10 @@ paths:
 ## learning/ の運用
 
 学習ログ（★ Predict / ★ Delta の記録）の実体は **このリポジトリの `learning/entries/`** に置き、git で追跡する。運用の詳細は `learning/README.md`。
+
+コード学習は独立した `code-learning` skillで行い、ユーザーが実証した内容だけを
+`learning/code/entries/` に記録する。schemaと非保存条件は `learning/code/README.md` を参照。
+記録なしを未習得とみなさず、teachへ自動同期もしない。
 
 - **1エントリ1ファイル + frontmatter**: 2026-08-09 に単一ファイル `tasks/learning-journal.md`
   から移行した。後日の集計と学び直しのため、日付・当否・欠けた軸を構造化データで持つ。
