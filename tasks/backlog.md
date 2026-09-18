@@ -253,6 +253,35 @@ SessionStart helperがClaude pathなしで起動する。
 - read-only / workspace-writeの権限がモデル選択の都合で広がっていない
 - runtime smoke testで実際のmodel、reasoning effort、sandboxを確認する
 
+### P1: 親セッションを含む工程境界モデルルーティングを追加する
+
+現行のADR 0010と`codex/MODEL_ROUTING.md`は、サブエージェント起動時のmodel + effort選択を
+中心にしている。親AIが設計から実装まで同じsessionで続行すると起動境界が無く、Solで確定した
+設計を、そのままSolが実装する抜け道が残る。これは「強いモデルで設計し、明確になった作業は
+低コストモデルへ降格する」という目的を満たさない。
+
+**次の実装案**: `docs/codex-primary-session-model-routing-proposal.md`
+
+推奨案は、工程遷移時に親AIが推奨ペアを再分類し、現在ペアと異なる場合はMarkdown handoffと
+pending stateを作って停止するswitch gateである。モデル変更はユーザーがCodex CLIの`/model`または
+デスクトップアプリのモデル選択で行い、切替後に同じtaskをhandoffから再開する。pending中の
+repo変更はPreToolUse hookでfail-closedにする。
+
+**実装前に決めること**:
+
+- CLI / app / hook / thread metadataのどこでeffective model + effortを観測できるか
+- 観測不能な場合、`user-attested`で再開可能にする範囲と表示方法
+- pending state、scoped override、cancelのinterface
+- ADR 0010を新ADRでどの範囲まで置換するか
+
+**完了条件**:
+
+- サブエージェント無しでも、Sol設計からLuna実装への切替要求で最初のrepo変更前に停止する
+- model + effortをペアで検証し、切替前に検証済みhandoffを保存する
+- pending中の変更をhookが拒否し、切替確認または明示overrideまで進めない
+- runtime検証済みとユーザー申告だけの状態を区別する
+- review runner、provider、通常のmodel既定を変更しない
+
 ### Codex review runnerの初回除外項目
 
 ADR 0013と`docs/superpowers/specs/2026-09-18-codex-review-runner-design.md`の初回実装は、
