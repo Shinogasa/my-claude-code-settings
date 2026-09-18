@@ -82,6 +82,10 @@ runnerはhandoff pathを直接openしてmetadataをparseしない。subprocess a
 実行して`INPUT_DIGEST`を取得し、同じdigest、model、effortを指定した
 `read --document handoff --start-line 1`から得た全行だけをparseする。headerが最終行までの一括取得を
 示さない場合はprecheckを失敗にする。参照documentの有無はこの検証済みfrontmatterから決める。
+validatorは対象repositoryから探索しない。runner scriptのsymlinkを解決した実体directoryに隣接する
+`validate-codex-handoff.py`を起動時にregular non-symlink fileとして固定し、対象repository内の
+同名fileやPATH上のvalidatorは使わない。これにより設定repositoryの`bin/`を
+`~/.codex/bin/`へlinkする既存配布と、任意repositoryのreviewを両立する。
 precheck readは`--start-line 1 --line-count 1000000`を明示し、出力が1 MiBを超えるhandoff、
 100万行を超えるhandoff、headerが`lines 1-<total> of <total>`でないhandoffを拒否する。
 
@@ -258,7 +262,7 @@ placeholderは空白だけのmessageと、trim後が完全一致する`Please co
 - outer shellとinner commandをstrictにtokenizeでき、control operator、pipe、redirection、
   command substitution、複数commandを含まない
 - 実行本体が、runnerのprecheckで解決してpromptへ埋め込んだ絶対pathの`rtk` executable、
-  `sys.executable`、repository内`validate-codex-handoff.py read`の引数列と完全一致する。
+  `sys.executable`、runner実体に隣接する`validate-codex-handoff.py read`の引数列と完全一致する。
   相対path、別のPython、`rtk`以外のwrapperは許可しない
 - handoff、repository、expected model、expected effort、`INPUT_DIGEST`がprecheck値と一致する
 - `--document`、`--start-line`、`--line-count`が重複なく一度ずつ指定される
