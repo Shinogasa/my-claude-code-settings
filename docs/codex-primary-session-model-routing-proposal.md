@@ -242,4 +242,3 @@ rollbackの境界が異なる。まずswitch gateを独立して成立させる�
 - `docs/adr/0010-codex-adaptive-model-routing.md`
 - `docs/adr/0011-codex-cross-model-handoff.md`
 - `docs/adr/0013-codex-review-runner.md`
-
