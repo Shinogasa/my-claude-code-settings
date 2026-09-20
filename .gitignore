@@ -19,6 +19,9 @@ __pycache__/
 # todo.md はタスクごとに使い捨てる一時ファイル (rules/task-management.md参照)。
 tasks/todo.md
 
+# 親セッションの切替状態はsession固有であり、公開リポジトリへ記録しない。
+.superpowers/model-switch/
+
 # pre-commit フックの禁止パターン定義 (固有名詞)。
 # 禁止したい固有名詞そのものが機密であり、PUBLIC なこのリポジトリに置くと目的と矛盾する。
 # ひな形は .githooks/patterns-local.txt.example を追跡している。
