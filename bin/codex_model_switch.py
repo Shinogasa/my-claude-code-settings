@@ -66,6 +66,26 @@ def _state_directory(repo: Path, create: bool) -> Path | None:
         raise SwitchError("切替状態のdirectory所有者が不正です")
     if stat.S_IMODE(info.st_mode) != 0o700:
         raise SwitchError("切替状態のdirectoryは0700が必要です")
+    if create:
+        # 対象repoに既定ignoreが無くても、manifestがhandoffのGit fingerprintを変えない。
+        ignore = directory / ".gitignore"
+        try:
+            descriptor = os.open(ignore, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        except FileExistsError:
+            descriptor = -1
+        if descriptor >= 0:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(b"*\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+        try:
+            descriptor = os.open(ignore, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(descriptor, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stream.read() != b"*\n":
+                    raise SwitchError("切替状態の.gitignoreが不正です")
+        except OSError as error:
+            raise SwitchError(f"切替状態の.gitignoreを確認できません: {error}") from error
     return directory
 
 
@@ -183,8 +203,8 @@ def begin(
         raise SwitchError("modelとeffortの組合せが使えません")
     handoff_path = _safe_handoff_path(handoff)
     with _locked(root, session_id) as (path, previous):
-        if previous and previous["state"] != "CANCELLED":
-            raise SwitchError("このsessionには進行中または完了済みの切替があります")
+        if previous and previous["state"] in {"PREPARING", "SWITCH_PENDING"}:
+            raise SwitchError("このsessionには進行中の切替があります")
         with VALIDATOR.repository_root(root) as (_root, descriptor):
             git_state = VALIDATOR.current_state(descriptor)
         data = {
@@ -234,5 +254,89 @@ def publish(repo: Path, session_id: str) -> dict:
             raise SwitchError("handoffのtask_idが異なります")
         data["input_digest"] = digest
         data["state"] = "SWITCH_PENDING"
+        _write_manifest(path, data)
+        return data
+
+
+def _validated_pending(root: Path, data: dict) -> None:
+    if data.get("state") != "SWITCH_PENDING" or not data.get("input_digest"):
+        raise SwitchError("SWITCH_PENDINGの切替がありません")
+    try:
+        with VALIDATOR.repository_root(root) as (root_path, descriptor):
+            current = VALIDATOR.current_state(descriptor)
+            if current != data["pre_switch_git"]:
+                raise SwitchError("切替前のGit状態が変化しました")
+            errors, digest, documents = VALIDATOR.validate_handoff(
+                Path(data["handoff_path"]), descriptor, root_path,
+                data["target_model"], data["target_effort"], data["input_digest"],
+            )
+        if errors:
+            raise SwitchError("handoff再検証失敗: " + "; ".join(errors))
+        metadata, _body = VALIDATOR.parse_handoff(documents["handoff"])
+    except (VALIDATOR.HandoffError, OSError, UnicodeError, KeyError) as error:
+        raise SwitchError(str(error)) from error
+    if metadata["task_id"] != data["task_id"] or digest != data["input_digest"]:
+        raise SwitchError("handoffのtaskまたはdigestが変化しました")
+
+
+def resume(
+    repo: Path, session_id: str, transition_id: str,
+    model: str, effort: str, observed_model: str,
+) -> dict:
+    root = _repo_root(repo)
+    with _locked(root, session_id) as (path, data):
+        if data is None or data["state"] != "SWITCH_PENDING":
+            raise SwitchError("再開可能な切替がありません")
+        if transition_id != data["transition_id"]:
+            raise SwitchError("transition IDが異なります")
+        if (model, effort) != (data["target_model"], data["target_effort"]):
+            raise SwitchError("申告されたmodelとeffortが対象ペアと異なります")
+        if observed_model != model:
+            raise SwitchError("hookが観測したmodelが申告と異なります")
+        _validated_pending(root, data)
+        data["state"] = "ACTIVE"
+        data["model_evidence"] = "hook-observed"
+        data["effort_evidence"] = "user-attested"
+        data["verification_tier"] = "user-attested"
+        data["phase_lease"] = data["next_phase"]
+        _write_manifest(path, data)
+        return data
+
+
+def override(
+    repo: Path, session_id: str, transition_id: str,
+    phase: str, reason: str, observed_model: str,
+) -> dict:
+    root = _repo_root(repo)
+    with _locked(root, session_id) as (path, data):
+        if data is None or data["state"] != "SWITCH_PENDING":
+            raise SwitchError("override可能な切替がありません")
+        if transition_id != data["transition_id"] or phase != data["next_phase"]:
+            raise SwitchError("transition IDまたはphaseが異なります")
+        if not reason.strip() or len(reason) > 256:
+            raise SwitchError("override理由が不正です")
+        if not observed_model:
+            raise SwitchError("現在のmodelを観測できません")
+        _validated_pending(root, data)
+        data["state"] = "ACTIVE"
+        data["model_evidence"] = "hook-observed"
+        data["effort_evidence"] = "unverified"
+        data["verification_tier"] = "unverified"
+        data["override_reason"] = reason
+        data["phase_lease"] = phase
+        data["actual_model"] = observed_model
+        _write_manifest(path, data)
+        return data
+
+
+def cancel(repo: Path, session_id: str, transition_id: str) -> dict:
+    root = _repo_root(repo)
+    with _locked(root, session_id) as (path, data):
+        if data is None or data["state"] not in {"PREPARING", "SWITCH_PENDING", "ACTIVE"}:
+            raise SwitchError("取消可能な切替がありません")
+        if transition_id != data["transition_id"]:
+            raise SwitchError("transition IDが異なります")
+        data["state"] = "CANCELLED"
+        data["phase_lease"] = None
         _write_manifest(path, data)
         return data

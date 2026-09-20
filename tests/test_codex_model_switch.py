@@ -23,11 +23,13 @@ class ModelSwitchTests(unittest.TestCase):
         self.env = os.environ.copy()
         self.env["GIT_CONFIG_GLOBAL"] = os.devnull
         self.env["GIT_CONFIG_NOSYSTEM"] = "1"
+        self.env["XDG_CONFIG_HOME"] = str(Path(self.temporary.name).resolve() / "xdg")
+        Path(self.env["XDG_CONFIG_HOME"]).mkdir()
         self.git("init", "-b", "main")
         self.git("config", "user.email", "test@example.invalid")
         self.git("config", "user.name", "Test User")
         (self.repo / ".gitignore").write_text(
-            ".superpowers/model-switch/\n", encoding="utf-8"
+            "# unrelated repository\n", encoding="utf-8"
         )
         (self.repo / "tracked.txt").write_text("initial\n", encoding="utf-8")
         self.git("add", ".gitignore", "tracked.txt")
@@ -112,6 +114,26 @@ providerを変えない。
 """, encoding="utf-8",
         )
 
+    def pending(self):
+        self.assertEqual(self.begin().returncode, 0)
+        self.write_handoff()
+        result = self.run_switch("publish", "--session-id", "s1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return self.state()
+
+    def run_hook(self, event, **fields):
+        payload = {
+            "hook_event_name": event,
+            "session_id": "s1",
+            "cwd": str(self.repo),
+            "model": "gpt-5.6-luna",
+            **fields,
+        }
+        return subprocess.run(
+            ["python3", str(HOOK)], input=json.dumps(payload), cwd=self.repo,
+            env=self.env, text=True, capture_output=True, check=False,
+        )
+
     def test_begin_and_publish_valid_handoff(self):
         result = self.begin()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -141,6 +163,143 @@ providerを変えない。
         result = self.begin()
         self.assertEqual(result.returncode, 2)
         self.assertEqual(self.state()["state"], "PREPARING")
+
+    def test_active_phase_can_start_a_new_checkpoint(self):
+        pending = self.pending()
+        resumed = self.run_hook(
+            "UserPromptSubmit",
+            prompt=f"MODEL_SWITCH_RESUME {pending['transition_id']} gpt-5.6-luna medium",
+        )
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        result = self.begin()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        next_transition = self.state()
+        self.assertEqual(next_transition["state"], "PREPARING")
+        self.assertNotEqual(next_transition["transition_id"], pending["transition_id"])
+
+    def test_pending_blocks_normal_prompt_and_wrong_model(self):
+        pending = self.pending()
+        normal = self.run_hook("UserPromptSubmit", prompt="続きをお願いします")
+        self.assertEqual(normal.returncode, 2)
+        command = f"MODEL_SWITCH_RESUME {pending['transition_id']} gpt-5.6-luna medium"
+        wrong = self.run_hook("UserPromptSubmit", model="gpt-5.6-terra", prompt=command)
+        self.assertEqual(wrong.returncode, 2)
+        self.assertEqual(self.state()["state"], "SWITCH_PENDING")
+
+    def test_resume_requires_exact_attested_pair_and_current_handoff(self):
+        pending = self.pending()
+        transition = pending["transition_id"]
+        wrong_effort = self.run_hook(
+            "UserPromptSubmit",
+            prompt=f"MODEL_SWITCH_RESUME {transition} gpt-5.6-luna high",
+        )
+        self.assertEqual(wrong_effort.returncode, 2)
+        embedded = self.run_hook(
+            "UserPromptSubmit",
+            prompt=f"Please do this: MODEL_SWITCH_RESUME {transition} gpt-5.6-luna medium",
+        )
+        self.assertEqual(embedded.returncode, 2)
+        (self.repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        stale = self.run_hook(
+            "UserPromptSubmit",
+            prompt=f"MODEL_SWITCH_RESUME {transition} gpt-5.6-luna medium",
+        )
+        self.assertEqual(stale.returncode, 2)
+        self.assertEqual(self.state()["state"], "SWITCH_PENDING")
+
+    def test_valid_resume_issues_user_attested_phase_lease(self):
+        pending = self.pending()
+        result = self.run_hook(
+            "UserPromptSubmit",
+            prompt=f"MODEL_SWITCH_RESUME {pending['transition_id']} gpt-5.6-luna medium",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        active = self.state()
+        self.assertEqual(active["state"], "ACTIVE")
+        self.assertEqual(active["verification_tier"], "user-attested")
+        self.assertEqual(active["phase_lease"], "implementation")
+
+    def test_override_and_cancel_are_scoped_to_pending_transition(self):
+        pending = self.pending()
+        transition = pending["transition_id"]
+        wrong_phase = self.run_hook(
+            "UserPromptSubmit",
+            prompt=f"MODEL_SWITCH_OVERRIDE {transition} deployment reason",
+        )
+        self.assertEqual(wrong_phase.returncode, 2)
+        override = self.run_hook(
+            "UserPromptSubmit",
+            model="gpt-5.6-terra",
+            prompt=f"MODEL_SWITCH_OVERRIDE {transition} implementation urgent",
+        )
+        self.assertEqual(override.returncode, 0, override.stderr)
+        active = self.state()
+        self.assertEqual(active["state"], "ACTIVE")
+        self.assertEqual(active["override_reason"], "urgent")
+        self.assertEqual(active["phase_lease"], "implementation")
+
+    def test_cancel_makes_transition_terminal(self):
+        pending = self.pending()
+        transition = pending["transition_id"]
+        result = self.run_hook("UserPromptSubmit", prompt=f"MODEL_SWITCH_CANCEL {transition}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.state()["state"], "CANCELLED")
+        retry = self.run_hook(
+            "UserPromptSubmit",
+            prompt=f"MODEL_SWITCH_RESUME {transition} gpt-5.6-luna medium",
+        )
+        self.assertEqual(retry.returncode, 2)
+
+    def test_cancel_ends_active_phase_lease(self):
+        pending = self.pending()
+        transition = pending["transition_id"]
+        resumed = self.run_hook(
+            "UserPromptSubmit",
+            prompt=f"MODEL_SWITCH_RESUME {transition} gpt-5.6-luna medium",
+        )
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        cancelled = self.run_hook(
+            "UserPromptSubmit", prompt=f"MODEL_SWITCH_CANCEL {transition}",
+        )
+        self.assertEqual(cancelled.returncode, 0, cancelled.stderr)
+        self.assertEqual(self.state()["state"], "CANCELLED")
+        self.assertIsNone(self.state()["phase_lease"])
+
+    def test_pending_blocks_local_tool_and_preparing_allows_only_handoff_edit(self):
+        self.assertEqual(self.begin().returncode, 0)
+        patch = "*** Begin Patch\n*** Add File: .superpowers/handoffs/task-a.md\n+text\n*** End Patch"
+        allowed = self.run_hook(
+            "PreToolUse", tool_name="apply_patch", tool_input={"command": patch},
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        blocked = self.run_hook(
+            "PreToolUse", tool_name="Bash", tool_input={"command": "touch bad.txt"},
+        )
+        self.assertEqual(blocked.returncode, 2)
+        self.write_handoff()
+        self.assertEqual(self.run_switch("publish", "--session-id", "s1").returncode, 0)
+        still_blocked = self.run_hook(
+            "PreToolUse", tool_name="apply_patch", tool_input={"command": patch},
+        )
+        self.assertEqual(still_blocked.returncode, 2)
+
+    def test_preparing_rejects_arbitrary_python_interpreter_with_trusted_script(self):
+        self.assertEqual(self.begin().returncode, 0)
+        command = (
+            f"/tmp/python3 {SWITCH} publish --repo {self.repo} --session-id s1"
+        )
+        result = self.run_hook(
+            "PreToolUse", tool_name="Bash", tool_input={"command": command},
+        )
+        self.assertEqual(result.returncode, 2)
+
+    def test_hook_rejects_malformed_json(self):
+        result = subprocess.run(
+            ["python3", str(HOOK)], input="not-json", cwd=self.repo,
+            env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertNotIn("Traceback", result.stderr)
 
 
 if __name__ == "__main__":
