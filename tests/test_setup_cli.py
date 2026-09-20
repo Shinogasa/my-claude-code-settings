@@ -181,6 +181,23 @@ class SetupCliTests(unittest.TestCase):
         self.assertEqual(help_result.returncode, 0, help_result.stderr)
         self.assertIn("モデル間handoff", help_result.stdout)
 
+    def test_codex_installs_model_switch_cli_and_hook(self):
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for source, installed in (
+            ("bin/codex-model-switch.py", ".codex/bin/codex-model-switch.py"),
+            ("bin/codex_model_switch.py", ".codex/bin/codex_model_switch.py"),
+            ("hooks/codex-model-switch-hook.py", ".codex/hooks/codex-model-switch-hook.py"),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(
+                    (self.home / installed).resolve(),
+                    (self.repository / source).resolve(),
+                )
+
     def test_codex_setup_configures_default_subagent_pair(self):
         (self.home / ".codex").mkdir()
 
@@ -432,6 +449,16 @@ class SetupCliTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("validate-codex-handoff.py", result.stderr)
+        self.assertEqual(list((self.home / ".codex").iterdir()), [])
+
+    def test_missing_model_switch_hook_stops_before_home_mutation(self):
+        (self.home / ".codex").mkdir()
+        (self.repository / "hooks" / "codex-model-switch-hook.py").unlink()
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("codex-model-switch-hook.py", result.stderr)
         self.assertEqual(list((self.home / ".codex").iterdir()), [])
 
     def test_missing_config_io_helper_stops_before_home_mutation(self):

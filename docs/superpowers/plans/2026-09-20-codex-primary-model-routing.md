@@ -41,7 +41,7 @@
 
 **Interfaces:** `begin(repo: Path, session_id: str, task_id: str, current_phase: str, next_phase: str, model: str, effort: str, handoff: Path) -> dict`、`publish(repo: Path, session_id: str) -> dict`、`status(repo: Path, session_id: str) -> dict | None`。失敗は`SwitchError`で表し、CLIは終了2にする。
 
-- [ ] **Step 1: Write the failing test.** 一時Git repoを作り、`begin`後のstatusが`PREPARING`、handoff schema 1を作った`publish`後が`SWITCH_PENDING`でdigestを持つことを検証する。別session・symlink・validator失敗も拒否を観測する。
+- [x] **Step 1: Write the failing test.** 一時Git repoを作り、`begin`後のstatusが`PREPARING`、handoff schema 1を作った`publish`後が`SWITCH_PENDING`でdigestを持つことを検証する。別session・symlink・validator失敗も拒否を観測する。
 
 ```python
 result = run_switch("begin", "--session-id", "s1", "--task-id", "task-a",
@@ -52,18 +52,18 @@ self.assertEqual(result.returncode, 0, result.stderr)
 self.assertEqual(run_status("s1")["state"], "PREPARING")
 ```
 
-- [ ] **Step 2: Run RED.** `python3 -m unittest tests.test_codex_model_switch -v`がCLI不在で失敗することを確認する。
-- [ ] **Step 3: Implement minimal code.** `begin`でvalidator `state`のbranch/HEAD/fingerprintを保存し、`publish`でvalidator `validate`の`INPUT_DIGEST`とhandoff frontmatterのtask/pair/Git識別子を照合する。owner-onlyなdir/file、atomic replace、同一sessionへの再begin拒否を実装する。
-- [ ] **Step 4: Run GREEN.** `python3 -m unittest tests.test_codex_model_switch -v`を成功させる。
-- [ ] **Step 5: Commit.** `git add`でTask 1のファイルをstageし、`git commit -m "feat(codex): 切替manifestと検証済みhandoffを管理する"`。
+- [x] **Step 2: Run RED.** `python3 -m unittest tests.test_codex_model_switch -v`がCLI不在で失敗することを確認する。
+- [x] **Step 3: Implement minimal code.** `begin`でvalidator `state`のbranch/HEAD/fingerprintを保存し、`publish`でvalidator `validate`の`INPUT_DIGEST`とhandoff frontmatterのtask/pair/Git識別子を照合する。owner-onlyなdir/file、atomic replace、同一sessionへの再begin拒否を実装する。
+- [x] **Step 4: Run GREEN.** `python3 -m unittest tests.test_codex_model_switch -v`を成功させる。
+- [x] **Step 5: Commit.** `git add`でTask 1のファイルをstageし、`git commit -m "feat(codex): 切替manifestと検証済みhandoffを管理する"`。
 
 ### Task 2: Prompt再開とlocal tool guard
 
 **Files:** `bin/codex_model_switch.py`、`hooks/codex-model-switch-hook.py`、`codex/hooks.json`、`tests/test_codex_model_switch.py`
 
-**Interfaces:** `resume(repo, session_id, transition_id, model, effort, observed_model)`、`override(repo, session_id, transition_id, phase, reason, observed_model)`、`cancel(repo, session_id, transition_id)`。hookはstdinの`hook_event_name`でdispatchし、拒否はexit 2と日本語のstderrで示す。
+**Interfaces:** `resume(repo, session_id, transition_id, model, effort, observed_model)`、`override(repo, session_id, transition_id, phase, reason, observed_model)`、`cancel(repo, session_id, transition_id)`。hookはstdinの`hook_event_name`でdispatchし、prompt拒否は公式JSON block、tool拒否はexit 2と日本語のstderrで示す。
 
-- [ ] **Step 1: Write the failing test.** `SWITCH_PENDING`で通常prompt、model不一致、effort申告不一致、stale handoff、一般toolを拒否し、完全一致の`MODEL_SWITCH_RESUME <id> <model> <effort>`だけを`ACTIVE`へ移す。overrideは対象phaseだけ、cancelはterminal、別sessionは影響されないことを検証する。
+- [x] **Step 1: Write the failing test.** `SWITCH_PENDING`で通常prompt、model不一致、effort申告不一致、stale handoff、一般toolを拒否し、完全一致の`MODEL_SWITCH_RESUME <id> <model> <effort>`だけを`ACTIVE`へ移す。overrideは対象phaseだけ、cancelはterminal、別sessionは影響されないことを検証する。
 
 ```python
 payload = {"hook_event_name": "UserPromptSubmit", "session_id": "s1",
@@ -74,10 +74,10 @@ self.assertEqual(result.returncode, 0, result.stderr)
 self.assertEqual(run_status("s1")["state"], "ACTIVE")
 ```
 
-- [ ] **Step 2: Run RED.** 同じ`unittest`で新caseが機能欠落により失敗することを確認する。
-- [ ] **Step 3: Implement minimal code.** promptを全文一致parseし、resume前にvalidatorへ保存digestを渡す。`PreToolUse`はPREPARINGのhandoff編集・validator・status/publishとPENDINGのvalidator read・status以外を拒否し、Bash入力のshell演算子等を拒否する。SessionStartはsession IDとpending状態を追加contextへ出す。
-- [ ] **Step 4: Run GREEN.** hookをsubprocessで起動するtestを成功させ、`codex/hooks.json`の同期配線をJSONから検証する。
-- [ ] **Step 5: Commit.** Task 2のファイルをstageし、`git commit -m "feat(codex): 親工程切替のpromptとtoolを制御する"`。
+- [x] **Step 2: Run RED.** 同じ`unittest`で新caseが機能欠落により失敗することを確認する。
+- [x] **Step 3: Implement minimal code.** promptを全文一致parseし、resume前にvalidatorへ保存digestを渡す。`PreToolUse`はPREPARINGのhandoff編集・validator・status/publishとPENDINGのvalidator read・status以外を拒否し、Bash入力のshell演算子等を拒否する。SessionStartはsession IDとpending状態を追加contextへ出す。
+- [x] **Step 4: Run GREEN.** hookをsubprocessで起動するtestを成功させ、`codex/hooks.json`の同期配線をJSONから検証する。
+- [x] **Step 5: Commit.** Task 2のファイルをstageし、`git commit -m "feat(codex): 親工程切替のpromptとtoolを制御する"`。
 
 ### Task 3: 配布、運用、実機smoke
 
@@ -85,11 +85,11 @@ self.assertEqual(run_status("s1")["state"], "ACTIVE")
 
 **Interfaces:** `setup.sh --codex`がCLI・hookを既存の`~/.codex/bin`・`~/.codex/hooks`経由で配布し、欠落時はpreflightで拒否する。
 
-- [ ] **Step 1: Write the failing test.** 一時HOMEで`setup.sh --codex`を起動し、新CLIとhookがリンク先に存在すること、必要ファイル欠落時はpreflight失敗することを検証する。
-- [ ] **Step 2: Run RED.** `python3 -m unittest tests.test_setup_cli -v`で新caseの失敗を確認する。
-- [ ] **Step 3: Implement minimal code.** setup preflightを追加し、routing文書とREADMEへcheckpoint、begin/publish、手動切替、厳密resume/override/cancel、証拠tier、fresh session fallbackを記す。
-- [ ] **Step 4: Run GREEN.** 変更したtest suiteを成功させ、CLIの手動smokeで`begin → publish → pending拒否 → resume`を一時Git repoに対して確認する。実Codex hook trust状態も観測し、未承認ならguard稼働の証拠にしない。
-- [ ] **Step 5: Review and commit.** security-reviewerにread-onlyで意味レビューを依頼し、指摘を修正後に`verification-loop`を実行し、Task 3をcommitする。
+- [x] **Step 1: Write the failing test.** 一時HOMEで`setup.sh --codex`を起動し、新CLIとhookがリンク先に存在すること、必要ファイル欠落時はpreflight失敗することを検証する。
+- [x] **Step 2: Run RED.** `python3 -m unittest tests.test_setup_cli -v`で新caseの失敗を確認する。
+- [x] **Step 3: Implement minimal code.** setup preflightを追加し、routing文書とREADMEへcheckpoint、begin/publish、手動切替、厳密resume/override/cancel、証拠tier、fresh session fallbackを記す。
+- [x] **Step 4: Run GREEN.** 変更したtest suiteを成功させ、CLIの手動smokeで`begin → publish → pending拒否 → resume`を一時Git repoに対して確認する。実Codex hook trust状態も観測し、未承認ならguard稼働の証拠にしない。
+- [x] **Step 5: Review and commit.** security-reviewerにread-onlyで意味レビューを依頼し、指摘を修正後に`verification-loop`を実行し、Task 3をcommitする。
 
 ## Self-review
 

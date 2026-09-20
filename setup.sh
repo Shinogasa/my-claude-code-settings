@@ -302,6 +302,18 @@ validate_sources() {
     red "Codex handoff検証スクリプトが存在しません: validate-codex-handoff.py"
     return 1
   fi
+  if selected_codex; then
+    local switch_file
+    for switch_file in \
+      bin/codex-model-switch.py \
+      bin/codex_model_switch.py \
+      hooks/codex-model-switch-hook.py; do
+      if [ ! -f "$SCRIPT_DIR/$switch_file" ]; then
+        red "Codex model switchファイルが存在しません: $switch_file"
+        return 1
+      fi
+    done
+  fi
 }
 
 recorded_checksum() {

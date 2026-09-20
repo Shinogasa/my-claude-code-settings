@@ -25,6 +25,8 @@ class ModelSwitchTests(unittest.TestCase):
         self.env["GIT_CONFIG_NOSYSTEM"] = "1"
         self.env["XDG_CONFIG_HOME"] = str(Path(self.temporary.name).resolve() / "xdg")
         Path(self.env["XDG_CONFIG_HOME"]).mkdir()
+        self.env["CODEX_HOME"] = str(Path(self.temporary.name).resolve() / "codex-home")
+        Path(self.env["CODEX_HOME"]).mkdir()
         self.git("init", "-b", "main")
         self.git("config", "user.email", "test@example.invalid")
         self.git("config", "user.name", "Test User")
@@ -134,6 +136,12 @@ providerを変えない。
             env=self.env, text=True, capture_output=True, check=False,
         )
 
+    def assert_prompt_blocked(self, result):
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["decision"], "block")
+        self.assertIn("MODEL_SWITCH_BLOCKED", output["reason"])
+
     def test_begin_and_publish_valid_handoff(self):
         result = self.begin()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -164,6 +172,32 @@ providerを変えない。
         self.assertEqual(result.returncode, 2)
         self.assertEqual(self.state()["state"], "PREPARING")
 
+    def test_begin_rejects_symlinked_state_directory(self):
+        outside = Path(self.temporary.name).resolve() / "outside"
+        outside.mkdir()
+        parent = self.repo / ".superpowers"
+        (parent / "model-switch").symlink_to(outside, target_is_directory=True)
+
+        result = self.begin()
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_begin_rejects_symlinked_handoff_target(self):
+        self.handoff.symlink_to(self.repo / "tracked.txt")
+
+        result = self.begin()
+
+        self.assertEqual(result.returncode, 2)
+
+    def test_begin_rejects_symlinked_handoff_directory(self):
+        self.handoff.parent.rmdir()
+        self.handoff.parent.symlink_to(self.repo, target_is_directory=True)
+
+        result = self.begin()
+
+        self.assertEqual(result.returncode, 2)
+
     def test_active_phase_can_start_a_new_checkpoint(self):
         pending = self.pending()
         resumed = self.run_hook(
@@ -180,10 +214,10 @@ providerを変えない。
     def test_pending_blocks_normal_prompt_and_wrong_model(self):
         pending = self.pending()
         normal = self.run_hook("UserPromptSubmit", prompt="続きをお願いします")
-        self.assertEqual(normal.returncode, 2)
+        self.assert_prompt_blocked(normal)
         command = f"MODEL_SWITCH_RESUME {pending['transition_id']} gpt-5.6-luna medium"
         wrong = self.run_hook("UserPromptSubmit", model="gpt-5.6-terra", prompt=command)
-        self.assertEqual(wrong.returncode, 2)
+        self.assert_prompt_blocked(wrong)
         self.assertEqual(self.state()["state"], "SWITCH_PENDING")
 
     def test_resume_requires_exact_attested_pair_and_current_handoff(self):
@@ -193,18 +227,18 @@ providerを変えない。
             "UserPromptSubmit",
             prompt=f"MODEL_SWITCH_RESUME {transition} gpt-5.6-luna high",
         )
-        self.assertEqual(wrong_effort.returncode, 2)
+        self.assert_prompt_blocked(wrong_effort)
         embedded = self.run_hook(
             "UserPromptSubmit",
             prompt=f"Please do this: MODEL_SWITCH_RESUME {transition} gpt-5.6-luna medium",
         )
-        self.assertEqual(embedded.returncode, 2)
+        self.assert_prompt_blocked(embedded)
         (self.repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
         stale = self.run_hook(
             "UserPromptSubmit",
             prompt=f"MODEL_SWITCH_RESUME {transition} gpt-5.6-luna medium",
         )
-        self.assertEqual(stale.returncode, 2)
+        self.assert_prompt_blocked(stale)
         self.assertEqual(self.state()["state"], "SWITCH_PENDING")
 
     def test_valid_resume_issues_user_attested_phase_lease(self):
@@ -226,7 +260,7 @@ providerを変えない。
             "UserPromptSubmit",
             prompt=f"MODEL_SWITCH_OVERRIDE {transition} deployment reason",
         )
-        self.assertEqual(wrong_phase.returncode, 2)
+        self.assert_prompt_blocked(wrong_phase)
         override = self.run_hook(
             "UserPromptSubmit",
             model="gpt-5.6-terra",
@@ -248,7 +282,7 @@ providerを変えない。
             "UserPromptSubmit",
             prompt=f"MODEL_SWITCH_RESUME {transition} gpt-5.6-luna medium",
         )
-        self.assertEqual(retry.returncode, 2)
+        self.assert_prompt_blocked(retry)
 
     def test_cancel_ends_active_phase_lease(self):
         pending = self.pending()
@@ -264,6 +298,22 @@ providerを変えない。
         self.assertEqual(cancelled.returncode, 0, cancelled.stderr)
         self.assertEqual(self.state()["state"], "CANCELLED")
         self.assertIsNone(self.state()["phase_lease"])
+
+    def test_cancelled_session_can_continue_after_repo_move(self):
+        pending = self.pending()
+        cancelled = self.run_hook(
+            "UserPromptSubmit",
+            prompt=f"MODEL_SWITCH_CANCEL {pending['transition_id']}",
+        )
+        self.assertEqual(cancelled.returncode, 0, cancelled.stderr)
+        moved = self.repo.parent / "moved-repo"
+        self.repo.rename(moved)
+        self.repo = moved
+
+        normal = self.run_hook("UserPromptSubmit", prompt="通常の続き")
+
+        self.assertEqual(normal.returncode, 0, normal.stderr)
+        self.assertEqual(normal.stdout, "")
 
     def test_pending_blocks_local_tool_and_preparing_allows_only_handoff_edit(self):
         self.assertEqual(self.begin().returncode, 0)
@@ -283,6 +333,55 @@ providerを変えない。
         )
         self.assertEqual(still_blocked.returncode, 2)
 
+    def test_preparing_blocks_patch_through_handoff_file_symlink(self):
+        self.assertEqual(self.begin().returncode, 0)
+        self.handoff.symlink_to(self.repo / "tracked.txt")
+        patch = "*** Begin Patch\n*** Update File: .superpowers/handoffs/task-a.md\n@@\n-initial\n+changed\n*** End Patch"
+
+        result = self.run_hook(
+            "PreToolUse", tool_name="apply_patch", tool_input={"command": patch},
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual((self.repo / "tracked.txt").read_text(encoding="utf-8"), "initial\n")
+
+    def test_preparing_blocks_patch_through_handoff_hardlink(self):
+        self.assertEqual(self.begin().returncode, 0)
+        os.link(self.repo / "tracked.txt", self.handoff)
+        patch = "*** Begin Patch\n*** Update File: .superpowers/handoffs/task-a.md\n@@\n-initial\n+changed\n*** End Patch"
+
+        result = self.run_hook(
+            "PreToolUse", tool_name="apply_patch", tool_input={"command": patch},
+        )
+
+        self.assertEqual(result.returncode, 2)
+
+    def test_preparing_blocks_patch_through_handoff_directory_symlink(self):
+        self.assertEqual(self.begin().returncode, 0)
+        self.handoff.parent.rmdir()
+        self.handoff.parent.symlink_to(self.repo, target_is_directory=True)
+        patch = "*** Begin Patch\n*** Add File: .superpowers/handoffs/task-a.md\n+text\n*** End Patch"
+
+        result = self.run_hook(
+            "PreToolUse", tool_name="apply_patch", tool_input={"command": patch},
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse((self.repo / "task-a.md").exists())
+
+    def test_preparing_blocks_relative_patch_from_repo_subdirectory(self):
+        self.assertEqual(self.begin().returncode, 0)
+        nested = self.repo / "nested"
+        nested.mkdir()
+        patch = "*** Begin Patch\n*** Add File: .superpowers/handoffs/task-a.md\n+text\n*** End Patch"
+
+        result = self.run_hook(
+            "PreToolUse", cwd=str(nested), tool_name="apply_patch",
+            tool_input={"command": patch},
+        )
+
+        self.assertEqual(result.returncode, 2)
+
     def test_preparing_rejects_arbitrary_python_interpreter_with_trusted_script(self):
         self.assertEqual(self.begin().returncode, 0)
         command = (
@@ -300,6 +399,35 @@ providerを変えない。
         )
         self.assertEqual(result.returncode, 2)
         self.assertNotIn("Traceback", result.stderr)
+
+    def test_pending_cannot_escape_guard_by_changing_cwd(self):
+        self.pending()
+        outside = self.repo.parent / "outside"
+        outside.mkdir()
+        tool = self.run_hook(
+            "PreToolUse", cwd=str(outside), tool_name="Bash",
+            tool_input={"command": "touch outside.txt"},
+        )
+        self.assertEqual(tool.returncode, 2)
+        prompt = self.run_hook(
+            "UserPromptSubmit", cwd=str(outside), prompt="通常の続き",
+        )
+        self.assert_prompt_blocked(prompt)
+
+    def test_incomplete_active_manifest_never_allows_tool(self):
+        self.assertEqual(self.begin().returncode, 0)
+        manifest = next((self.repo / ".superpowers" / "model-switch").glob("*.json"))
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        manifest.write_text(
+            json.dumps({
+                "schema": 1, "session_id": "s1", "repo": str(self.repo),
+                "state": "ACTIVE", "transition_id": data["transition_id"],
+            }), encoding="utf-8",
+        )
+        result = self.run_hook(
+            "PreToolUse", tool_name="Bash", tool_input={"command": "touch bad.txt"},
+        )
+        self.assertEqual(result.returncode, 2)
 
 
 if __name__ == "__main__":

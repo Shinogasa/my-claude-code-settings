@@ -43,6 +43,10 @@ CLI 0.154.0の生成schemaである。hook入力契約の正本が公式Hooksな
 .superpowers/model-switch/へ置き、Git追跡対象から除外する。repoとsession_idで
 pendingを分離し、各sessionに同時に一件だけ許す。hookのsession_idはsubagentでは
 親sessionを指すため、親のpending中はそのsubagentのlocal toolも止まる。
+異なるcwdへ移った時もpendingを見失わないよう、`CODEX_HOME/model-switch-registry/`に
+owner-onlyのsession→repo対応を置く。対応先repoが欠落・不正、またはpending中のcwdが
+対応先repo外なら拒否する。cancelでは対応を削除する。CANCELLEDのmanifestは履歴として
+残し、repo移動後も同じsessionの通常promptを妨げない。
 
 manifestにはschema version、transition ID、session ID、task ID、current/next phase、
 target model・effort、handoff path、INPUT_DIGEST、pre-switch branch・HEAD・fingerprint、
@@ -89,9 +93,11 @@ cancelで失効させる。
   resumeに必要な証拠が不足・不一致ならpendingを維持する。
 - PreToolUseはPREPARING・SWITCH_PENDINGのlocal toolをdeny-by-defaultにする。
   PREPARINGでは指定handoffの編集とvalidator・状態CLIだけ、SWITCH_PENDINGでは
-  validator readと状態照会だけを許す。Bashは単一commandを厳密解析し、
-  shell control operator、redirection、command substitutionを許可しない。
-- 判定可能なエラーは公式のdenyまたはexit 2で拒否する。非同期hookを使わない。
+  validator readと状態照会だけを許す。handoff編集時はpatchの指定pathだけでなく、
+  親directory・ファイルのsymlinkとファイルのhardlinkを拒否し、相対pathはrepo rootの
+  cwdからだけ許す。Bashは単一commandを厳密解析し、shell control operator、
+  redirection、command substitutionを許可しない。
+- 判定可能なエラーは公式のJSON blockまたはdenyで拒否する。非同期hookを使わない。
   hook未承認・無効・timeout・実行不能、hosted tool、特殊tool経路は
   このguardの完全な強制対象ではない。
 

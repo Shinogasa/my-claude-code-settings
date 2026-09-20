@@ -309,3 +309,35 @@ commandの出力は成功証拠に数えず、関連testとdiff検査もfreshに
 Markdown、正規表現、Git messageなど任意文字列をshell commandへ埋め込む前に、backtick、`$()`、
 redirect、control operatorの有無を確認する。literal patternはsingle quoteかpattern fileで渡し、
 表示上のquotingではなくshellが解釈する最終文字列を基準に安全性を判断する。
+
+### 2026-09-20 | repo内manifestだけでsessionのpendingを引けると考えた
+
+**間違えた内容:**
+hook payloadの`cwd`からGit rootを求め、そのrepoのmanifestだけを読んだ。pending中に
+repo外のcwdが来るとmanifestを見失い、通常promptとlocal toolを許す。また、manifestの
+識別子とstateだけを検査し、必須証拠が欠けた`ACTIVE`を通していた。
+
+**指摘・修正:**
+security-reviewerの所見を、repo外cwdと不完全ACTIVE manifestのREDテストで再現した。
+owner-onlyのsession→repo registryをCodex設定dirに置き、repo外への移動を拒否する。
+manifestは各stateに必要なdigest、pair、Git識別子、lease、証拠tierまで検査する。
+
+**教訓:**
+local guardの状態探索を、操作側が変えられるcwdに依存させない。状態名だけで成功を決めず、
+その状態を成立させる証拠全体を同時に検証する。
+
+### 2026-09-20 | 許可patchのpath文字列だけを検査した
+
+**間違えた内容:**
+PREPARINGでpatch headerが指定handoffに一致すれば編集を許した。適用側はsymlinkを
+解決するため、handoffの別名から他ファイルを書き換えられた。cancel後もsession registryを
+残し、repoを移動すると通常promptが拒否された。
+
+**指摘・修正:**
+最終レビューの所見を実際のpatch適用とREDテストで確認した。beginとpatch許可時に
+親path・ファイルのsymlinkとhardlinkを拒否し、相対patchのcwdをrepo rootへ限定した。
+cancelではregistryを解放し、移動後も同じsessionを続けられることをテストした。
+
+**教訓:**
+副作用の許可は入力文字列だけでなく、適用時に解決される対象で判断する。状態を
+terminalにする際は、関連する索引やleaseの後始末まで一つの遷移として扱う。

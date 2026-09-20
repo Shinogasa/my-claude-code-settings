@@ -31,6 +31,13 @@ surface固有の拡張、未確認event、将来版で追加された場合は�
   SWITCH_PENDINGへ移り、親AIは切替依頼を返して停止する。
 - 遷移ID、工程、target pair、evidence、handoff digest、Git fingerprintは
   session別のprivate manifestへ置く。handoff schema 1は変更しない。
+- 実装時のsecurity reviewで、hookのcwdだけからmanifestを探すとrepo外のcwdで
+  pendingを見失うと判明した。`CODEX_HOME/model-switch-registry/`にowner-onlyの
+  session→repo対応を追加し、対応先が欠落・不正、またはpending中に別repoへ移ったら拒否する。
+  cancelでは対応を削除し、repo移動後も同じsessionを続けられるようにする。
+- 最終レビューで、PREPARINGのpatchがsymlinkを追って別ファイルを書き換えると判明した。
+  beginとpatch許可時にhandoffの親path・ファイルのsymlinkとファイルのhardlinkを拒否し、
+  相対patchはrepo rootのcwdからだけ許す。
 - ユーザーが公式UIまたはCLIで切り替える。UserPromptSubmitは現在promptの
   厳密なresume・override・cancel commandだけを受け、pending中の通常promptを拒否する。
   PreToolUseは対象local toolの副作用を拒否するbackstopとする。
@@ -81,6 +88,10 @@ UserPromptSubmitを主gateとし、PreToolUseは対象local toolのbackstopに�
 
 採らない。現在threadへの反映が不明確で、別sessionの通常既定も変わる。
 
+### H. handoff patchの文字列上のpath一致だけで編集を許す
+
+採らない。patch適用時にsymlinkが解決され、指定handoff以外を変更できる。
+
 ## 結果
 
 良くなること:
@@ -94,6 +105,8 @@ UserPromptSubmitを主gateとし、PreToolUseは対象local toolのbackstopに�
 - 手動切替とhandoff作成による操作負担が増える。
 - user-attestedは実行ペアの機械証明ではない。
 - hook未承認、失敗、対象外tool、pending前の分類忘れでは完全な強制を保証できない。
+- handoff pathの検査とpatch適用の間に別processがpathを差し替える競合は、初回実装の
+  local hookだけでは排除できない。
 - app-serverとhookのcurrent thread対応はCLI・アプリ双方のruntime spikeが必要である。
 
 ## 根拠

@@ -13,7 +13,10 @@ from pathlib import Path
 
 BIN = Path(__file__).resolve().parents[1] / "bin"
 sys.path.insert(0, str(BIN))
-from codex_model_switch import SwitchError, cancel, override, resume, status  # noqa: E402
+from codex_model_switch import (  # noqa: E402
+    SwitchError, bound_repo, cancel, override, resume, status,
+    validate_handoff_edit_target,
+)
 
 
 RESUME_RE = re.compile(r"MODEL_SWITCH_RESUME ([0-9a-f]{32}) ([A-Za-z0-9.-]+) ([a-z]+)")
@@ -54,8 +57,31 @@ def _reject(reason: str) -> int:
     return 2
 
 
-def _prompt(repo: Path | None, session_id: str, model: str, prompt: str) -> int:
-    data = status(repo, session_id) if repo is not None else None
+def _block_prompt(reason: str) -> int:
+    message = f"MODEL_SWITCH_BLOCKED: {reason}"
+    print(json.dumps({
+        "decision": "block",
+        "reason": message,
+    }, ensure_ascii=False))
+    return 0
+
+
+def _session_state(cwd_repo: Path | None, session_id: str) -> tuple[Path | None, dict | None]:
+    binding = bound_repo(session_id)
+    if binding is not None:
+        data = status(binding, session_id)
+        if data is None:
+            raise SwitchError("session registryに対応するmanifestがありません")
+        if data["state"] in {"PREPARING", "SWITCH_PENDING"} and cwd_repo != binding:
+            raise SwitchError("切替中のsessionが対象repo外へ移動しました")
+        return binding, data
+    data = status(cwd_repo, session_id) if cwd_repo is not None else None
+    if data is not None and data["state"] in {"PREPARING", "SWITCH_PENDING"}:
+        raise SwitchError("切替中のmanifestにsession registryがありません")
+    return cwd_repo, data
+
+
+def _prompt(repo: Path | None, data: dict | None, session_id: str, model: str, prompt: str) -> int:
     match = CANCEL_RE.fullmatch(prompt)
     if data is not None and match and data["state"] != "CANCELLED":
         cancel(repo, session_id, match.group(1))
@@ -63,10 +89,10 @@ def _prompt(repo: Path | None, session_id: str, model: str, prompt: str) -> int:
         return 0
     if data is None or data["state"] in {"ACTIVE", "CANCELLED"}:
         if prompt.startswith("MODEL_SWITCH_"):
-            return _reject("有効な切替待ちではありません")
+            return _block_prompt("有効な切替待ちではありません")
         return 0
     if data["state"] != "SWITCH_PENDING":
-        return _reject("handoff準備中です。publishまたは取消を完了してください")
+        return _block_prompt("handoff準備中です。publishまたは取消を完了してください")
     match = RESUME_RE.fullmatch(prompt)
     if match:
         updated = resume(repo, session_id, *match.groups(), model)
@@ -88,7 +114,7 @@ def _prompt(repo: Path | None, session_id: str, model: str, prompt: str) -> int:
             "UserPromptSubmit",
         )
         return 0
-    return _reject("切替待ちです。厳密なRESUME、OVERRIDE、CANCELだけを受け付けます")
+    return _block_prompt("切替待ちです。厳密なRESUME、OVERRIDE、CANCELだけを受け付けます")
 
 
 def _same_script(argument: str, expected: Path) -> bool:
@@ -162,21 +188,25 @@ def _allowed_bash(command: str, repo: Path, session_id: str, data: dict) -> bool
     )
 
 
-def _allowed_patch(command: str, repo: Path, data: dict) -> bool:
+def _allowed_patch(command: str, repo: Path, cwd: str, data: dict) -> bool:
     if not isinstance(command, str) or not command.startswith("*** Begin Patch\n") or not command.endswith("*** End Patch"):
         return False
     headers = [line for line in command.splitlines() if line.startswith("*** ")]
     if len(headers) != 3 or headers[-1] != "*** End Patch":
         return False
     expected = data["handoff_path"]
-    return headers[1] in {
-        f"*** Add File: {expected}", f"*** Update File: {expected}",
-        f"*** Add File: {repo / expected}", f"*** Update File: {repo / expected}",
-    }
+    relative = {f"*** Add File: {expected}", f"*** Update File: {expected}"}
+    absolute = {f"*** Add File: {repo / expected}", f"*** Update File: {repo / expected}"}
+    if headers[1] in relative:
+        if not Path(cwd).samefile(repo):
+            return False
+    elif headers[1] not in absolute:
+        return False
+    validate_handoff_edit_target(repo, expected)
+    return True
 
 
-def _pretool(repo: Path | None, session_id: str, tool_name: str, tool_input: object) -> int:
-    data = status(repo, session_id) if repo is not None else None
+def _pretool(repo: Path | None, data: dict | None, session_id: str, cwd: str, tool_name: str, tool_input: object) -> int:
     if data is None or data["state"] in {"ACTIVE", "CANCELLED"}:
         return 0
     if not isinstance(tool_input, dict):
@@ -188,13 +218,14 @@ def _pretool(repo: Path | None, session_id: str, tool_name: str, tool_input: obj
     if (
         data["state"] == "PREPARING"
         and tool_name == "apply_patch"
-        and _allowed_patch(tool_input.get("command"), repo, data)
+        and _allowed_patch(tool_input.get("command"), repo, cwd, data)
     ):
         return 0
     return _reject("モデル切替中のlocal toolは許可されたhandoff操作だけです")
 
 
 def main() -> int:
+    event = None
     try:
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
@@ -205,9 +236,9 @@ def main() -> int:
         session_id = payload.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             raise SwitchError("session_idが不正です")
-        repo = _root(payload.get("cwd"))
+        cwd_repo = _root(payload.get("cwd"))
+        repo, data = _session_state(cwd_repo, session_id)
         if event == "SessionStart":
-            data = status(repo, session_id) if repo is not None else None
             state = data["state"] if data else "NONE"
             _context(
                 f"Codex model switch session_id={session_id} state={state}。"
@@ -219,9 +250,11 @@ def main() -> int:
             prompt = payload.get("prompt")
             if not isinstance(prompt, str):
                 raise SwitchError("promptが不正です")
-            return _prompt(repo, session_id, payload.get("model", ""), prompt)
-        return _pretool(repo, session_id, payload.get("tool_name"), payload.get("tool_input"))
+            return _prompt(repo, data, session_id, payload.get("model", ""), prompt)
+        return _pretool(repo, data, session_id, payload["cwd"], payload.get("tool_name"), payload.get("tool_input"))
     except (SwitchError, OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
+        if event == "UserPromptSubmit":
+            return _block_prompt(str(error))
         return _reject(str(error))
 
 
