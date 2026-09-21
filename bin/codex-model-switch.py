@@ -5,13 +5,13 @@ import json
 import sys
 from pathlib import Path
 
-from codex_model_switch import SwitchError, begin, publish, status
+from codex_model_switch import SwitchError, begin, cancel, diagnose, publish, status
 
 
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("begin", "publish", "status"):
+    for name in ("begin", "publish", "status", "diagnose", "cancel"):
         command = commands.add_parser(name)
         command.add_argument("--repo", type=Path, default=Path.cwd())
         command.add_argument("--session-id", required=True)
@@ -22,6 +22,9 @@ def build_parser():
             command.add_argument("--model", required=True)
             command.add_argument("--effort", required=True)
             command.add_argument("--handoff", type=Path, required=True)
+            command.add_argument("--preflight-token", help=argparse.SUPPRESS)
+        elif name == "cancel":
+            command.add_argument("--transition-id", required=True)
     return parser
 
 
@@ -33,9 +36,16 @@ def main():
                 arguments.repo, arguments.session_id, arguments.task_id,
                 arguments.current_phase, arguments.next_phase,
                 arguments.model, arguments.effort, arguments.handoff,
+                arguments.preflight_token,
             )
         elif arguments.command == "publish":
             result = publish(arguments.repo, arguments.session_id)
+        elif arguments.command == "diagnose":
+            result = diagnose(arguments.repo, arguments.session_id)
+        elif arguments.command == "cancel":
+            result = cancel(
+                arguments.repo, arguments.session_id, arguments.transition_id,
+            )
         else:
             result = status(arguments.repo, arguments.session_id)
     except (SwitchError, OSError, ValueError) as error:

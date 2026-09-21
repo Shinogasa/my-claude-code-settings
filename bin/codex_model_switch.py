@@ -264,6 +264,214 @@ def _registry_directory(create: bool) -> Path | None:
     return directory
 
 
+def _preflight_directory(create: bool) -> Path | None:
+    home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    if not home.is_absolute() or home.is_symlink() or not home.is_dir():
+        raise SwitchError("CODEX_HOMEが安全なdirectoryではありません")
+    directory = home / "model-switch-preflight"
+    if create:
+        directory.mkdir(mode=0o700, exist_ok=True)
+    elif not directory.exists() and not directory.is_symlink():
+        return None
+    if directory.is_symlink():
+        raise SwitchError("hook preflight directoryはsymlinkにできません")
+    info = directory.stat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise SwitchError("hook preflightは所有者本人の0700 directoryが必要です")
+    return directory
+
+
+def _hook_digest() -> str:
+    hook = Path(__file__).resolve().parents[1] / "hooks" / "codex-model-switch-hook.py"
+    try:
+        return hashlib.sha256(hook.read_bytes()).hexdigest()
+    except OSError as error:
+        raise SwitchError(f"model switch hookをhashできません: {error}") from error
+
+
+def _read_preflight(path: Path, session_id: str) -> dict | None:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise SwitchError(f"hook preflightを開けません: {error}") from error
+    try:
+        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+            info = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o600
+                or info.st_size > 16384
+            ):
+                raise SwitchError("hook preflightの型、所有者、権限またはサイズが不正です")
+            data = json.load(stream)
+    except (ValueError, UnicodeError) as error:
+        raise SwitchError(f"hook preflightが不正です: {error}") from error
+    if (
+        not isinstance(data, dict)
+        or set(data) != {"schema", "session_id", "user_prompt", "grant"}
+        or data.get("schema") != 1
+        or data.get("session_id") != session_id
+    ):
+        raise SwitchError("hook preflightの識別子またはfieldが不正です")
+    prompt = data.get("user_prompt")
+    if not isinstance(prompt, dict) or set(prompt) != {"turn_id", "repo", "model", "hook_sha256"}:
+        raise SwitchError("UserPromptSubmit preflightが不正です")
+    if (
+        not all(isinstance(prompt.get(key), str) and prompt[key] for key in ("turn_id", "repo", "model"))
+        or not Path(prompt["repo"]).is_absolute()
+        or VALIDATOR.SHA256_RE.fullmatch(prompt.get("hook_sha256", "")) is None
+    ):
+        raise SwitchError("UserPromptSubmit preflightの値が不正です")
+    grant = data.get("grant")
+    if grant is not None:
+        required = {
+            "token", "turn_id", "repo", "task_id", "current_phase", "next_phase",
+            "target_model", "target_effort", "handoff_path", "hook_sha256",
+        }
+        if not isinstance(grant, dict) or set(grant) != required:
+            raise SwitchError("begin preflight grantが不正です")
+        if (
+            re.fullmatch(r"[0-9a-f]{32}", grant.get("token", "")) is None
+            or not all(isinstance(grant.get(key), str) and grant[key] for key in required - {"token"})
+            or not Path(grant["repo"]).is_absolute()
+            or VALIDATOR.SHA256_RE.fullmatch(grant["hook_sha256"]) is None
+        ):
+            raise SwitchError("begin preflight grantの値が不正です")
+    return data
+
+
+@contextmanager
+def _locked_preflight(session_id: str, create: bool) -> Iterator[tuple[Path | None, dict | None]]:
+    directory = _preflight_directory(create)
+    if directory is None:
+        yield None, None
+        return
+    path = _manifest_path(directory, session_id)
+    lock_path = directory / (path.stem + ".lock")
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
+            raise SwitchError("hook preflight lockが不正です")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield path, _read_preflight(path, session_id)
+    finally:
+        os.close(descriptor)
+
+
+def record_user_prompt_delivery(repo: Path, session_id: str, turn_id: str, model: str) -> None:
+    """同じturnでbeginするため、実UserPromptSubmit配送をprivate領域へ記録する。"""
+    root = _repo_root(repo)
+    if not isinstance(turn_id, str) or not turn_id:
+        raise SwitchError("UserPromptSubmitのturn_idが不正です")
+    if not isinstance(model, str) or not model:
+        raise SwitchError("UserPromptSubmitのmodelが不正です")
+    with _locked_preflight(session_id, create=True) as (path, _previous):
+        assert path is not None
+        _write_manifest(path, {
+            "schema": 1,
+            "session_id": session_id,
+            "user_prompt": {
+                "turn_id": turn_id,
+                "repo": str(root),
+                "model": model,
+                "hook_sha256": _hook_digest(),
+            },
+            "grant": None,
+        })
+
+
+def issue_begin_preflight(repo: Path, session_id: str, turn_id: str, fields: dict[str, str]) -> str:
+    """実PreToolUseからだけ、同じturnのbeginへ一回用tokenを発行する。"""
+    root = _repo_root(repo)
+    expected_fields = {
+        "--session-id", "--task-id", "--current-phase", "--next-phase",
+        "--model", "--effort", "--handoff",
+    }
+    if set(fields) != expected_fields or fields["--session-id"] != session_id:
+        raise SwitchError("begin hook preflightの引数が不正です")
+    with _locked_preflight(session_id, create=True) as (path, data):
+        assert path is not None
+        if data is None:
+            raise SwitchError("同じturnのUserPromptSubmit配送を確認できません")
+        prompt = data["user_prompt"]
+        digest = _hook_digest()
+        if (
+            prompt["turn_id"] != turn_id
+            or prompt["repo"] != str(root)
+            or prompt["hook_sha256"] != digest
+        ):
+            raise SwitchError("UserPromptSubmitとPreToolUseが同じturn・repo・hookではありません")
+        token = uuid.uuid4().hex
+        data["grant"] = {
+            "token": token,
+            "turn_id": turn_id,
+            "repo": str(root),
+            "task_id": fields["--task-id"],
+            "current_phase": fields["--current-phase"],
+            "next_phase": fields["--next-phase"],
+            "target_model": fields["--model"],
+            "target_effort": fields["--effort"],
+            "handoff_path": fields["--handoff"],
+            "hook_sha256": digest,
+        }
+        _write_manifest(path, data)
+        return token
+
+
+def _consume_begin_preflight(
+    root: Path, session_id: str, token: str | None, task_id: str,
+    current_phase: str, next_phase: str, model: str, effort: str, handoff_path: str,
+) -> None:
+    if token is None or re.fullmatch(r"[0-9a-f]{32}", token) is None:
+        raise SwitchError("同じturnの実hook preflightを通してbeginしてください")
+    with _locked_preflight(session_id, create=False) as (path, data):
+        if path is None or data is None or data["grant"] is None:
+            raise SwitchError("begin用hook preflight grantがありません")
+        grant = data["grant"]
+        expected = {
+            "token": token,
+            "repo": str(root),
+            "task_id": task_id,
+            "current_phase": current_phase,
+            "next_phase": next_phase,
+            "target_model": model,
+            "target_effort": effort,
+            "handoff_path": handoff_path,
+            "hook_sha256": _hook_digest(),
+        }
+        if any(grant.get(key) != value for key, value in expected.items()):
+            raise SwitchError("begin用hook preflight grantが引数または現行hookと一致しません")
+        data["grant"] = None
+        _write_manifest(path, data)
+
+
+def preflight_status(repo: Path, session_id: str) -> dict:
+    root = _repo_root(repo)
+    with _locked_preflight(session_id, create=False) as (_path, data):
+        if data is None:
+            return {
+                "user_prompt_observed": False,
+                "same_repo": False,
+                "current_hook": False,
+                "turn_id": None,
+                "model": None,
+                "grant_pending": False,
+            }
+        prompt = data["user_prompt"]
+        return {
+            "user_prompt_observed": True,
+            "same_repo": prompt["repo"] == str(root),
+            "current_hook": prompt["hook_sha256"] == _hook_digest(),
+            "turn_id": prompt["turn_id"],
+            "model": prompt["model"],
+            "grant_pending": data["grant"] is not None,
+        }
+
+
 def _read_binding(path: Path, session_id: str) -> Path | None:
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
@@ -330,6 +538,18 @@ def status(repo: Path, session_id: str) -> dict | None:
     return _read_manifest(_manifest_path(directory, session_id), session_id, root)
 
 
+def diagnose(repo: Path, session_id: str) -> dict:
+    root = _repo_root(repo)
+    binding = bound_repo(session_id)
+    return {
+        "session_id": session_id,
+        "repo": str(root),
+        "bound_repo": str(binding) if binding is not None else None,
+        "manifest": status(root, session_id),
+        "preflight": preflight_status(root, session_id),
+    }
+
+
 def begin(
     repo: Path,
     session_id: str,
@@ -339,6 +559,7 @@ def begin(
     model: str,
     effort: str,
     handoff: Path,
+    preflight_token: str | None = None,
 ) -> dict:
     root = _repo_root(repo)
     if VALIDATOR.TASK_ID_RE.fullmatch(task_id) is None:
@@ -349,6 +570,10 @@ def begin(
         raise SwitchError("modelとeffortの組合せが使えません")
     handoff_path = _safe_handoff_path(handoff)
     validate_handoff_edit_target(root, handoff_path)
+    _consume_begin_preflight(
+        root, session_id, preflight_token, task_id, current_phase, next_phase,
+        model, effort, handoff_path,
+    )
     with _locked_binding(session_id, create=True) as (binding_path, bound):
         assert binding_path is not None
         if bound is not None and bound != root:

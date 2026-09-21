@@ -14,8 +14,8 @@ from pathlib import Path
 BIN = Path(__file__).resolve().parents[1] / "bin"
 sys.path.insert(0, str(BIN))
 from codex_model_switch import (  # noqa: E402
-    SwitchError, bound_repo, cancel, override, resume, status,
-    validate_handoff_edit_target,
+    SwitchError, bound_repo, cancel, issue_begin_preflight, override,
+    record_user_prompt_delivery, resume, status, validate_handoff_edit_target,
 )
 
 
@@ -62,6 +62,17 @@ def _block_prompt(reason: str) -> int:
     print(json.dumps({
         "decision": "block",
         "reason": message,
+    }, ensure_ascii=False))
+    return 0
+
+
+def _rewrite_bash(command: str) -> int:
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {"command": command},
+        }
     }, ensure_ascii=False))
     return 0
 
@@ -136,6 +147,36 @@ def _flag_values(arguments: list[str]) -> dict[str, str] | None:
     return values
 
 
+def _begin_flags(command: str, repo: Path, session_id: str) -> dict[str, str] | None:
+    if not isinstance(command, str) or set(command) & SHELL_META:
+        return None
+    try:
+        arguments = shlex.split(command)
+    except ValueError:
+        return None
+    if arguments[:2] == ["rtk", "proxy"]:
+        arguments = arguments[2:]
+    if len(arguments) < 4 or arguments[0] != "python3":
+        return None
+    script, operation = arguments[1:3]
+    if operation != "begin" or not _same_script(script, BIN / "codex-model-switch.py"):
+        return None
+    flags = _flag_values(arguments[3:])
+    expected = {
+        "--repo", "--session-id", "--task-id", "--current-phase", "--next-phase",
+        "--model", "--effort", "--handoff",
+    }
+    if flags is None or set(flags) != expected or flags["--session-id"] != session_id:
+        raise SwitchError("begin commandの引数がhook preflight契約と一致しません")
+    candidate = Path(flags["--repo"]).expanduser()
+    try:
+        if not candidate.is_absolute() or not candidate.samefile(repo):
+            raise SwitchError("begin commandのrepoが現在のrepoと一致しません")
+    except OSError as error:
+        raise SwitchError("begin commandのrepoを確認できません") from error
+    return {key: value for key, value in flags.items() if key != "--repo"}
+
+
 def _allowed_bash(command: str, repo: Path, session_id: str, data: dict) -> bool:
     if not isinstance(command, str) or set(command) & SHELL_META:
         return False
@@ -208,7 +249,15 @@ def _allowed_patch(command: str, repo: Path, cwd: str, data: dict) -> bool:
 
 def _pretool(repo: Path | None, data: dict | None, session_id: str, cwd: str, tool_name: str, tool_input: object) -> int:
     if data is None or data["state"] in {"ACTIVE", "CANCELLED"}:
-        return 0
+        if tool_name != "Bash" or repo is None or not isinstance(tool_input, dict):
+            return 0
+        command = tool_input.get("command", tool_input.get("cmd"))
+        flags = _begin_flags(command, repo, session_id)
+        if flags is None:
+            return 0
+        turn_id = tool_input.get("turn_id")
+        token = issue_begin_preflight(repo, session_id, turn_id, flags)
+        return _rewrite_bash(f"{command} --preflight-token {token}")
     if not isinstance(tool_input, dict):
         return _reject("tool入力が不正です")
     if tool_name == "Bash" and _allowed_bash(
@@ -250,8 +299,15 @@ def main() -> int:
             prompt = payload.get("prompt")
             if not isinstance(prompt, str):
                 raise SwitchError("promptが不正です")
+            if repo is not None:
+                record_user_prompt_delivery(
+                    repo, session_id, payload.get("turn_id"), payload.get("model", ""),
+                )
             return _prompt(repo, data, session_id, payload.get("model", ""), prompt)
-        return _pretool(repo, data, session_id, payload["cwd"], payload.get("tool_name"), payload.get("tool_input"))
+        tool_input = payload.get("tool_input")
+        if isinstance(tool_input, dict):
+            tool_input = {**tool_input, "turn_id": payload.get("turn_id")}
+        return _pretool(repo, data, session_id, payload["cwd"], payload.get("tool_name"), tool_input)
     except (SwitchError, OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
         if event == "UserPromptSubmit":
             return _block_prompt(str(error))
