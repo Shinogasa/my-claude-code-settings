@@ -43,6 +43,19 @@ class CodexModelRoutingTests(unittest.TestCase):
         self.assertIn('`model_provider` を変更しない', self.text)
         self.assertIn('fail-closed', self.text)
 
+    def test_parent_routing_prefers_explicit_agent_or_fresh_session(self):
+        self.assertIn('親工程の標準経路', self.text)
+        self.assertRegex(self.text, r'明示ペアの(?:subagent|サブエージェント)')
+        self.assertRegex(self.text, r'明示ペアのfresh session')
+        self.assertIn('同一thread gateは補助経路', self.text)
+
+    def test_same_thread_gate_requires_runtime_preflight_and_recovery_cli(self):
+        self.assertIn('同じturn', self.text)
+        self.assertIn('UserPromptSubmit', self.text)
+        self.assertIn('PreToolUse', self.text)
+        self.assertIn('diagnose --repo', self.text)
+        self.assertIn('cancel --repo', self.text)
+
     def test_security_review_uses_risk_specific_profiles(self):
         self.assertIn('狭い一次確認・再レビュー', self.text)
         self.assertIn('通常の意味的セキュリティレビュー', self.text)
