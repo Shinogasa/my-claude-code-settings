@@ -250,7 +250,7 @@ def _allowed_patch(command: str, repo: Path, cwd: str, data: dict) -> bool:
 
 def _pretool(repo: Path | None, data: dict | None, session_id: str, cwd: str, tool_name: str, tool_input: object) -> int:
     if data is None or data["state"] in {"ACTIVE", "CANCELLED"}:
-        if tool_name not in BASH_TOOL_NAMES or repo is None or not isinstance(tool_input, dict):
+        if repo is None or not isinstance(tool_input, dict):
             return 0
         command = tool_input.get("command", tool_input.get("cmd"))
         flags = _begin_flags(command, repo, session_id)
