@@ -1,7 +1,17 @@
 {
-  "description": "Codex CLI 向けのフック配線。Claude Code の settings.json と同じスクリプトを共有する。rtk hook claude は出力形式が非互換のため含めず、RTKはAGENTS.mdとRTK.mdで配布する。",
+  "description": "Codex CLI 向けのフック配線。既存guardはClaude Codeと共有し、親工程切替はCodex専用hookで制御する。RTKはAGENTS.mdとRTK.mdで配布する。",
   "hooks": {
     "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.codex/hooks/codex-model-switch-hook.py\"",
+            "timeout": 30,
+            "statusMessage": "モデル切替状態を確認中"
+          }
+        ]
+      },
       {
         "hooks": [
           {
@@ -37,6 +47,22 @@
             "type": "command",
             "command": "\"$HOME/.codex/hooks/inject-superpowers.sh\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.codex/hooks/codex-model-switch-hook.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.codex/hooks/codex-model-switch-hook.py\"",
+            "timeout": 30
           }
         ]
       }

@@ -257,6 +257,173 @@ SessionStart helperがClaude pathなしで起動する。
 - read-only / workspace-writeの権限がモデル選択の都合で広がっていない
 - runtime smoke testで実際のmodel、reasoning effort、sandboxを確認する
 
+### P1: 親セッションを含む工程境界モデルルーティングを追加する
+
+現行のADR 0010と`codex/MODEL_ROUTING.md`は、サブエージェント起動時のmodel + effort選択を
+中心にしている。親AIが設計から実装まで同じsessionで続行すると起動境界が無く、Solで確定した
+設計を、そのままSolが実装する抜け道が残る。これは「強いモデルで設計し、明確になった作業は
+低コストモデルへ降格する」という目的を満たさない。
+
+**次の実装案**: `docs/codex-primary-session-model-routing-proposal.md`
+
+推奨案は、工程遷移時に親AIが推奨ペアを再分類し、現在ペアと異なる場合はMarkdown handoffと
+pending stateを作って停止するswitch gateである。モデル変更はユーザーがCodex CLIの`/model`または
+デスクトップアプリのモデル選択で行い、切替後に同じtaskをhandoffから再開する。pending中の
+repo変更はPreToolUse hookでfail-closedにする。
+
+**実装前に決めること**:
+
+- CLI / app / hook / thread metadataのどこでeffective model + effortを観測できるか
+- 観測不能な場合、`user-attested`で再開可能にする範囲と表示方法
+- pending state、scoped override、cancelのinterface
+- ADR 0010を新ADRでどの範囲まで置換するか
+
+**完了条件**:
+
+- サブエージェント無しでも、Sol設計からLuna実装への切替要求で最初のrepo変更前に停止する
+- model + effortをペアで検証し、切替前に検証済みhandoffを保存する
+- pending中の変更をhookが拒否し、切替確認または明示overrideまで進めない
+- runtime検証済みとユーザー申告だけの状態を区別する
+- review runner、provider、通常のmodel既定を変更しない
+
+### Codex review runnerの初回除外項目
+
+ADR 0013と`docs/superpowers/specs/2026-09-18-codex-review-runner-design.md`の初回実装は、
+read-onlyなsecurity / integration reviewの起動・回収・resume-once・重複実行抑止に限定する。
+次は初回へ混ぜず、着手条件が成立した項目だけを独立タスクへ移す。
+
+#### P1: Markdown reportを`--output-schema`へ移行する → 安定性評価待ち
+
+OpenAI公式の`--output-schema`を使えばseverity、confidence、ready-to-commitを構造化できる。
+一方、初回から導入するとreview実行の状態機械と既存Markdown返却契約の移行を同時にデバッグする
+ことになる。
+
+**決めること**:
+
+- Markdownを互換出力として残すか、JSONを唯一の正本にするか
+- security / integrationを一つのunion schemaにするか、別schemaにするか
+- schema不成立時にresumeするか、即時fail-closedにするか
+
+**着手条件**: 初回runnerのfixture suiteと明示smoke testが完了し、Markdown契約違反または
+downstream parseの不便を1件以上観測したとき。
+
+#### P1: validatorへ機械可読read plan / range receiptを追加する → JSONL解析の限界待ち
+
+初回runnerは、成功した`command_execution`のvalidator commandと`DOCUMENT:` headerを突き合わせて、
+全行がgap・overlap・duplicateなしで読まれたか検査する。validator自身にread planやreceiptを
+追加すると証拠は強くなるが、入力検証CLIのinterfaceも変わる。
+
+**決めること**:
+
+- validatorが署名またはdigest付きreceiptを返すか
+- planをrunnerが作るか、validatorがdocument行数から作るか
+- command eventを証拠にする現行方式から移行する互換期間を置くか
+
+**着手条件**: CLI version差でcommand event shapeが変わる、strict tokenizeできない正当な実行が
+発生する、またはreceipt偽装を防げない反例を観測したとき。
+
+#### P1: 修正後review範囲を保証境界から自動選択する → policy設計待ち
+
+初回runnerはhandoffで指定された範囲をそのまま読む。Critical、confidence不足、設計境界変更は
+全体review、局所Importantはdiff中心という候補はあるが、runnerがfile数だけで局所判定してはいけない。
+
+**決めること**:
+
+- 保証境界の変化を機械入力でどう表すか
+- 局所再reviewから全体reviewへ戻す条件
+- security boundaryと最終integration reviewの最低範囲
+
+**着手条件**: 初回runnerで修正後reviewを3件以上実行し、全体再読が不要だった事例と、
+局所reviewでは不足した事例の両方を得たとき。
+
+#### P2: review runnerを汎用agent runnerへ広げる → review運用の安定待ち
+
+実装agentはwrite sandbox、承認、変更回収、rollbackを必要とし、read-only reviewと成功条件が異なる。
+初回runnerへ任意agent、任意prompt、任意sandboxを追加しない。
+
+**決めること**:
+
+- review runnerと共通化する最小coreが実在するか
+- write agentの変更成果物、承認、cancel、rollback契約
+- model + effort以外に固定すべきroleとsandbox境界
+
+**着手条件**: review runnerが安定し、同じJSONL監視・lock・manifestを別agentで再利用したい
+具体的タスクが発生したとき。
+
+#### P2: Web UIと長時間実行monitorを追加する → CLI不足の証拠待ち
+
+初回はmanifest、event件数、経過時間のCLI表示だけを提供する。UIを先に作ると、未安定な状態機械を
+表示層へ固定してしまう。
+
+**着手条件**: CLIだけでは実行状態や失敗理由を判断できず、同じ誤操作が2回以上起きたとき。
+
+#### P2: retry / backoffを一般化する → failure taxonomyと予算設計待ち
+
+初回はreport欠落時の同一session resumeを1回だけ許可し、resume失敗後の新規review自動実行を
+禁止する。network、rate limit、provider障害を区別せずretryすると二重課金とthundering herdを招く。
+
+**決めること**:
+
+- retry可能なerror codeと、retryしてはいけない契約違反
+- attempt、wall-clock、tokenまたは費用の上限
+- cancellationと部分成果物の扱い
+
+**着手条件**: runnerのmanifestからtransient failureを再現可能に分類でき、ユーザーが自動retryの
+予算上限を決めたとき。
+
+#### P2: 複数provider対応・provider自動切替 → 却下状態を維持
+
+ADR 0010のprovider不変・fail-closed方針を維持する。runnerはprovider関連引数を公開しない。
+再検討する場合は、認証、データ境界、model同等性、費用の判断を新しいADRへ記録する。
+
+#### P2: 高度なmodel router → 代表taskの実測待ち
+
+初回runnerは親AIが選んだmodel + effortを検証して実行するだけで、自動選択しない。
+全custom agent profileの基準ペアは直前の独立backlogで再評価し、runnerへ混ぜない。
+
+**着手条件**: role別の品質、待ち時間、token量を同じfixtureで比較できるようになったとき。
+
+#### P1: spawn gatewayがtool引数を空objectへ落とす問題を切り分ける
+
+model routing作業中、`agents__spawn_agent`へ渡したmodel、reasoning effort、task等の引数が
+gateway経路で空objectへ落ちる症状を同一sessionで複数回観測した。正しいペアを選んでもchildへ
+伝わらず、routing policyでは回避できない。review runnerは同じproviderの`codex exec`を使うため、
+この互換性問題を修正したことにはしない。
+
+**調べること**:
+
+- clientが送ったtool call、gatewayが転送したpayload、backendが受け取ったargumentsのどこで消えるか
+- `fork_turns`、`agent_type`、model + effortの組み合わせで再現条件が変わるか
+- gatewayを通さない同一CLI versionのbaselineでは引数が保持されるか
+
+**決めること**:
+
+- repository設定で回避できる互換性問題か、gatewayまたはCodex本体の修正待ちか
+- runtime smoke testへ引数round-trip検査を追加するか
+- 修正までspawnをfail-closedにし、review runnerへ限定する範囲
+
+**完了条件**:
+
+- 引数が保持される成功caseと空になる失敗caseを同じ観測点で区別できる
+- modelとreasoning effortの実runtime値をchild側の証拠で確認できる
+- providerを変更せず、根因または上流issueと安全な暫定運用が文書化されている
+
+#### P2: 外部modelを使うintegration test → 明示smoke testとして分離
+
+通常suiteはfixture JSONLとstub `codex`だけを使う。credential、rate limit、model更新で不安定な
+external callを毎回のtestへ入れない。
+
+**決めること**: 手動または明示flag付きsmoke testの頻度、費用上限、成功証拠の保存期間。
+
+**着手条件**: fixture suite完成後、runnerを実環境へ配布する直前。
+
+既存の独立backlogへ残す項目:
+
+- 全custom agent profileのモデル再評価: 直前のP2項目
+- gatewayの空引数問題: gateway互換性の調査タスク
+- コード学習統合: `feat/code-learning-mode-plan`が所有するADR 0012の統合後に判断する
+- resume失敗後の新規review自動実行: 後続候補ではなく、ADR 0013で禁止した失敗時契約
+
 ### Codex statuslineの自前化 → 着手条件待ち
 
 当面はCodex公式のデフォルトstatuslineを使い、`statusline.js`はClaude専用のまま維持する。
