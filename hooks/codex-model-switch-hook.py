@@ -67,17 +67,6 @@ def _block_prompt(reason: str) -> int:
     return 0
 
 
-def _rewrite_bash(command: str) -> int:
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "updatedInput": {"command": command},
-        }
-    }, ensure_ascii=False))
-    return 0
-
-
 def _session_state(cwd_repo: Path | None, session_id: str) -> tuple[Path | None, dict | None]:
     binding = bound_repo(session_id)
     if binding is not None:
@@ -257,8 +246,8 @@ def _pretool(repo: Path | None, data: dict | None, session_id: str, cwd: str, to
         if flags is None:
             return 0
         turn_id = tool_input.get("turn_id")
-        token = issue_begin_preflight(repo, session_id, turn_id, flags)
-        return _rewrite_bash(f"{command} --preflight-token {token}")
+        issue_begin_preflight(repo, session_id, turn_id, flags)
+        return 0
     if not isinstance(tool_input, dict):
         return _reject("tool入力が不正です")
     if tool_name in BASH_TOOL_NAMES and _allowed_bash(

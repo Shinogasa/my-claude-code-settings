@@ -426,14 +426,13 @@ def _consume_begin_preflight(
     root: Path, session_id: str, token: str | None, task_id: str,
     current_phase: str, next_phase: str, model: str, effort: str, handoff_path: str,
 ) -> None:
-    if token is None or re.fullmatch(r"[0-9a-f]{32}", token) is None:
-        raise SwitchError("同じturnの実hook preflightを通してbeginしてください")
+    if token is not None and re.fullmatch(r"[0-9a-f]{32}", token) is None:
+        raise SwitchError("begin用hook preflight tokenが不正です")
     with _locked_preflight(session_id, create=False) as (path, data):
         if path is None or data is None or data["grant"] is None:
             raise SwitchError("begin用hook preflight grantがありません")
         grant = data["grant"]
         expected = {
-            "token": token,
             "repo": str(root),
             "task_id": task_id,
             "current_phase": current_phase,
@@ -443,7 +442,10 @@ def _consume_begin_preflight(
             "handoff_path": handoff_path,
             "hook_sha256": _hook_digest(),
         }
-        if any(grant.get(key) != value for key, value in expected.items()):
+        if (
+            any(grant.get(key) != value for key, value in expected.items())
+            or (token is not None and grant["token"] != token)
+        ):
             raise SwitchError("begin用hook preflight grantが引数または現行hookと一致しません")
         data["grant"] = None
         _write_manifest(path, data)
