@@ -226,6 +226,25 @@ providerを変えない。
         self.assertEqual(result.returncode, 2)
         self.assertIn("同じturn", result.stderr)
 
+    def test_begin_preflight_accepts_unified_exec_tool_aliases(self):
+        command = shlex.join(["python3", str(SWITCH), *self.begin_arguments()])
+        for tool_name in ("exec_command", "shell_command"):
+            with self.subTest(tool_name=tool_name):
+                prompt = self.run_hook(
+                    "UserPromptSubmit", prompt="モデル切替を開始してください",
+                )
+                self.assertEqual(prompt.returncode, 0, prompt.stderr)
+
+                result = self.run_hook(
+                    "PreToolUse", tool_name=tool_name,
+                    tool_input={"command": command},
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                output = json.loads(result.stdout)
+                rewritten = output["hookSpecificOutput"]["updatedInput"]["command"]
+                self.assertIn("--preflight-token", rewritten)
+
     def test_diagnose_reports_runtime_preflight_and_manifest(self):
         result = self.begin()
         self.assertEqual(result.returncode, 0, result.stderr)
