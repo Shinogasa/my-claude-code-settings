@@ -55,7 +55,28 @@ OpenAI公式のcorrectness/security reviewer例に合わせ、必須の通常レ
 単発の読み取り、同じ受入条件内の局所debugやtest再実行だけでは切替を開始しない。
 降格は、検証済みhandoffだけで次工程へ着手できる安定した境界で行う。
 
-別ペアが必要なら、SessionStartが通知する`session_id`で次を行う。
+### 親工程の標準経路
+
+別ペアが必要なら、同一threadの親を手動変更する前に次の順で選ぶ。
+
+1. 次工程を分離できる場合は、検証済みhandoffを明示ペアのsubagentへ渡す。親は現在ペアのまま
+   orchestrationと結果回収だけを行う。
+2. 親ペア自体が受入条件である、または直列の親作業を移す必要がある場合は、明示ペアのfresh sessionを
+   起動する。移行先は最初にhandoffを期待ペア付きでvalidateし、固定した`INPUT_DIGEST`を指定した
+   validatorの`read`でhandoffと参照文書を全行読む。
+
+security reviewと最終integration reviewはreview runnerの明示ペアで行う。これらを
+same-threadの`user-attested`だけで代替しない。
+
+### 同一threadの補助gate
+
+同一thread gateは補助経路であり、標準経路ではない。会話継続の価値がfresh sessionへの移行コストを
+上回り、かつそのsessionの実hook配送を事前確認できる場合だけ使う。`begin`は、同じturnで
+`UserPromptSubmit`と`PreToolUse`が実配送され、session・repo・現行hook hash・完全一致のbegin引数へ
+束縛したone-time grantを発行した場合だけ成功する。`/hooks`のActive表示や合成payloadだけでは
+preflight成功とみなさない。
+
+SessionStartが通知する`session_id`で次を行う。
 
 1. `python3 ~/.codex/bin/codex-model-switch.py begin --repo <絶対repo> --session-id <ID> --task-id <task> --current-phase <工程> --next-phase <工程> --model <model> --effort <effort> --handoff .superpowers/handoffs/<task>.md`を実行する。
 2. 指定handoffをschema 1で作り、`validate-codex-handoff.py validate`を期待ペア付きで実行する。`codex-model-switch.py publish --repo <絶対repo> --session-id <ID>`がGit鮮度とINPUT_DIGESTを再確認して`SWITCH_PENDING`へ移す。
@@ -78,6 +99,19 @@ overrideはそのtask・工程・session・handoff digestに束縛し、次check
 失効する。cancelではsessionとrepoの対応を解除し、同じsessionの通常promptを再開できる。
 provider、sandbox、permissions、必須security review、人間確認境界は変えない。
 
+配送と状態の診断は次で行う。
+
+```bash
+python3 ~/.codex/bin/codex-model-switch.py diagnose --repo <絶対repo> --session-id <ID>
+```
+
+hookがresume/cancel promptを配送しない場合も、transition IDが分かっていれば直接復旧できる。
+
+```bash
+python3 ~/.codex/bin/codex-model-switch.py cancel --repo <絶対repo> --session-id <ID> \
+  --transition-id <transition-id>
+```
+
 `PREPARING`では指定handoffの編集とvalidator・状態CLIだけ、`SWITCH_PENDING`では
 validator readと状態照会だけをlocal toolへ許す。`UserPromptSubmit`と`PreToolUse`の
 同期hookが拒否を返すが、hook未承認・無効・timeout・実行不能、hosted toolと特殊tool経路を
@@ -88,9 +122,6 @@ validator readと状態照会だけをlocal toolへ許す。`UserPromptSubmit`�
 ローカルのCodex CLI 0.154.0では、拒否理由は対話画面に表示されたが、`codex exec --json`は
 通常promptの拒否時も終了0・空turnを返した。自動実行では終了コードだけで成功と判定せず、
 `status`で状態を確認する。
-ペア自体を保証条件とする工程は明示ペアでfresh sessionを起動し、handoffと
-Git鮮度を移行先で検証する。security reviewと最終integration reviewはreview runnerの
-明示ペアで行う。
 
 ## モデル間handoff
 

@@ -4,7 +4,7 @@
 
 親セッションの工程変更に合わせてモデルを選び直す運用はCodexで成立するか。
 今回の`MODEL_SWITCH_RESUME`が進まなかった原因と、現在のテストで欠けた証拠を分ける。
-本書は調査結果と改設計の候補であり、ADR 0014の決定をまだ変更しない。
+本書は調査結果と改設計の入力である。後続実測と採用判断はADR 0015に記録する。
 
 ## 今回の観測
 
@@ -19,6 +19,51 @@
 hookが一度も呼ばれなかったか、呼ばれて拒否・失敗したか、あるいは異なるsession IDやruntime設定を見たかは、hookのイベントログと実入力を採取していないため未確定。
 古いthreadに設定が反映されなかったという説明は、時系列と整合する仮説であって確定原因ではない。
 `/hooks`のActive表示を、このthreadで`UserPromptSubmit`が実行された証拠として扱ったことが運用上の誤りだった。
+
+## 新規threadでのruntime実測
+
+2026-09-21にCodex CLI 0.154.0のApp Serverを、使い捨て`HOME` / `CODEX_HOME`、
+一時Git repo、credentialを使わないlocalhost Responses mock providerで起動した。
+`hooks/list`ではmodel switchの`SessionStart`、`UserPromptSubmit`、`PreToolUse`がすべて
+`enabled: true` / `trusted`で、sourceは隔離HOMEの`hooks.json`だった。
+
+`thread/start`が返したroot thread IDとsession IDはともに
+`01a0c3cf-2490-7dd2-833c-23bc4b6a4bf8`だった。このIDでmanifestを
+`SWITCH_PENDING`にし、通常promptを送ると、event ID
+`user-prompt-submit:6:<isolated-CODEX_HOME>/hooks.json`の`hook/completed`は
+`blocked`となり、manifestは`SWITCH_PENDING`を維持した。続いてturnのmodel / effortを
+`gpt-5.6-sol` / `high`として完全一致の`MODEL_SWITCH_RESUME`を送ると、同eventは
+`completed`となり、manifestは同じsession IDの`ACTIVE`へ遷移した。保存された証拠は
+`model_evidence: hook-observed`、`effort_evidence: user-attested`、
+`verification_tier: user-attested`だった。model inferenceはlocalhost probeで中断しており、
+hosted inferenceの成功を示す試験ではない。
+
+PreToolUseは別のfresh thread `01a0c3e4-5eaf-75d0-9401-cdb76cf15fb6`で測った。
+最初のpromptの`UserPromptSubmit`に続き、modelが出した完全一致の`begin` commandに対して
+event ID `pre-tool-use:0:<isolated-CODEX_HOME>/hooks.json:call_c356998b5f47496ba84285cddbb9ba44`
+が`completed`となり、同じsession IDのmanifestを`PREPARING`へ作成した。次のmodel応答に
+`touch forbidden.txt`を返すと、event ID
+`pre-tool-use:0:<isolated-CODEX_HOME>/hooks.json:call_f1f2f404ddea40f18a65b4059bbe3fbb`
+は`blocked`となり、target fileは作成されなかった。
+
+この試行中、sandboxの`python3`がmacOS標準Python 3.9.6を指し、validatorの
+実行時type alias `Path | int`をimportできない問題も観測した。`typing.Union`へ変更後、
+同じruntime sequenceで`begin`はexit 0となった。またCodex 0.154.0ではPreToolUseの
+`updatedInput`を前提にCLIへtokenを注入する方式が実コマンドへ反映されなかったため、
+hookが同一turn・repo・session・hook hash・begin引数へ束縛したone-time grantを保存し、
+元のbegin commandが直接消費する方式へ変更した。
+
+以上から、fresh App Server threadでは実hook配送と状態遷移が成立することが確定した。
+一方、旧Desktop threadで失敗した原因は未配送、session ID差、設定保持、surface差のどれかに
+まだ絞り込めず、fresh試行の成功を「古いthreadが原因だった」という断定には使わない。
+
+このsequenceは`tests/test_codex_model_switch_runtime.py`へ固定した。テストは現行hookのhashを
+`hooks/list`から取得して隔離configだけでtrustし、event ID、thread / turn / session ID、model、
+manifest遷移、副作用fileの不在を照合する。`codex` CLIが無い環境ではskipする。
+
+```bash
+python3 -m unittest tests.test_codex_model_switch_runtime -v
+```
 
 ## Codexの機能境界
 
@@ -78,3 +123,11 @@ gateを維持できる可能性がある一方、hook再読込・失敗・specia
 
 採用判断前に、新規threadでの実hook deliveryを一度測る。Aを選ぶ場合も、既存pendingの停止条件とcancelの復旧手段を文書・CLIで明確にする。
 ADR 0014の採用範囲を変える際は新ADRに却下案と理由を残す。
+
+## 採用判断
+
+新規threadで配送可能なことは確認できたが、reasoning effortをhookから観測できず、旧threadの
+失敗原因も未確定である。このため選択肢Aを標準経路として採用する。分割可能な作業は明示ペアの
+subagentへ渡し、親ペア自体が保証条件なら検証済みhandoffでfresh sessionへ移す。
+同一thread gateは標準経路にせず、同じturnの実`UserPromptSubmit`と`PreToolUse`を
+one-time grantで証明できた場合だけ使える補助経路として残す。詳細はADR 0015を正本とする。

@@ -250,11 +250,15 @@ dirty submoduleは内部差分を曖昧な状態へ畳まず`NEEDS_CONTEXT`と�
 
 ### Codex親セッションの工程切替
 
-親AIも設計から実装など別工程へ進む時、次工程のmodelとeffortを再分類する。ペアを変える
-場合は`~/.codex/bin/codex-model-switch.py`の`begin`で準備を開始し、schema 1 handoffを
-作成して`publish`する。`status`は現在のtransition ID、状態、対象ペア、handoff path、
-INPUT_DIGESTをJSONで表示する。コマンドは`--repo`にGit rootの絶対パス、
-`--session-id`にSessionStart hookが通知したIDを渡す。
+親AIも設計から実装など別工程へ進む時、次工程のmodelとeffortを再分類する。標準経路は、
+分離できる作業を検証済みhandoff付きの明示ペアsubagentへ渡すこと、または親ペア自体の保証が
+必要なら明示ペアのfresh sessionへ移すことである。
+
+同一threadで手動切替するgateは補助経路として残す。`begin`は同じturnの実
+`UserPromptSubmit`と`PreToolUse`がsession・repo・現行hook・完全一致引数へ束縛した
+one-time grantを作った場合だけ成功する。その後schema 1 handoffを作成して`publish`する。
+`status`はtransitionを、`diagnose`はmanifestとruntime preflightをJSONで表示する。
+コマンドは`--repo`にGit rootの絶対パス、`--session-id`にSessionStart hookが通知したIDを渡す。
 
 `SWITCH_PENDING`では通常promptとlocal toolを止める。ユーザーは`/model`またはアプリの
 composer下でmodelとeffortを両方選んでから、次の一行を送る。
@@ -263,18 +267,21 @@ composer下でmodelとeffortを両方選んでから、次の一行を送る。
 MODEL_SWITCH_RESUME <transition-id> <model> <effort>
 ```
 
-取消は`MODEL_SWITCH_CANCEL <transition-id>`、対象工程だけ現ペアで進める明示指示は
+取消は`MODEL_SWITCH_CANCEL <transition-id>`、またはhook配送に依存しないCLIの
+`cancel --repo <repo> --session-id <ID> --transition-id <transition-id>`を使う。
+対象工程だけ現ペアで進める明示指示は
 `MODEL_SWITCH_OVERRIDE <transition-id> <next-phase> <reason>`を使う。再開時はhookが観測する
 model、申告ペア、Git鮮度、handoff digestを照合する。effortはhook入力に無いため、通常工程の
 再開証拠は`user-attested`となる。ペアの保証が必要な工程では、明示ペアのfresh sessionで
 handoffを検証する。詳しいcheckpointと操作は`codex/MODEL_ROUTING.md`、判断根拠は
-`docs/adr/0014-codex-primary-session-model-routing.md`を参照。
+`docs/adr/0015-codex-parent-routing-runtime-boundary.md`を参照。
 
 `setup.sh --codex`でCLI・hook・配線を配布する。Codexの`/hooks`でhook定義を承認し、
 新しいsessionでSessionStartの案内を確認する。hook未承認・無効・timeout・実行不能の場合、
 停止guardの動作は確認済みではない。repo内の`.superpowers/model-switch/`と
 `CODEX_HOME/model-switch-registry/`にprivateな状態を保存する。後者はpending中に
-cwdがrepo外へ変わっても同じsessionを識別するために使う。
+cwdがrepo外へ変わっても同じsessionを識別するために使う。preflight receiptは
+`CODEX_HOME/model-switch-preflight/`へowner-onlyで保存する。
 
 ## 認証プロファイルの切り替え
 

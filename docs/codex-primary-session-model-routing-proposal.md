@@ -2,13 +2,13 @@
 
 ## 状態
 
-- status: proposed
-- 実装: 未着手
+- status: superseded by ADR 0015
+- 実装: 同一thread gateは補助経路として実装済み
 - 優先度: P1
-- 関連: ADR 0010、ADR 0011、ADR 0013
+- 関連: ADR 0010、ADR 0011、ADR 0013、ADR 0014、ADR 0015
 
-この文書は次の実装候補を記録する。採用済みADRや実装仕様ではない。実装へ進む場合は、
-runtimeで現在のmodel + reasoning effortを観測できるか先にspikeし、新しいADRと設計specを作る。
+この文書は初回候補を保存する履歴資料である。現行の標準経路と同一thread gateの採用範囲は
+ADR 0015と`codex/MODEL_ROUTING.md`を正本とする。
 
 ## 問題
 
