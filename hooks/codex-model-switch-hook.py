@@ -23,6 +23,7 @@ RESUME_RE = re.compile(r"MODEL_SWITCH_RESUME ([0-9a-f]{32}) ([A-Za-z0-9.-]+) ([a
 OVERRIDE_RE = re.compile(r"MODEL_SWITCH_OVERRIDE ([0-9a-f]{32}) ([A-Za-z0-9._-]+) ([^\r\n]{1,256})")
 CANCEL_RE = re.compile(r"MODEL_SWITCH_CANCEL ([0-9a-f]{32})")
 SHELL_META = set(";&|<>`$\\\n\r*?[]{}")
+BASH_TOOL_NAMES = {"Bash", "exec_command", "shell_command"}
 
 
 def _root(cwd: str) -> Path | None:
@@ -249,7 +250,7 @@ def _allowed_patch(command: str, repo: Path, cwd: str, data: dict) -> bool:
 
 def _pretool(repo: Path | None, data: dict | None, session_id: str, cwd: str, tool_name: str, tool_input: object) -> int:
     if data is None or data["state"] in {"ACTIVE", "CANCELLED"}:
-        if tool_name != "Bash" or repo is None or not isinstance(tool_input, dict):
+        if tool_name not in BASH_TOOL_NAMES or repo is None or not isinstance(tool_input, dict):
             return 0
         command = tool_input.get("command", tool_input.get("cmd"))
         flags = _begin_flags(command, repo, session_id)
@@ -260,7 +261,7 @@ def _pretool(repo: Path | None, data: dict | None, session_id: str, cwd: str, to
         return _rewrite_bash(f"{command} --preflight-token {token}")
     if not isinstance(tool_input, dict):
         return _reject("tool入力が不正です")
-    if tool_name == "Bash" and _allowed_bash(
+    if tool_name in BASH_TOOL_NAMES and _allowed_bash(
         tool_input.get("command", tool_input.get("cmd")), repo, session_id, data
     ):
         return 0
