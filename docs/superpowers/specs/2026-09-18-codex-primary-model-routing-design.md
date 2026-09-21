@@ -1,5 +1,8 @@
 # Codex親セッションの工程境界モデルルーティング設計
 
+> **適用範囲変更:** 本書の状態機械は同一threadの補助gateとして維持する。親工程の標準経路、
+> fresh runtime実測、preflight開始条件はADR 0015と`codex/MODEL_ROUTING.md`を正本とする。
+
 ## 目的と範囲
 
 親AIが同じセッションで設計から実装へ進む場合にも、次の工程のmodelとreasoning effortを

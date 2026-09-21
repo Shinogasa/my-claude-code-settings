@@ -253,26 +253,26 @@ SessionStart helperがClaude pathなしで起動する。
 - read-only / workspace-writeの権限がモデル選択の都合で広がっていない
 - runtime smoke testで実際のmodel、reasoning effort、sandboxを確認する
 
-### P1: 親セッションを含む工程境界モデルルーティングを追加する
+### 完了: 親セッションを含む工程境界モデルルーティングを追加する
 
 現行のADR 0010と`codex/MODEL_ROUTING.md`は、サブエージェント起動時のmodel + effort選択を
 中心にしている。親AIが設計から実装まで同じsessionで続行すると起動境界が無く、Solで確定した
 設計を、そのままSolが実装する抜け道が残る。これは「強いモデルで設計し、明確になった作業は
 低コストモデルへ降格する」という目的を満たさない。
 
-**次の実装案**: `docs/codex-primary-session-model-routing-proposal.md`
+**実装結果**: `docs/adr/0015-codex-parent-routing-runtime-boundary.md`
 
-推奨案は、工程遷移時に親AIが推奨ペアを再分類し、現在ペアと異なる場合はMarkdown handoffと
-pending stateを作って停止するswitch gateである。モデル変更はユーザーがCodex CLIの`/model`または
-デスクトップアプリのモデル選択で行い、切替後に同じtaskをhandoffから再開する。pending中の
-repo変更はPreToolUse hookでfail-closedにする。
+工程遷移時の再分類を実装した。標準経路は検証済みhandoff付きの明示ペアsubagent、または
+親ペア自体を保証する明示ペアfresh sessionとした。同一thread switch gateは、同じturnの実
+UserPromptSubmit / PreToolUse配送をone-time grantで確認できる場合だけ使う補助経路として残した。
+pending中の通常promptと対象local toolをhookでfail-closedにし、diagnoseと直接cancelを追加した。
 
-**実装前に決めること**:
+**確定した境界**:
 
-- CLI / app / hook / thread metadataのどこでeffective model + effortを観測できるか
-- 観測不能な場合、`user-attested`で再開可能にする範囲と表示方法
-- pending state、scoped override、cancelのinterface
-- ADR 0010を新ADRでどの範囲まで置換するか
+- fresh App Server threadでは実hook配送、model、thread / turn / session ID、manifest遷移を照合できる
+- hook入力に無いeffortは`user-attested`とし、ペア保証が必要ならfresh sessionへ移す
+- 旧Desktop threadの失敗原因は未確定であり、fresh App Server成功へ畳まない
+- ADR 0015がADR 0014を置換し、ADR 0010の基準ペアとADR 0011のhandoff契約は維持する
 
 **完了条件**:
 
