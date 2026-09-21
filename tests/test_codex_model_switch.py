@@ -88,12 +88,8 @@ class ModelSwitchTests(unittest.TestCase):
         )
         if preflight.returncode != 0:
             return preflight
-        try:
-            rewritten = json.loads(preflight.stdout)["hookSpecificOutput"]["updatedInput"]["command"]
-        except (KeyError, TypeError, ValueError):
-            return preflight
         return subprocess.run(
-            shlex.split(rewritten), cwd=self.repo, env=self.env,
+            shlex.split(command), cwd=self.repo, env=self.env,
             text=True, capture_output=True, check=False,
         )
 
@@ -227,23 +223,30 @@ providerを変えない。
         self.assertIn("同じturn", result.stderr)
 
     def test_begin_preflight_accepts_unified_exec_tool_aliases(self):
-        command = shlex.join(["python3", str(SWITCH), *self.begin_arguments()])
-        for tool_name in ("exec_command", "shell_command"):
+        for index, tool_name in enumerate(("exec_command", "shell_command"), start=1):
             with self.subTest(tool_name=tool_name):
+                session = f"alias-{index}"
+                command = shlex.join([
+                    "python3", str(SWITCH), *self.begin_arguments(session),
+                ])
                 prompt = self.run_hook(
-                    "UserPromptSubmit", prompt="モデル切替を開始してください",
+                    "UserPromptSubmit", session_id=session,
+                    prompt="モデル切替を開始してください",
                 )
                 self.assertEqual(prompt.returncode, 0, prompt.stderr)
 
                 result = self.run_hook(
-                    "PreToolUse", tool_name=tool_name,
+                    "PreToolUse", session_id=session, tool_name=tool_name,
                     tool_input={"command": command},
                 )
 
                 self.assertEqual(result.returncode, 0, result.stderr)
-                output = json.loads(result.stdout)
-                rewritten = output["hookSpecificOutput"]["updatedInput"]["command"]
-                self.assertIn("--preflight-token", rewritten)
+                self.assertEqual(result.stdout, "")
+                begun = subprocess.run(
+                    shlex.split(command), cwd=self.repo, env=self.env,
+                    text=True, capture_output=True, check=False,
+                )
+                self.assertEqual(begun.returncode, 0, begun.stderr)
 
     def test_begin_preflight_identifies_exact_command_across_tool_surfaces(self):
         prompt = self.run_hook(
@@ -258,9 +261,12 @@ providerを変えない。
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        output = json.loads(result.stdout)
-        rewritten = output["hookSpecificOutput"]["updatedInput"]["command"]
-        self.assertIn("--preflight-token", rewritten)
+        self.assertEqual(result.stdout, "")
+        begun = subprocess.run(
+            shlex.split(command), cwd=self.repo, env=self.env,
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(begun.returncode, 0, begun.stderr)
 
     def test_diagnose_reports_runtime_preflight_and_manifest(self):
         result = self.begin()
