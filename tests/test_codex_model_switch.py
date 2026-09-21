@@ -245,6 +245,23 @@ providerを変えない。
                 rewritten = output["hookSpecificOutput"]["updatedInput"]["command"]
                 self.assertIn("--preflight-token", rewritten)
 
+    def test_begin_preflight_identifies_exact_command_across_tool_surfaces(self):
+        prompt = self.run_hook(
+            "UserPromptSubmit", prompt="モデル切替を開始してください",
+        )
+        self.assertEqual(prompt.returncode, 0, prompt.stderr)
+        command = shlex.join(["python3", str(SWITCH), *self.begin_arguments()])
+
+        result = self.run_hook(
+            "PreToolUse", tool_name="runtime_local_tool",
+            tool_input={"command": command},
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        rewritten = output["hookSpecificOutput"]["updatedInput"]["command"]
+        self.assertIn("--preflight-token", rewritten)
+
     def test_diagnose_reports_runtime_preflight_and_manifest(self):
         result = self.begin()
         self.assertEqual(result.returncode, 0, result.stderr)
