@@ -2,6 +2,7 @@
 """親セッションの切替状態を実Git repoと実validatorで検証する。"""
 import json
 import os
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -57,12 +58,43 @@ class ModelSwitchTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
-    def begin(self, session="s1"):
-        return self.run_switch(
-            "begin", "--session-id", session, "--task-id", "task-a",
-            "--current-phase", "design", "--next-phase", "implementation",
-            "--model", "gpt-5.6-luna", "--effort", "medium",
-            "--handoff", ".superpowers/handoffs/task-a.md",
+    def begin_arguments(self, session="s1"):
+        return [
+            "begin", "--repo", str(self.repo), "--session-id", session,
+            "--task-id", "task-a", "--current-phase", "design",
+            "--next-phase", "implementation", "--model", "gpt-5.6-luna",
+            "--effort", "medium", "--handoff", ".superpowers/handoffs/task-a.md",
+        ]
+
+    def raw_begin(self, session="s1", *extra):
+        arguments = self.begin_arguments(session)
+        arguments.extend(extra)
+        return subprocess.run(
+            ["python3", str(SWITCH), *arguments], cwd=self.repo, env=self.env,
+            text=True, capture_output=True, check=False,
+        )
+
+    def begin(self, session="s1", turn_id="turn-1"):
+        command = shlex.join(["python3", str(SWITCH), *self.begin_arguments(session)])
+        prompt = self.run_hook(
+            "UserPromptSubmit", session_id=session, turn_id=turn_id,
+            prompt="モデル切替を開始してください",
+        )
+        if prompt.returncode != 0:
+            return prompt
+        preflight = self.run_hook(
+            "PreToolUse", session_id=session, turn_id=turn_id,
+            tool_name="Bash", tool_input={"command": command},
+        )
+        if preflight.returncode != 0:
+            return preflight
+        try:
+            rewritten = json.loads(preflight.stdout)["hookSpecificOutput"]["updatedInput"]["command"]
+        except (KeyError, TypeError, ValueError):
+            return preflight
+        return subprocess.run(
+            shlex.split(rewritten), cwd=self.repo, env=self.env,
+            text=True, capture_output=True, check=False,
         )
 
     def write_handoff(self, *, task="task-a", model="gpt-5.6-luna", effort="medium"):
@@ -127,6 +159,7 @@ providerを変えない。
         payload = {
             "hook_event_name": event,
             "session_id": "s1",
+            "turn_id": "turn-1",
             "cwd": str(self.repo),
             "model": "gpt-5.6-luna",
             **fields,
@@ -158,6 +191,53 @@ providerを変えない。
         self.assertEqual(pending["state"], "SWITCH_PENDING")
         self.assertEqual(len(pending["input_digest"]), 64)
         self.assertEqual(pending["transition_id"], preparing["transition_id"])
+
+    def test_begin_requires_same_turn_runtime_preflight(self):
+        result = self.raw_begin()
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("hook preflight", result.stderr)
+        self.assertIsNone(self.state())
+
+    def test_begin_preflight_rejects_missing_user_prompt_delivery(self):
+        command = shlex.join(["python3", str(SWITCH), *self.begin_arguments()])
+
+        result = self.run_hook(
+            "PreToolUse", turn_id="turn-without-prompt", tool_name="Bash",
+            tool_input={"command": command},
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("UserPromptSubmit", result.stderr)
+
+    def test_begin_preflight_rejects_delivery_from_another_turn(self):
+        prompt = self.run_hook(
+            "UserPromptSubmit", turn_id="prompt-turn",
+            prompt="モデル切替を開始してください",
+        )
+        self.assertEqual(prompt.returncode, 0, prompt.stderr)
+        command = shlex.join(["python3", str(SWITCH), *self.begin_arguments()])
+
+        result = self.run_hook(
+            "PreToolUse", turn_id="tool-turn", tool_name="Bash",
+            tool_input={"command": command},
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("同じturn", result.stderr)
+
+    def test_diagnose_reports_runtime_preflight_and_manifest(self):
+        result = self.begin()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        diagnosed = self.run_switch("diagnose", "--session-id", "s1")
+
+        self.assertEqual(diagnosed.returncode, 0, diagnosed.stderr)
+        data = json.loads(diagnosed.stdout)
+        self.assertEqual(data["manifest"]["state"], "PREPARING")
+        self.assertEqual(data["bound_repo"], str(self.repo))
+        self.assertTrue(data["preflight"]["user_prompt_observed"])
+        self.assertFalse(data["preflight"]["grant_pending"])
 
     def test_publish_rejects_wrong_task_or_pair(self):
         self.assertEqual(self.begin().returncode, 0)
@@ -283,6 +363,18 @@ providerを変えない。
             prompt=f"MODEL_SWITCH_RESUME {transition} gpt-5.6-luna medium",
         )
         self.assert_prompt_blocked(retry)
+
+    def test_direct_cancel_recovers_without_hook_delivery(self):
+        pending = self.pending()
+
+        result = self.run_switch(
+            "cancel", "--session-id", "s1",
+            "--transition-id", pending["transition_id"],
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["state"], "CANCELLED")
+        self.assertEqual(self.state()["state"], "CANCELLED")
 
     def test_cancel_ends_active_phase_lease(self):
         pending = self.pending()
