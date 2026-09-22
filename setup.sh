@@ -153,6 +153,7 @@ build_targets() {
     add_link_target codex "$SCRIPT_DIR/rules" "$CODEX_DIR/rules"
     add_link_target codex "$SCRIPT_DIR/CLAUDE.md" "$CODEX_DIR/AGENTS.md"
     add_link_target codex "$SCRIPT_DIR/codex/RTK.md" "$CODEX_DIR/RTK.md"
+    add_link_target codex "$SCRIPT_DIR/codex/MODEL_ROUTING.md" "$CODEX_DIR/MODEL_ROUTING.md"
     add_link_target codex "$SCRIPT_DIR/hooks" "$CODEX_DIR/hooks"
     add_link_target codex "$SCRIPT_DIR/codex/hooks.json" "$CODEX_DIR/hooks.json"
     add_link_target codex "$SCRIPT_DIR/codex/agents" "$CODEX_DIR/agents"
@@ -288,6 +289,30 @@ validate_sources() {
   if selected_codex && [ ! -f "$SCRIPT_DIR/bin/configure_codex_signing.py" ]; then
     red "Codex SSH署名設定スクリプトが存在しません"
     return 1
+  fi
+  if selected_codex && [ ! -f "$SCRIPT_DIR/bin/configure_codex_agent_defaults.py" ]; then
+    red "Codex agent既定値設定スクリプトが存在しません: configure_codex_agent_defaults.py"
+    return 1
+  fi
+  if selected_codex && [ ! -f "$SCRIPT_DIR/bin/codex_config_io.py" ]; then
+    red "Codex config安全更新モジュールが存在しません: codex_config_io.py"
+    return 1
+  fi
+  if selected_codex && [ ! -f "$SCRIPT_DIR/bin/validate-codex-handoff.py" ]; then
+    red "Codex handoff検証スクリプトが存在しません: validate-codex-handoff.py"
+    return 1
+  fi
+  if selected_codex; then
+    local switch_file
+    for switch_file in \
+      bin/codex-model-switch.py \
+      bin/codex_model_switch.py \
+      hooks/codex-model-switch-hook.py; do
+      if [ ! -f "$SCRIPT_DIR/$switch_file" ]; then
+        red "Codex model switchファイルが存在しません: $switch_file"
+        return 1
+      fi
+    done
   fi
 }
 
@@ -809,6 +834,14 @@ setup_codex_signing() {
   record_failure 'host=codex signing operation=configure retry: python3 bin/configure_codex_signing.py'
 }
 
+setup_codex_agent_defaults() {
+  if python3 "$SCRIPT_DIR/bin/configure_codex_agent_defaults.py" "$CODEX_DIR/config.toml"; then
+    yellow 'Codexのサブエージェント既定値を新しいセッションへ反映するため、既存セッションを再起動してください。'
+    return
+  fi
+  record_failure 'host=codex agents operation=configure-defaults retry: python3 bin/configure_codex_agent_defaults.py ~/.codex/config.toml'
+}
+
 validate_host_directories || exit 1
 build_targets
 validate_sources true || exit 1
@@ -856,6 +889,7 @@ if selected_claude; then
 fi
 if selected_codex; then
   setup_codex_signing
+  setup_codex_agent_defaults
   audit_codex_plugins
   yellow 'Codex hooks を配置しました。trust state は変更していません。/hooks で review して承認してください。'
 fi

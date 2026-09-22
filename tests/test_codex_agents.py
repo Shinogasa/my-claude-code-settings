@@ -24,6 +24,17 @@ _spec.loader.exec_module(codex_agents)
 # Codex が必須とするフィールド (→ https://developers.openai.com/codex/subagents)
 REQUIRED_FIELDS = ("name", "description", "developer_instructions")
 VALID_SANDBOX = {"read-only", "workspace-write"}
+VALID_REASONING_EFFORTS = {"low", "medium", "high", "max"}
+EXPECTED_PROFILES = {
+    "build-error-resolver": ("gpt-5.6-luna", "low"),
+    "code-architect": ("gpt-5.6-luna", "high"),
+    "code-explorer": ("gpt-5.6-luna", "medium"),
+    "code-simplifier": ("gpt-5.6-luna", "medium"),
+    "planner": ("gpt-5.6-sol", "high"),
+    "refactor-cleaner": ("gpt-5.6-luna", "high"),
+    "security-reviewer": ("gpt-5.6-terra", "high"),
+    "silent-failure-hunter": ("gpt-5.6-luna", "high"),
+}
 EXPECTED_SECURITY_BOUNDARIES = {
     "authentication",
     "authorization",
@@ -81,13 +92,36 @@ class TestSchema(unittest.TestCase):
                 self.assertIn(data.get("sandbox_mode"), VALID_SANDBOX)
 
     def test_model_is_a_known_generation(self):
-        # Codex にモデルの別名は無いため、世代名を直接書いている。
-        # 表に無い値が混ざると spawn 時に落ちる。
-        known = set(codex_agents.MODEL_MAP.values())
+        known = {profile[0] for profile in codex_agents.CODEX_AGENT_PROFILES.values()}
         for name, data in self.agents.items():
             if "model" in data:
                 with self.subTest(agent=name):
                     self.assertIn(data["model"], known)
+
+    def test_every_agent_has_an_explicit_model_reasoning_pair(self):
+        self.assertEqual(set(self.agents), set(EXPECTED_PROFILES))
+        for name, data in self.agents.items():
+            with self.subTest(agent=name):
+                self.assertEqual(
+                    (data.get("model"), data.get("model_reasoning_effort")),
+                    EXPECTED_PROFILES[name],
+                )
+                self.assertIn(data["model_reasoning_effort"], VALID_REASONING_EFFORTS)
+
+    def test_every_agent_fails_closed_on_invalid_cross_model_handoff(self):
+        for name, data in self.agents.items():
+            with self.subTest(agent=name):
+                instructions = data["developer_instructions"]
+                self.assertIn("validate-codex-handoff.py validate", instructions)
+                self.assertIn("最初の操作", instructions)
+                self.assertIn("全文を読む", instructions)
+                self.assertIn("INPUT_DIGEST", instructions)
+                self.assertIn("validate-codex-handoff.py read", instructions)
+                self.assertIn("--expected-input-digest", instructions)
+                self.assertIn("pathから直接読まない", instructions)
+                self.assertIn("NEEDS_CONTEXT", instructions)
+                self.assertIn(data["model"], instructions)
+                self.assertIn(data["model_reasoning_effort"], instructions)
 
 
 class TestPermissionMapping(unittest.TestCase):
@@ -108,10 +142,13 @@ class TestPermissionMapping(unittest.TestCase):
             with self.subTest(agent=meta["name"]):
                 self.assertEqual(data["sandbox_mode"], "read-only")
 
-    def test_security_reviewer_uses_lightweight_read_only_profile(self):
+    def test_security_reviewer_uses_official_semantic_review_profile(self):
         path = codex_agents.OUTPUT_DIR / "security-reviewer.toml"
         data = tomllib.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(data["model"], "gpt-5.6-luna")
+        self.assertEqual(
+            (data["model"], data["model_reasoning_effort"]),
+            ("gpt-5.6-terra", "high"),
+        )
         self.assertEqual(data["sandbox_mode"], "read-only")
 
 

@@ -9,13 +9,13 @@ import json
 import os
 import platform
 import re
-import stat
 import subprocess
 import sys
-import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+import codex_config_io as safe_config
 
 
 SKIPPED_EXIT = 10
@@ -33,8 +33,7 @@ _ASSIGNMENT = re.compile(
 )
 
 
-class ConfigurationError(Exception):
-    """設定を安全に更新できない場合の内部エラー。"""
+ConfigurationError = safe_config.ConfigurationError
 
 
 @dataclass(frozen=True)
@@ -267,57 +266,6 @@ def _patched_text(text: str, document: dict[str, object], socket_path: str) -> s
     return candidate
 
 
-def _atomic_write(path: Path, content: bytes, original: bytes, original_stat: os.stat_result) -> None:
-    try:
-        if path.is_symlink():
-            raise ConfigurationError("config.toml is a symlink")
-        current_stat = path.stat()
-        if (
-            current_stat.st_dev,
-            current_stat.st_ino,
-            current_stat.st_mtime_ns,
-            current_stat.st_size,
-        ) != (
-            original_stat.st_dev,
-            original_stat.st_ino,
-            original_stat.st_mtime_ns,
-            original_stat.st_size,
-        ) or path.read_bytes() != original:
-            raise ConfigurationError("config.toml changed during setup")
-        if current_stat.st_uid != os.getuid():
-            raise ConfigurationError("config.toml owner is not the current user")
-    except OSError as error:
-        raise ConfigurationError("config.toml could not be rechecked") from error
-
-    temporary_path: Path | None = None
-    file_descriptor: int | None = None
-    try:
-        file_descriptor, temporary_name = tempfile.mkstemp(
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-        )
-        temporary_path = Path(temporary_name)
-        os.fchmod(file_descriptor, stat.S_IMODE(original_stat.st_mode))
-        with os.fdopen(file_descriptor, "wb") as temporary_file:
-            file_descriptor = None
-            temporary_file.write(content)
-            temporary_file.flush()
-            os.fsync(temporary_file.fileno())
-        os.replace(temporary_path, path)
-        temporary_path = None
-    except OSError as error:
-        raise ConfigurationError("config.toml could not be written") from error
-    finally:
-        if file_descriptor is not None:
-            os.close(file_descriptor)
-        if temporary_path is not None:
-            try:
-                temporary_path.unlink()
-            except FileNotFoundError:
-                pass
-
-
 def configure(
     config_path: Path | str,
     socket_path: Path | str | None = None,
@@ -332,16 +280,6 @@ def configure(
         raise ConfigurationError("config.toml is a symlink")
     if not config.exists():
         return Outcome("skipped", "config-missing")
-    if not config.is_file():
-        raise ConfigurationError("config.toml is not a regular file")
-
-    try:
-        original_bytes = config.read_bytes()
-        original_stat = config.stat()
-        text = original_bytes.decode("utf-8")
-        document = tomllib.loads(text)
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, ValueError) as error:
-        raise ConfigurationError("config.toml could not be parsed") from error
 
     if socket_path is None:
         current_system = system or platform.system()
@@ -357,12 +295,21 @@ def configure(
     if not _probe_agent(socket):
         return Outcome("skipped", "agent-unavailable")
 
-    socket_value = str(socket)
-    candidate = _patched_text(text, document, socket_value)
-    if candidate == text:
-        return Outcome("unchanged")
-    _atomic_write(config, candidate.encode("utf-8"), original_bytes, original_stat)
-    return Outcome("updated")
+    try:
+        with safe_config.locked_config(config, allow_missing=False) as transaction:
+            if transaction.original is None:
+                raise ConfigurationError("config.toml contents are unavailable")
+            text = transaction.original.decode("utf-8")
+            document = tomllib.loads(text)
+            candidate = _patched_text(text, document, str(socket))
+            if candidate == text:
+                return Outcome("unchanged")
+            transaction.replace(candidate.encode("utf-8"))
+            return Outcome("updated")
+    except ConfigurationError:
+        raise
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, ValueError) as error:
+        raise ConfigurationError("config.toml could not be parsed") from error
 
 
 def _message(outcome: Outcome) -> str:

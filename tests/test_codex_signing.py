@@ -7,6 +7,8 @@ import stat
 import sys
 import tempfile
 import unittest
+import shutil
+import subprocess
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +17,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "bin" / "configure_codex_signing.py"
+sys.path.insert(0, str(SCRIPT.parent))
 spec = importlib.util.spec_from_file_location("configure_codex_signing", SCRIPT)
 if spec is None or spec.loader is None:
     raise ImportError(f"failed to load {SCRIPT}")
@@ -36,7 +39,8 @@ def bound_unix_socket(path: Path):
 class CodexSigningTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.base = Path(self.temporary.name)
+        # macOSのtempfileが返す`/var` symlinkを安全検査へ混ぜない。
+        self.base = Path(self.temporary.name).resolve()
         self.home = self.base / "home"
         self.home.mkdir()
         self.config = self.home / ".codex" / "config.toml"
@@ -70,8 +74,12 @@ class CodexSigningTests(unittest.TestCase):
             stderr=stderr.getvalue(),
         )
 
+    def write_private_config(self, content: str) -> None:
+        self.config.write_text(content, encoding="utf-8")
+        self.config.chmod(0o600)
+
     def test_updates_only_target_key_and_preserves_comments_and_unrelated_values(self):
-        self.config.write_text(
+        self.write_private_config(
             'model = "gpt-test"\n'
             '[private]\n'
             'token = "do-not-print-this"\n'
@@ -80,7 +88,6 @@ class CodexSigningTests(unittest.TestCase):
             '[shell_environment_policy.set]\n'
             'PATH = "/usr/bin"\n'
             'SSH_AUTH_SOCK = "/tmp/old-agent.sock" # keep this comment\n',
-            encoding="utf-8",
         )
         self.install_ssh_add()
 
@@ -100,7 +107,7 @@ class CodexSigningTests(unittest.TestCase):
         )
 
     def test_adds_missing_table_and_key(self):
-        self.config.write_text('model = "gpt-test"\n', encoding="utf-8")
+        self.write_private_config('model = "gpt-test"\n')
         self.install_ssh_add()
 
         with bound_unix_socket(self.socket_path):
@@ -115,6 +122,7 @@ class CodexSigningTests(unittest.TestCase):
 
     def test_preserves_crlf_when_adding_missing_table(self):
         self.config.write_bytes(b'model = "gpt-test"\r\n')
+        self.config.chmod(0o600)
 
         with patch.object(signing, "_probe_agent", return_value=True):
             result = signing.configure(self.config, self.socket_path)
@@ -127,10 +135,9 @@ class CodexSigningTests(unittest.TestCase):
         self.assertNotIn(b"\n[shell_environment_policy.set]", updated.replace(b"\r\n", b""))
 
     def test_second_run_is_byte_and_mtime_idempotent(self):
-        self.config.write_text(
+        self.write_private_config(
             '[shell_environment_policy.set]\n'
             f'SSH_AUTH_SOCK = "{self.socket_path}"\n',
-            encoding="utf-8",
         )
         self.install_ssh_add()
 
@@ -150,7 +157,7 @@ class CodexSigningTests(unittest.TestCase):
 
     def test_skips_without_agent_identity_and_does_not_mutate_config(self):
         original = '[shell_environment_policy.set]\nSSH_AUTH_SOCK = "/tmp/old.sock"\n'
-        self.config.write_text(original, encoding="utf-8")
+        self.write_private_config(original)
 
         with bound_unix_socket(self.socket_path):
             stdout = io.StringIO()
@@ -178,7 +185,7 @@ class CodexSigningTests(unittest.TestCase):
         self.install_ssh_add()
         for fixture in fixtures:
             with self.subTest(fixture=fixture):
-                self.config.write_text(fixture, encoding="utf-8")
+                self.write_private_config(fixture)
                 original = self.config.read_bytes()
                 with bound_unix_socket(self.socket_path):
                     result = self.run_helper("--socket", str(self.socket_path))
@@ -212,6 +219,57 @@ class CodexSigningTests(unittest.TestCase):
         self.assertTrue(available)
         self.assertEqual(stdout.getvalue(), "")
         self.assertEqual(stderr.getvalue(), "")
+
+    def test_rejects_non_private_config_without_mutation(self):
+        original = b'model = "gpt-test"\n'
+        self.config.write_bytes(original)
+        self.config.chmod(0o640)
+
+        with patch.object(signing, "_probe_agent", return_value=True):
+            with self.assertRaises(signing.ConfigurationError):
+                signing.configure(self.config, self.socket_path)
+
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o640)
+
+    def test_successful_update_preserves_extended_metadata_on_macos(self):
+        xattr = shutil.which("xattr")
+        chmod = shutil.which("chmod")
+        ls = shutil.which("ls")
+        if sys.platform != "darwin" or None in {xattr, chmod, ls}:
+            self.skipTest("macOSのmetadata保持検査ではない")
+        self.write_private_config('model = "gpt-test"\n')
+        subprocess.run(
+            [xattr, "-w", "com.example.codex-signing-test", "preserve-me", self.config],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            [chmod, "+a", "everyone deny write", self.config],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        with patch.object(signing, "_probe_agent", return_value=True):
+            outcome = signing.configure(self.config, self.socket_path)
+
+        self.assertEqual(outcome.kind, "updated")
+        attribute = subprocess.run(
+            [xattr, "-p", "com.example.codex-signing-test", self.config],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        acl = subprocess.run(
+            [ls, "-le", self.config],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(attribute.stdout.rstrip("\n"), "preserve-me")
+        self.assertIn("deny write", acl.stdout)
 
 
 if __name__ == "__main__":

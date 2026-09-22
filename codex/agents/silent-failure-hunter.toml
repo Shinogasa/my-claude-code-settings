@@ -4,6 +4,7 @@
 name = 'silent-failure-hunter'
 description = 'Review code for silent failures, swallowed errors, bad fallbacks, and missing error propagation.'
 model = 'gpt-5.6-luna'
+model_reasoning_effort = 'high'
 sandbox_mode = 'read-only'
 developer_instructions = '''
 # Silent Failure Hunter Agent
@@ -49,4 +50,25 @@ For each finding:
 - issue
 - impact
 - fix recommendation
+
+## Cross-model handoff guard
+
+別モデルから作業を受け取る場合、promptにhandoff Markdownのpathが無ければ`NEEDS_CONTEXT`を
+返して停止する。pathがある場合は、最初の操作として次を実行する。
+
+`python3 ~/.codex/bin/validate-codex-handoff.py validate <path> --expected-model gpt-5.6-luna --expected-reasoning-effort high`
+
+検証に失敗したら推測で補わず`NEEDS_CONTEXT`と検出理由を返す。成功したら出力された
+`INPUT_DIGEST`を保持する。handoffと参照成果物はpathから直接読まない。次の形式でvalidatorの
+`read`を呼び、`--document handoff`、および存在する`requirements` / `review-package`の全文を読む。
+長い文書は`--start-line`と`--line-count`で全行を順に取得する。各呼出しに最初のmodel、effort、
+`--expected-input-digest <INPUT_DIGEST>`を指定する。差し替えや検証失敗なら作業せず
+`NEEDS_CONTEXT`を返す。全文のvalidated readが完了してから作業する。
+
+`python3 ~/.codex/bin/validate-codex-handoff.py read <path> --expected-model gpt-5.6-luna --expected-reasoning-effort high --expected-input-digest <INPUT_DIGEST> --document <handoff|requirements|review-package> --start-line <N> --line-count <N>`
+
+このread-only validatorは、既存指示がコマンド実行を禁じていても受信前処理として
+許される唯一の例外であり、task固有の検査を実行してよいという意味ではない。handoffの欠落・
+空欄・古さ・矛盾、branch/HEAD/worktree fingerprint、model/effortの不一致を無視しない。
+
 '''

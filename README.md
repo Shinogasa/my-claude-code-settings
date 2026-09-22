@@ -117,6 +117,8 @@ Codex公式の[`shell_environment_policy.set`](https://developers.openai.com/cod
 - `SSH_AUTH_SOCK=<socket> ssh-add -l`が成功したときだけ、`~/.codex/config.toml`の
   `[shell_environment_policy.set]`にある`SSH_AUTH_SOCK`だけを追加・更新する
 - configのコメント、無関係な設定、認証情報は再シリアライズせず保持する。config本体はGit管理しない
+- configは現在ユーザー所有かつ`0600`相当だけを受理し、ACL・拡張属性を保持する。
+  signing設定とsubagent既定値設定は同じlockと安全更新処理を使う
 - configが無い、macOS以外、socketが無い、Bitwardenがlock中、鍵が0件、agentへ接続できない場合は
   警告して設定を変更しない（setup全体は継続する）
 - 既存の別socketは、Bitwarden agentの鍵を確認できた場合だけ管理対象keyとして置き換える。確認できない場合は既存値を保持する
@@ -195,7 +197,7 @@ Codex側ではpolicyで無効とする。詳細と全プラグインの判定は
 
 | 資産 | 現在の扱い |
 |---|---|
-| `agents/` | Markdownを正本にし、`bin/generate-codex-agents.py` で `codex/agents/*.toml` を生成する。実機spawnは未検証 |
+| `agents/` | Markdownを正本にし、`bin/generate-codex-agents.py` でモデル＋推論強度を明示した `codex/agents/*.toml` を生成する |
 | `hooks/` | スクリプト本体は共有し、イベント定義を `settings.json.template` と `codex/hooks.json` に分ける |
 | RTK | Claudeは`PreToolUse` hook、Codexは`AGENTS.md` + `RTK.md`の公式方式を使う |
 | `output-styles/` | Codexへ直接は配らない。必要な挙動をAGENTS、skills、plugin hooksへ分解する |
@@ -206,6 +208,71 @@ Codex側ではpolicyで無効とする。詳細と全プラグインの判定は
 これらを共有ソース（`skills/` `commands/` `rules/` `CLAUDE.md`）に書くときは、
 特定ホスト固有のツール名・パスに依存させない。Codex は未対応の frontmatter キーや設定を
 **エラーにせず黙って読み飛ばす**ため、依存が残ると「リンクは成功しているのに機能だけ落ちる」状態になる。
+
+### Codex subagentのモデルルーティング
+
+`setup.sh --codex`は`~/.codex/config.toml`の`[agents]`へ、指定漏れ用の既定値
+`gpt-5.6-luna` + `medium`を設定する。設定ファイル全体は置換せず、対象2キーだけを更新する。
+更新時はowner、`0600`相当、ACL、symlinkを検査し、同じリポジトリのconfig更新処理を
+永続lockで直列化する。共有lockを使うmutator間では競合を防ぎ、未協調writerについても
+内容・metadataをrename直前まで再検査し、検出した競合は原本を上書きせず停止する。
+通常renameには比較条件が無いため、最終検査後の未協調更新まで完全に防ぐものではない。
+この保証境界と残余リスクはADR 0009に記録している。
+各custom agentはモデルと推論強度を明示し、親AIは`~/.codex/MODEL_ROUTING.md`に従って
+深さ不足・探索範囲不足・設計判断不足を分けて自律的に昇降する。
+security boundaryに一致する通常の意味レビューは、OpenAI公式例に合わせて
+`security-reviewer`の`gpt-5.6-terra` + `high` + `read-only`を使う。
+
+別モデルへ実装・探索・修正・レビューを移す前には、
+`.superpowers/handoffs/<task-id>.md`を作成する。Superpowersのtask brief / review packageが
+ある場合は複製せずSHA-256付きで参照し、無い場合はhandoff本文を要件の正本にする。
+`bin/validate-codex-handoff.py`が必須section、branch、HEAD、worktree fingerprint、参照hash、
+実行可能なmodel + reasoning effortの組み合わせを検査し、各custom agentも最初に同じ検査と
+全文読み込みを行う。validatorは`--repo`を事前に`resolve()`せず、cwdまたはfilesystem rootの
+directory FDから全componentを`O_NOFOLLOW`で辿ってGit実行前に固定し、継承された
+`GIT_*`環境を除去する。Git top-levelとのdevice・inode一致を確認した後も同じroot FDを
+validate / read終了までGit subprocessとfile openへ共有する。fingerprintはGitにworktree内容の
+変換・diff生成をさせず、index entryと、root FDから中間directoryを`O_NOFOLLOW`で固定して
+読んだtracked/untracked fileの生bytesをhashする。submoduleも`git status`へ内容変換を委ねず、
+root FDから`O_NOFOLLOW`で開いた
+directory inodeをGit subprocess、HEAD tree・index・生bytes比較、nested submodule再帰で共有する。
+検査中にsubmodule pathが差し替わっても、文字列pathからrepository外を再解決しない。
+dirty submoduleは内部差分を曖昧な状態へ畳まず`NEEDS_CONTEXT`として拒否する。
+初回検証が返すhandoff＋参照成果物の`INPUT_DIGEST`を保持し、agentは各pathを直接読まず、
+同じdigestを指定したvalidatorの`read`経由で検証済みbytesを全行取得する。長い成果物は行範囲で
+分割しても、各chunkで入力全体のdigestを再照合する。検証後に内容が差し替わった場合は返却しない。
+不備・古さ・矛盾は推測で補わず`NEEDS_CONTEXT`として親へ返す。
+
+モデルルーティングはproviderを変更しない。選んだペアを現在のproviderで利用できない場合、
+別providerへ黙って切り替えず停止して報告する。設計理由は
+`docs/adr/0010-codex-adaptive-model-routing.md`と
+`docs/adr/0011-codex-cross-model-handoff.md`を参照。
+
+### Codex親セッションの工程切替
+
+親AIも設計から実装など別工程へ進む時、次工程のmodelとeffortを再分類する。標準経路は、
+分離できる作業を検証済みhandoff付きの明示ペアsubagentへ渡すこと、または親ペア自体の保証が
+必要なら明示ペアのfresh sessionへ移すことである。
+
+新規の同一thread `begin`は常に拒否する。旧grantが残っていても開始できない。
+旧`PREPARING` / `SWITCH_PENDING`は互換・復旧用に扱い、通常promptで「モデル切替を診断して」
+「切替待ちを取り消して」とCodexへ依頼できる。Codexが`python3 ~/.codex/bin/codex-model-switch.py`
+の`diagnose` / `cancel`を実行する方式で、利用者が別Terminalへ入力する運用を前提にしない。
+これは標準CLIの`codex diagnose`ではない。
+
+取消までは通常local toolを止め、対象repo・session・transitionに完全一致する復旧操作を許す。
+取消後はmanifestが`CANCELLED`になりregistryを解除する。旧resumeのmodel証拠はhook観測、
+effortは`user-attested`に留まる。review runner本体は未実装であり、現状の必須reviewは
+検証済みhandoffを渡した明示ペアのread-only agentで行う。
+
+`setup.sh --codex`でCLI・hook・配線を配布する。Codexの`/hooks`でhook定義を承認し、
+新しいsessionで案内を確認する。Active/trustedの表示は対象turnの配送証拠ではない。
+hook未承認・無効・timeout・実行不能のとき、guardが動作したとは扱わない。
+状態は`.superpowers/model-switch/`、`CODEX_HOME/model-switch-registry/`、
+`CODEX_HOME/model-switch-preflight/`へowner-onlyで保存する。
+
+操作は`codex/MODEL_ROUTING.md`、判断根拠は[ADR 0016](docs/adr/0016-codex-parent-routing-pilot.md)、
+未検証事項と不具合時の調査手順は[運用引継書](docs/codex-parent-routing-operations-handoff.md)を参照。
 
 ## 認証プロファイルの切り替え
 

@@ -17,24 +17,48 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SOURCE_DIR = REPO_ROOT / "agents"
 OUTPUT_DIR = REPO_ROOT / "codex" / "agents"
 
-# Claude Code のモデル別名 → Codex の世代名。
-# Codex には別名が無く (codex debug models の alias は全件 null)、世代名を直接書くしかない。
-# 新世代が出たらこの表を更新する。
-#
-# 対応の根拠はモデルカタログの説明文:
-#   gpt-5.6-luna "Fast and affordable agentic coding model."
-#   gpt-5.6-sol  "Latest frontier agentic coding model."
-# サブエージェントに重いモデルを使うと、本来の「安く並列に回す」利点が消えるため、
-# 既定は安い側に寄せ、思考量を要求するもの (planner) だけ frontier を割り当てる。
-MODEL_MAP = {
-    "sonnet": "gpt-5.6-luna",
-    "opus": "gpt-5.6-sol",
+# Codex custom agent はモデルと推論強度を不可分な基準ペアとして持つ。
+# Claude Code の model / effort は同ホスト向けの指定なので、Codex側は役割の性質から
+# 独立に割り当てる。動的な昇降条件は codex/MODEL_ROUTING.md が定める。
+CODEX_AGENT_PROFILES = {
+    "build-error-resolver": ("gpt-5.6-luna", "low"),
+    "code-architect": ("gpt-5.6-luna", "high"),
+    "code-explorer": ("gpt-5.6-luna", "medium"),
+    "code-simplifier": ("gpt-5.6-luna", "medium"),
+    "planner": ("gpt-5.6-sol", "high"),
+    "refactor-cleaner": ("gpt-5.6-luna", "high"),
+    "security-reviewer": ("gpt-5.6-terra", "high"),
+    "silent-failure-hunter": ("gpt-5.6-luna", "high"),
 }
 
 # 書き込み系ツールを持つエージェントだけ workspace-write にする。
 # Codex にはツール単位の制限が無く、sandbox_mode の2値でしか表現できない。
 # 粗い写像になるため、read-only 側に倒せるものは倒す (権限は狭い方が安全)。
 WRITE_TOOLS = {"Write", "Edit", "NotebookEdit"}
+
+
+def handoff_guard(model: str, effort: str) -> str:
+    """モデル間移行時にcustom agentが受信handoffを検証する指示を返す。"""
+    return f"""## Cross-model handoff guard
+
+別モデルから作業を受け取る場合、promptにhandoff Markdownのpathが無ければ`NEEDS_CONTEXT`を
+返して停止する。pathがある場合は、最初の操作として次を実行する。
+
+`python3 ~/.codex/bin/validate-codex-handoff.py validate <path> --expected-model {model} --expected-reasoning-effort {effort}`
+
+検証に失敗したら推測で補わず`NEEDS_CONTEXT`と検出理由を返す。成功したら出力された
+`INPUT_DIGEST`を保持する。handoffと参照成果物はpathから直接読まない。次の形式でvalidatorの
+`read`を呼び、`--document handoff`、および存在する`requirements` / `review-package`の全文を読む。
+長い文書は`--start-line`と`--line-count`で全行を順に取得する。各呼出しに最初のmodel、effort、
+`--expected-input-digest <INPUT_DIGEST>`を指定する。差し替えや検証失敗なら作業せず
+`NEEDS_CONTEXT`を返す。全文のvalidated readが完了してから作業する。
+
+`python3 ~/.codex/bin/validate-codex-handoff.py read <path> --expected-model {model} --expected-reasoning-effort {effort} --expected-input-digest <INPUT_DIGEST> --document <handoff|requirements|review-package> --start-line <N> --line-count <N>`
+
+このread-only validatorは、既存指示がコマンド実行を禁じていても受信前処理として
+許される唯一の例外であり、task固有の検査を実行してよいという意味ではない。handoffの欠落・
+空欄・古さ・矛盾、branch/HEAD/worktree fingerprint、model/effortの不一致を無視しない。
+"""
 
 
 def parse_frontmatter(text: str) -> tuple:
@@ -78,17 +102,19 @@ def build_toml(meta: dict, body: str) -> str:
         f"description = {toml_literal(meta['description'])}",
     ]
 
-    model = MODEL_MAP.get(meta.get("model", ""))
-    if model:
-        lines.append(f"model = {toml_literal(model)}")
-    if meta.get("effort"):
-        lines.append(f"model_reasoning_effort = {toml_literal(meta['effort'])}")
+    try:
+        model, effort = CODEX_AGENT_PROFILES[meta["name"]]
+    except KeyError as error:
+        raise ValueError(f"{meta['name']}: Codexのモデル・推論ペアが無い") from error
+    lines.append(f"model = {toml_literal(model)}")
+    lines.append(f"model_reasoning_effort = {toml_literal(effort)}")
 
     tools = parse_tools(meta.get("tools", ""))
     sandbox = "workspace-write" if WRITE_TOOLS & set(tools) else "read-only"
     lines.append(f"sandbox_mode = {toml_literal(sandbox)}")
 
-    lines.append(f"developer_instructions = {toml_literal(body)}")
+    instructions = f"{body}\n\n{handoff_guard(model, effort)}"
+    lines.append(f"developer_instructions = {toml_literal(instructions)}")
     return "\n".join(lines) + "\n"
 
 

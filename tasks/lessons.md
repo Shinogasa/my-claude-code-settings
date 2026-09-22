@@ -20,6 +20,55 @@
 
 ## 記録
 
+### 2026-09-15 | モデル切替を会話コンテキストだけに依存させた
+
+**間違えた内容:**
+強いモデルで設計し、低コストなモデルへ実装を委譲する構成で、model + reasoning effortの
+ルーティングだけを先に設計した。移行先が確定判断や受入条件を勝手に再解釈するリスクに対し、
+会話履歴とspawn promptを十分な引き継ぎだとみなしていた。
+
+**指摘・修正:**
+ユーザーから、別モデルへ作業を移す前に必ずMarkdownの引き継ぎを作り、弱いモデルの独自解釈を
+防ぐよう指摘された。Superpowers成果物を正本として再利用し、無い場合は専用handoffを作る。
+validatorと全custom agentの受信ガードで欠落・古さ・矛盾を`NEEDS_CONTEXT`として検知する。
+
+**教訓:**
+モデルルーティングは「誰に渡すか」だけでなく「何を正本として渡すか」まで設計する。
+会話履歴は永続契約ではない。異なる能力のモデルへ移行するときは、目的、対象外、確定判断、
+所有範囲、受入条件、制約、未解決事項、検証方法をファイルへ固定し、Git鮮度と一緒に検証する。
+
+### 2026-09-15 | PRブランチへ別機能の未コミット差分を積み続けた
+
+**間違えた内容:**
+既存ブランチ名とPRの目的を再確認せず、Codex plugin同期のPRブランチ上でモデルルーティングと
+config安全更新の実装を進めた。未コミットのため既存PRへは混入していなかったが、差分が27ファイルへ
+膨らんでからスコープ不一致に気づいた。
+
+**指摘・修正:**
+ユーザーから現在のブランチでよいか確認され、local HEAD、remote branch、PRのコミット列と
+working treeを分離して照合した。既存5コミットだけをPRへ反映し、別機能の差分はローカルWIP
+ブランチへ回復可能な形で退避して、PRマージ後の最新mainから正式ブランチへ移す。
+
+**教訓:**
+新しい機能へ着手するときは、現在のブランチ名だけでなく、既存PRの目的・remote head・
+コミット済み差分・未コミット差分を着手前に照合する。別機能なら、実装前にブランチを分ける。
+未コミット差分が既にある場合は、PRへpushするコミット列と退避するworking treeを別々に検証する。
+
+### 2026-09-15 | Markdown本文をshell引数へ直接埋め込んだ
+
+**間違えた内容:**
+PR本文を更新するとき、バッククォートを含むMarkdownをshellコマンド文字列の引数へ直接埋め込み、
+shellがコード片をコマンド置換として解釈した。PR更新は完了前に中断し、読み戻しで外部状態が
+変わっていないことを確認できたが、不要なコマンド実行と確認作業を発生させた。
+
+**指摘・修正:**
+PR本文を一時Markdownファイルへ作成し、`gh pr edit --body-file`で渡す方式へ変更した。
+更新後はPR本文とhead SHAを読み戻して確認した。
+
+**教訓:**
+Markdown、commit message、SQLなどshellメタ文字を含みうる長文は、コマンド文字列へ展開しない。
+CLIが提供する`--body-file`や標準入力を使い、外部状態を変更した後は必ず読み戻す。
+
 ### 2026-09-11 | 外部skillの評価で対象を単純化した
 
 **間違えた内容:**
@@ -224,3 +273,91 @@ PUBLICな証跡では、hashやstatusの正確さと端末固有pathの転記を
 実HOME、ユーザー名、一時ディレクトリは、再現に不可欠でない限り`~`や役割名へ
 一般化してからstageする。commit hookだけに頼らず、docs差分の禁止パターン検査を
 commit前チェックへ含める。
+
+### 2026-09-15 | read-only検査でGitの内容変換とpath文字列解決を信頼した
+
+**間違えた内容:**
+worktree fingerprintでexternal diffとtextconvを無効にすればrepository定義commandを実行しないと
+考え、`git diff`を使い続けた。しかしclean/process filterは別の実行経路であり、変更fileの比較だけで
+commandが起動した。またrepository内判定を`Path.resolve()`で済ませた後、絶対pathを`O_NOFOLLOW`で
+開いたため、中間directory差し替えでrepository外を読めた。
+
+**指摘・修正:**
+Sol highレビューの2所見を、markerを作るclean filterと中間directory差し替えのREDテストで再現した。
+fingerprintはGitに内容を読ませずindex manifestと生bytesをhashする方式へ変更し、submoduleの
+clean判定もHEAD tree・index・生bytes比較へ変更した。全path componentをrepository root FDから
+`dir_fd + O_DIRECTORY + O_NOFOLLOW`で固定してから最終fileを開くようにした。
+
+**教訓:**
+read-only境界では「明示的に止めたhelper」だけでなく、依存ツールが入力から起動できる全hookを
+脅威として扱う。fileの範囲検査は文字列上の正規化で終えず、その検査とopenを同じdirectory FDの
+系譜へ束ねる。安全性を列挙型の無効化で作るより、commandを起動しないprimitiveへ境界を下げる。
+
+### 2026-09-18 | Markdownのbacktickをdouble-quoted shell引数へ埋め込んだ
+
+**間違えた内容:**
+設計specの見出しを`rg`で検査する際、Markdownのbacktickを含む正規表現をdouble quoteで囲んだ
+shell commandとして渡した。shellがbacktick内の`codex exec`をcommand substitutionとして実行し、
+promptなしで即終了した。file変更やmodel turnは発生しなかったが、read-only検査が意図しない
+外部process起動になり、その検査結果も無効になった。
+
+**修正:**
+同じ見出し検査を、backtickを含まないsingle-quoted patternへ分解して再実行した。誤って起動した
+commandの出力は成功証拠に数えず、関連testとdiff検査もfreshにやり直す。
+
+**教訓:**
+Markdown、正規表現、Git messageなど任意文字列をshell commandへ埋め込む前に、backtick、`$()`、
+redirect、control operatorの有無を確認する。literal patternはsingle quoteかpattern fileで渡し、
+表示上のquotingではなくshellが解釈する最終文字列を基準に安全性を判断する。
+
+### 2026-09-20 | repo内manifestだけでsessionのpendingを引けると考えた
+
+**間違えた内容:**
+hook payloadの`cwd`からGit rootを求め、そのrepoのmanifestだけを読んだ。pending中に
+repo外のcwdが来るとmanifestを見失い、通常promptとlocal toolを許す。また、manifestの
+識別子とstateだけを検査し、必須証拠が欠けた`ACTIVE`を通していた。
+
+**指摘・修正:**
+security-reviewerの所見を、repo外cwdと不完全ACTIVE manifestのREDテストで再現した。
+owner-onlyのsession→repo registryをCodex設定dirに置き、repo外への移動を拒否する。
+manifestは各stateに必要なdigest、pair、Git識別子、lease、証拠tierまで検査する。
+
+**教訓:**
+local guardの状態探索を、操作側が変えられるcwdに依存させない。状態名だけで成功を決めず、
+その状態を成立させる証拠全体を同時に検証する。
+
+### 2026-09-20 | 許可patchのpath文字列だけを検査した
+
+**間違えた内容:**
+PREPARINGでpatch headerが指定handoffに一致すれば編集を許した。適用側はsymlinkを
+解決するため、handoffの別名から他ファイルを書き換えられた。cancel後もsession registryを
+残し、repoを移動すると通常promptが拒否された。
+
+**指摘・修正:**
+最終レビューの所見を実際のpatch適用とREDテストで確認した。beginとpatch許可時に
+親path・ファイルのsymlinkとhardlinkを拒否し、相対patchのcwdをrepo rootへ限定した。
+cancelではregistryを解放し、移動後も同じsessionを続けられることをテストした。
+
+**教訓:**
+副作用の許可は入力文字列だけでなく、適用時に解決される対象で判断する。状態を
+terminalにする際は、関連する索引やleaseの後始末まで一つの遷移として扱う。
+
+### 2026-09-21 | hookの合成試験とActive表示を現在threadの実行証拠にした
+
+**間違えた内容:**
+親モデル切替のhookへ合成JSONを直接渡すテストが通り、`/hooks`でActiveと表示されたため、
+現在の長寿命threadでも`UserPromptSubmit`と`PreToolUse`が動くと期待した。
+実際には完全一致の再開メッセージを2回受けてもmanifestは`SWITCH_PENDING`のままで、
+通常promptとlocal toolは通った。hookのevent開始・完了、実payloadを確認していなかった。
+
+**指摘・修正:**
+ユーザーが設計・テストの不備を指摘。行き詰まった切替を明示指示により取消し、
+学習ブランチの成果をremoteへ保存してからroutingブランチへ戻った。
+公式仕様、先行例、実threadの時系列を調査し、`docs/codex-parent-model-routing-runtime-research.md`へ
+確定した観測と未確定の原因を分けて記録した。
+
+**教訓:**
+hookの配布、信頼、列挙、**対象threadでのevent実行**は別の証拠とする。
+host runtimeを経由しないsubprocess試験を「実機gateの証明」と呼ばない。
+同期gateに依存する状態を作る前に、そのthread・そのeventが使えることを確かめ、
+確かめられない場合の復旧経路を用意する。
