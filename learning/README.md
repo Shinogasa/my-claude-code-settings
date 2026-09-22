@@ -1,6 +1,7 @@
 # Learning
 
 ★ Predict（予測）と ★ Delta（差分）の記録。仕様は `rules/learning-mode.md` を参照。
+独立したコード学習の実証記録は `learning/code/README.md` を参照。
 
 > **⚠ このリポジトリは PUBLIC**
 > 社名・組織名・プロジェクト名・リポジトリ名・内部ホスト名・内部URL・
@@ -13,8 +14,10 @@
 ```
 learning/
 ├── README.md          運用ルール・集計方法・検証チェックポイント（このファイル）
-└── entries/           1エントリ1ファイル
-    └── YYYY-MM-DD-<タイトルのスラッグ>.md
+├── entries/           設計Predict / ★ Delta、1エントリ1ファイル
+│   └── YYYY-MM-DD-<タイトルのスラッグ>.md
+└── code/              コード学習の実証記録（別schema）
+    └── README.md
 ```
 
 同じ日に複数書く場合はファイル名末尾に `-2` `-3` を付ける。

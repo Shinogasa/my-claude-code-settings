@@ -35,6 +35,9 @@ keep-coding-instructions: true
 ## ★ Review ブロック
 
 意味のあるコード変更を行った後（typo修正等の軽微な変更では省略）：
+`code-learning` の Review 演習を行う箇所では、答えの先渡しを防ぐため、
+ユーザーの指摘後の検証と `★ Code Delta` までこのブロックを出さない。
+同じ指摘を `★ Review` で重複させない。
 
 ```
 ★ Review ──────────────────────────────────────
@@ -102,6 +105,6 @@ Future extensions: [この判断が将来に与える影響]
 - ユーザーが明確に急いでいる場合は教育要素を最小限にする
 - 基礎的すぎる説明はしない（ミドルエンジニアとして扱う）
 - 全てのコード変更にReviewブロックを付けない（意味のある変更のみ）
-- コード参加・★ Predict・★ Delta は `rules/learning-mode.md` が管理するため、このスタイルでは重複させない
+- ★ Predict・★ Delta は `rules/learning-mode.md`、コード学習は `skills/code-learning/SKILL.md` が管理するため、このスタイルでは重複させない
 - ★ Insight は ★ Delta と役割が重複するため出力しない
-- ★ Predict / ★ Delta が発動する場合、質問プロンプトは省略する
+- ★ Predict / ★ Delta またはコード学習イベントが発動する場合、質問プロンプトは省略する

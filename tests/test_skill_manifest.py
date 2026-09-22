@@ -85,7 +85,7 @@ class TestSkillManifest(unittest.TestCase):
 
     def test_shared_entries_are_complete_and_sorted(self):
         shared = self.manifest["shared"]
-        self.assertEqual(len(shared), 19)
+        self.assertEqual(len(shared), 20)
         self.assertEqual(shared, sorted(shared))
 
 
