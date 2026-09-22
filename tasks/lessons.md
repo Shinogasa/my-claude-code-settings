@@ -341,3 +341,23 @@ cancelではregistryを解放し、移動後も同じsessionを続けられる�
 **教訓:**
 副作用の許可は入力文字列だけでなく、適用時に解決される対象で判断する。状態を
 terminalにする際は、関連する索引やleaseの後始末まで一つの遷移として扱う。
+
+### 2026-09-21 | hookの合成試験とActive表示を現在threadの実行証拠にした
+
+**間違えた内容:**
+親モデル切替のhookへ合成JSONを直接渡すテストが通り、`/hooks`でActiveと表示されたため、
+現在の長寿命threadでも`UserPromptSubmit`と`PreToolUse`が動くと期待した。
+実際には完全一致の再開メッセージを2回受けてもmanifestは`SWITCH_PENDING`のままで、
+通常promptとlocal toolは通った。hookのevent開始・完了、実payloadを確認していなかった。
+
+**指摘・修正:**
+ユーザーが設計・テストの不備を指摘。行き詰まった切替を明示指示により取消し、
+学習ブランチの成果をremoteへ保存してからroutingブランチへ戻った。
+公式仕様、先行例、実threadの時系列を調査し、`docs/codex-parent-model-routing-runtime-research.md`へ
+確定した観測と未確定の原因を分けて記録した。
+
+**教訓:**
+hookの配布、信頼、列挙、**対象threadでのevent実行**は別の証拠とする。
+host runtimeを経由しないsubprocess試験を「実機gateの証明」と呼ばない。
+同期gateに依存する状態を作る前に、そのthread・そのeventが使えることを確かめ、
+確かめられない場合の復旧経路を用意する。

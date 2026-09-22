@@ -1,10 +1,14 @@
 ---
 adr: 14
 date: 2026-09-18
-status: accepted
+status: superseded by 0015
 ---
 
 # Codex親セッションを工程境界で手動切替する
+
+> **置換済み:** fresh App Server threadの実配送結果と標準経路の変更は
+> [ADR 0015](0015-codex-parent-routing-runtime-boundary.md)を適用する。本ADRは初回設計時の
+> 前提と却下案を保存する。
 
 ## 背景
 

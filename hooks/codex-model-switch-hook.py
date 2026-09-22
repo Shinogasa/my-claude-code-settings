@@ -14,8 +14,8 @@ from pathlib import Path
 BIN = Path(__file__).resolve().parents[1] / "bin"
 sys.path.insert(0, str(BIN))
 from codex_model_switch import (  # noqa: E402
-    SwitchError, bound_repo, cancel, override, resume, status,
-    validate_handoff_edit_target,
+    SwitchError, bound_repo, cancel, override,
+    record_user_prompt_delivery, resume, status, validate_handoff_edit_target,
 )
 
 
@@ -23,6 +23,7 @@ RESUME_RE = re.compile(r"MODEL_SWITCH_RESUME ([0-9a-f]{32}) ([A-Za-z0-9.-]+) ([a
 OVERRIDE_RE = re.compile(r"MODEL_SWITCH_OVERRIDE ([0-9a-f]{32}) ([A-Za-z0-9._-]+) ([^\r\n]{1,256})")
 CANCEL_RE = re.compile(r"MODEL_SWITCH_CANCEL ([0-9a-f]{32})")
 SHELL_META = set(";&|<>`$\\\n\r*?[]{}")
+BASH_TOOL_NAMES = {"Bash", "exec_command", "shell_command"}
 
 
 def _root(cwd: str) -> Path | None:
@@ -81,6 +82,22 @@ def _session_state(cwd_repo: Path | None, session_id: str) -> tuple[Path | None,
     return cwd_repo, data
 
 
+def _recovery_context(repo: Path, session_id: str, data: dict) -> int:
+    base = ["python3", str(BIN / "codex-model-switch.py")]
+    flags = ["--repo", str(repo), "--session-id", session_id]
+    diagnose_command = shlex.join([*base, "diagnose", *flags])
+    cancel_command = shlex.join([
+        *base, "cancel", *flags, "--transition-id", data["transition_id"],
+    ])
+    _context(
+        f"旧モデル切替が{data['state']}です。通常作業へ進まず、ユーザーの復旧依頼に応じて"
+        f"診断: {diagnose_command} または取消: {cancel_command} を実行してください。"
+        "取消完了までは許可済みの復旧・handoff操作だけを実行してください。",
+        "UserPromptSubmit",
+    )
+    return 0
+
+
 def _prompt(repo: Path | None, data: dict | None, session_id: str, model: str, prompt: str) -> int:
     match = CANCEL_RE.fullmatch(prompt)
     if data is not None and match and data["state"] != "CANCELLED":
@@ -92,7 +109,9 @@ def _prompt(repo: Path | None, data: dict | None, session_id: str, model: str, p
             return _block_prompt("有効な切替待ちではありません")
         return 0
     if data["state"] != "SWITCH_PENDING":
-        return _block_prompt("handoff準備中です。publishまたは取消を完了してください")
+        if prompt.startswith("MODEL_SWITCH_"):
+            return _block_prompt("handoff準備中です。publishまたは取消を完了してください")
+        return _recovery_context(repo, session_id, data)
     match = RESUME_RE.fullmatch(prompt)
     if match:
         updated = resume(repo, session_id, *match.groups(), model)
@@ -114,7 +133,9 @@ def _prompt(repo: Path | None, data: dict | None, session_id: str, model: str, p
             "UserPromptSubmit",
         )
         return 0
-    return _block_prompt("切替待ちです。厳密なRESUME、OVERRIDE、CANCELだけを受け付けます")
+    if prompt.startswith("MODEL_SWITCH_"):
+        return _block_prompt("切替指示は厳密なRESUME、OVERRIDE、CANCELが必要です")
+    return _recovery_context(repo, session_id, data)
 
 
 def _same_script(argument: str, expected: Path) -> bool:
@@ -151,10 +172,13 @@ def _allowed_bash(command: str, repo: Path, session_id: str, data: dict) -> bool
     tail = arguments[3:]
     flags = _flag_values(tail)
     if _same_script(script, BIN / "codex-model-switch.py"):
-        return (
-            operation in ({"status", "publish"} if data["state"] == "PREPARING" else {"status"})
-            and flags == {"--repo": str(repo), "--session-id": session_id}
-        )
+        expected = {"--repo": str(repo), "--session-id": session_id}
+        if operation == "cancel":
+            return flags == {**expected, "--transition-id": data["transition_id"]}
+        operations = {"status", "diagnose"}
+        if data["state"] == "PREPARING":
+            operations.add("publish")
+        return operation in operations and flags == expected
     if not _same_script(script, BIN / "validate-codex-handoff.py"):
         return False
     if operation == "state" and data["state"] == "PREPARING":
@@ -211,7 +235,7 @@ def _pretool(repo: Path | None, data: dict | None, session_id: str, cwd: str, to
         return 0
     if not isinstance(tool_input, dict):
         return _reject("tool入力が不正です")
-    if tool_name == "Bash" and _allowed_bash(
+    if tool_name in BASH_TOOL_NAMES and _allowed_bash(
         tool_input.get("command", tool_input.get("cmd")), repo, session_id, data
     ):
         return 0
@@ -242,7 +266,7 @@ def main() -> int:
             state = data["state"] if data else "NONE"
             _context(
                 f"Codex model switch session_id={session_id} state={state}。"
-                "切替中は指定handoffだけを扱い、hookが無効ならguard確認済みと表示しないでください。",
+                "旧切替中は復旧・指定handoff操作だけを扱い、hookが無効ならguard確認済みと表示しないでください。",
                 event,
             )
             return 0
@@ -250,9 +274,14 @@ def main() -> int:
             prompt = payload.get("prompt")
             if not isinstance(prompt, str):
                 raise SwitchError("promptが不正です")
+            if cwd_repo is not None:
+                record_user_prompt_delivery(
+                    cwd_repo, session_id, payload.get("turn_id"), payload.get("model", ""),
+                )
             return _prompt(repo, data, session_id, payload.get("model", ""), prompt)
-        return _pretool(repo, data, session_id, payload["cwd"], payload.get("tool_name"), payload.get("tool_input"))
-    except (SwitchError, OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
+        tool_input = payload.get("tool_input")
+        return _pretool(repo, data, session_id, payload["cwd"], payload.get("tool_name"), tool_input)
+    except (SwitchError, OSError, ValueError, KeyError, TypeError, RecursionError, subprocess.TimeoutExpired) as error:
         if event == "UserPromptSubmit":
             return _block_prompt(str(error))
         return _reject(str(error))

@@ -12,10 +12,10 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Union
 
 
-RepoLocation = Path | int
+RepoLocation = Union[Path, int]
 
 
 MODEL_REASONING_EFFORTS = {

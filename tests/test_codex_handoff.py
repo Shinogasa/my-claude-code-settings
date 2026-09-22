@@ -34,6 +34,15 @@ class CodexHandoffValidatorTests(unittest.TestCase):
     def setUpClass(cls):
         cls.validator = load_validator_module()
 
+    @unittest.skipUnless(Path("/usr/bin/python3").is_file(), "macOS system Python is unavailable")
+    def test_cli_imports_with_macos_system_python(self):
+        result = subprocess.run(
+            ["/usr/bin/python3", str(SCRIPT), "--help"],
+            text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.repository = Path(self.temporary.name).resolve() / "repository"

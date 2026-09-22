@@ -55,42 +55,66 @@ OpenAI公式のcorrectness/security reviewer例に合わせ、必須の通常レ
 単発の読み取り、同じ受入条件内の局所debugやtest再実行だけでは切替を開始しない。
 降格は、検証済みhandoffだけで次工程へ着手できる安定した境界で行う。
 
-別ペアが必要なら、SessionStartが通知する`session_id`で次を行う。
+### 親工程の標準経路
 
-1. `python3 ~/.codex/bin/codex-model-switch.py begin --repo <絶対repo> --session-id <ID> --task-id <task> --current-phase <工程> --next-phase <工程> --model <model> --effort <effort> --handoff .superpowers/handoffs/<task>.md`を実行する。
-2. 指定handoffをschema 1で作り、`validate-codex-handoff.py validate`を期待ペア付きで実行する。`codex-model-switch.py publish --repo <絶対repo> --session-id <ID>`がGit鮮度とINPUT_DIGESTを再確認して`SWITCH_PENDING`へ移す。
-3. 親AIはtransition ID、handoff path、対象ペア、切替操作を示してターンを終える。ユーザーが`/model`またはアプリのcomposer下でmodelとeffortを両方選び、次の一行だけを送る。
+別ペアが必要なら、同一threadの親を手動変更する前に次の順で選ぶ。
+
+1. 次工程を分離できる場合は、検証済みhandoffを明示ペアのsubagentへ渡す。親は現在ペアのまま
+   orchestrationと結果回収だけを行う。
+2. 親ペア自体が受入条件である、または直列の親作業を移す必要がある場合は、明示ペアのfresh sessionを
+   起動する。移行先は最初にhandoffを期待ペア付きでvalidateし、固定した`INPUT_DIGEST`を指定した
+   validatorの`read`でhandoffと参照文書を全行読む。
+
+security reviewと最終integration reviewは、検証済みhandoffを渡した明示ペアのread-only agentで
+行う。review runner本体は未実装であり、設計書だけを実行証拠として扱わない。
+これらをsame-threadの`user-attested`だけで代替しない。
+
+### 同一threadの新規開始停止と旧状態の復旧
+
+新規`begin`は常に拒否する。旧grantが残っていても開始許可には使わない。同じturnでの
+`UserPromptSubmit`と`PreToolUse`配送だけでは、別hookが拒否した後のgrant流用を防げないためである。
+標準経路へ移行し、旧`PREPARING` / `SWITCH_PENDING` / `ACTIVE`だけ互換・復旧の対象にする。
+`diagnose`の`same_thread_begin_enabled: false`はこの停止を示す。preflight receiptは診断記録であり、
+現在turnのguard稼働やmodel/effort両軸の保証ではない。
+
+利用者は「モデル切替を診断して」「切替待ちを取り消して」とCodexへ依頼できる。旧pendingでも
+通常promptを受け付け、hookは対象repo・session・transitionに一致する復旧commandをcontextへ渡す。
+Codexはその依頼に応じ、次のhelperをlocal shell toolから実行する。`codex diagnose`という
+標準コマンドの案内ではなく、別Terminalへの手入力も前提にしない。
+
+```bash
+python3 ~/.codex/bin/codex-model-switch.py diagnose --repo <絶対repo> --session-id <ID>
+python3 ~/.codex/bin/codex-model-switch.py cancel --repo <絶対repo> --session-id <ID> --transition-id <transition-id>
+```
+
+取消はmanifestを`CANCELLED`へ移し、sessionとrepoのregistry対応を解除する。通常作業へ戻す前に
+結果を確認する。取消完了までは`status` / `diagnose` / transitionが完全一致する`cancel`と、
+既存handoffの操作だけを許可する。`PREPARING`は指定handoff編集・validator・publish、
+`SWITCH_PENDING`はvalidator readを追加で許す。通常promptの許可は通常local toolの許可を意味しない。
+
+互換の明示promptは次のとおり。文中に含むだけでは遷移せず、厳密な一行だけを処理する。
 
 ```text
 MODEL_SWITCH_RESUME <transition-id> <model> <effort>
+MODEL_SWITCH_CANCEL <transition-id>
+MODEL_SWITCH_OVERRIDE <transition-id> <next-phase> <reason>
 ```
 
-hookが観測するmodelと申告ペアが一致し、保存digestとGit鮮度が維持されれば、通常工程を
-`user-attested`として再開する。effortはhookから観測できないため、これはruntime設定の
-機械的な両軸証明ではない。再開後、作業前にvalidatorの`read`でhandoffと参照文書を
-全行取得する。hook自体は読了を証明しない。`runtime-config-verified`は同一threadと
-両軸のloaded設定を確実に結び付けられるまで生成しない。
+resumeではhookが観測するmodel、申告ペア、Git鮮度、handoff digestを照合する。effortはhook入力に
+無いため`user-attested`であり、`runtime-config-verified`は生成しない。作業前にvalidatorの`read`で
+handoffと参照文書を全行取得する。overrideは保存task・工程・session・digestに束縛し、cancelで
+失効する。新しいcheckpointは標準経路で開始する。
 
-切替を明示的に取り消す場合は`MODEL_SWITCH_CANCEL <transition-id>`を送る。対象工程だけ
-現在ペアで進める明示指示は、理由を付けて
-`MODEL_SWITCH_OVERRIDE <transition-id> <next-phase> <reason>`を一行で送る。
-overrideはそのtask・工程・session・handoff digestに束縛し、次checkpointまたはcancelで
-失効する。cancelではsessionとrepoの対応を解除し、同じsessionの通常promptを再開できる。
-provider、sandbox、permissions、必須security review、人間確認境界は変えない。
-
-`PREPARING`では指定handoffの編集とvalidator・状態CLIだけ、`SWITCH_PENDING`では
-validator readと状態照会だけをlocal toolへ許す。`UserPromptSubmit`と`PreToolUse`の
-同期hookが拒否を返すが、hook未承認・無効・timeout・実行不能、hosted toolと特殊tool経路を
-完全には強制できない。`/hooks`で承認と実行状態を確認できない場合、guard稼働を確認済みと
-表示しない。manifestはrepoの`.superpowers/model-switch/`、sessionとrepoの対応は
-`CODEX_HOME/model-switch-registry/`へowner-onlyで保存し、pending中のrepo外cwdは拒否する。
+hook未承認・無効・timeout・実行不能、hosted toolと特殊tool経路を完全には強制できない。
+`/hooks`の表示だけではguard稼働を確認済みと表示しない。manifestはrepoの
+`.superpowers/model-switch/`、registryは`CODEX_HOME/model-switch-registry/`、配送記録は
+`CODEX_HOME/model-switch-preflight/`へowner-onlyで保存する。pending中のrepo外cwdは拒否する。
 指定handoffの編集はsymlink・hardlinkを拒否し、相対patchはrepo rootのcwdからだけ許す。
-ローカルのCodex CLI 0.154.0では、拒否理由は対話画面に表示されたが、`codex exec --json`は
-通常promptの拒否時も終了0・空turnを返した。自動実行では終了コードだけで成功と判定せず、
-`status`で状態を確認する。
-ペア自体を保証条件とする工程は明示ペアでfresh sessionを起動し、handoffと
-Git鮮度を移行先で検証する。security reviewと最終integration reviewはreview runnerの
-明示ペアで行う。
+Codex CLI 0.154.0のhook拒否は終了0・空turnになる場合があるため、自動実行は終了コードだけで
+成功と判定せず、hook eventとmanifestを確認する。
+
+実測範囲、未検証事項、不具合時の採取項目は
+`docs/codex-parent-routing-operations-handoff.md`、決定はADR 0016を参照する。
 
 ## モデル間handoff
 

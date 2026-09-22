@@ -257,34 +257,24 @@ SessionStart helperがClaude pathなしで起動する。
 - read-only / workspace-writeの権限がモデル選択の都合で広がっていない
 - runtime smoke testで実際のmodel、reasoning effort、sandboxを確認する
 
-### P1: 親セッションを含む工程境界モデルルーティングを追加する
+### pilot待ち: 親工程ルーティングの実タスク検証
 
-現行のADR 0010と`codex/MODEL_ROUTING.md`は、サブエージェント起動時のmodel + effort選択を
-中心にしている。親AIが設計から実装まで同じsessionで続行すると起動境界が無く、Solで確定した
-設計を、そのままSolが実装する抜け道が残る。これは「強いモデルで設計し、明確になった作業は
-低コストモデルへ降格する」という目的を満たさない。
+**実装判断**: ADR 0016（0015を置換）。工程ごとに再分類し、検証済みhandoff付きの明示ペアsubagent、
+または明示ペアfresh sessionへ渡す。新規same-thread beginは停止。旧pendingは自然文の復旧依頼を
+受け付け、Codex内からdiagnose / cancelを実行できる。通常local toolは取消まで止める。
 
-**次の実装案**: `docs/codex-primary-session-model-routing-proposal.md`
+**実測済み**: 隔離HOME・一時repo・localhost mockを使う実App Serverで、新規begin拒否、旧pendingの
+副作用拒否→診断→取消→通常操作、およびresumeのmodel観測とeffort申告を検証した。
+Python 3.9の深いJSONによるhook例外も拒否へ変換し、providerへ配送しないことを検証した。
 
-推奨案は、工程遷移時に親AIが推奨ペアを再分類し、現在ペアと異なる場合はMarkdown handoffと
-pending stateを作って停止するswitch gateである。モデル変更はユーザーがCodex CLIの`/model`または
-デスクトップアプリのモデル選択で行い、切替後に同じtaskをhandoffから再開する。pending中の
-repo変更はPreToolUse hookでfail-closedにする。
+**残作業**（[運用引継書](../docs/codex-parent-routing-operations-handoff.md)を正本とする）:
 
-**実装前に決めること**:
-
-- CLI / app / hook / thread metadataのどこでeffective model + effortを観測できるか
-- 観測不能な場合、`user-attested`で再開可能にする範囲と表示方法
-- pending state、scoped override、cancelのinterface
-- ADR 0010を新ADRでどの範囲まで置換するか
-
-**完了条件**:
-
-- サブエージェント無しでも、Sol設計からLuna実装への切替要求で最初のrepo変更前に停止する
-- model + effortをペアで検証し、切替前に検証済みhandoffを保存する
-- pending中の変更をhookが拒否し、切替確認または明示overrideまで進めない
-- runtime検証済みとユーザー申告だけの状態を区別する
-- review runner、provider、通常のmodel既定を変更しない
+- コード学習の実装タスクで明示ペアの委譲・handoff読了・最終reviewまで完走する
+- Desktop/CLIとhosted modelでの利用を記録し、旧Desktop threadの原因は証拠が揃った時点で再調査する
+- fresh sessionの起動・両軸のloaded設定・handoff受信を同じ試行で記録する
+- review runner本体は別タスクで実装する。設計資料を稼働証拠と呼ばない
+- 新規beginを再開するなら、別hookの拒否・turn終了・後続のraw CLI実行にまたがるgrant流用を防ぐ
+  実行束縛を実runtimeで証明する。期限追加やActive表示だけでは再開しない
 
 ### Codex review runnerの初回除外項目
 
