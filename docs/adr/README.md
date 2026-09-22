@@ -81,12 +81,13 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0007](0007-learning-mode-decision-layer-gate.md) | 判断点を層で選別し、実装レベルの経験は定石欄で供給する | 2026-08-21 | accepted |
 | [0008](0008-codex-rtk-prompt-integration.md) | CodexのRTK統合を指示アダプターで管理する | 2026-09-02 | accepted |
 | [0009](0009-codex-bitwarden-signing-agent.md) | Codex子プロセスへBitwarden SSH agentを配布する | 2026-09-03 | accepted |
-| [0010](0010-codex-adaptive-model-routing.md) | Codexサブエージェントのモデルと推論強度を適応的に選ぶ | 2026-09-14 | accepted（親sessionの切替は0014で部分置換） |
+| [0010](0010-codex-adaptive-model-routing.md) | Codexサブエージェントのモデルと推論強度を適応的に選ぶ | 2026-09-14 | accepted（親sessionは0014→0015→0016で部分置換） |
 | [0011](0011-codex-cross-model-handoff.md) | Codexのモデル間移行を検証可能なMarkdown handoffで行う | 2026-09-15 | accepted |
 | 0012 | コード学習モードをreview-firstへ再設計する | 2026-09-18 | accepted（`feat/code-learning-mode-plan`で割当済み・統合待ち） |
 | [0013](0013-codex-review-runner.md) | Codexレビュー実行と出力回収を専用runnerへ分離する | 2026-09-18 | accepted |
 | [0014](0014-codex-primary-session-model-routing.md) | Codex親セッションを工程境界で手動切替する | 2026-09-18 | superseded by 0015 |
-| [0015](0015-codex-parent-routing-runtime-boundary.md) | Codex親工程の標準経路を明示agentとfresh sessionにする | 2026-09-22 | accepted |
+| [0015](0015-codex-parent-routing-runtime-boundary.md) | Codex親工程の標準経路を明示agentとfresh sessionにする | 2026-09-22 | superseded by 0016 |
+| [0016](0016-codex-parent-routing-pilot.md) | Codex親モデル切替の実運用pilotを限定的に行う | 2026-09-22 | accepted |
 
 `0012`は並行して作成された`feat/code-learning-mode-plan`が所有する。統合前のこのブランチには
 実体が無いが、番号を再利用すると将来の統合で衝突するため、リンクせず予約状態を明示している。

@@ -253,34 +253,24 @@ SessionStart helperがClaude pathなしで起動する。
 - read-only / workspace-writeの権限がモデル選択の都合で広がっていない
 - runtime smoke testで実際のmodel、reasoning effort、sandboxを確認する
 
-### 完了: 親セッションを含む工程境界モデルルーティングを追加する
+### pilot待ち: 親工程ルーティングの実タスク検証
 
-現行のADR 0010と`codex/MODEL_ROUTING.md`は、サブエージェント起動時のmodel + effort選択を
-中心にしている。親AIが設計から実装まで同じsessionで続行すると起動境界が無く、Solで確定した
-設計を、そのままSolが実装する抜け道が残る。これは「強いモデルで設計し、明確になった作業は
-低コストモデルへ降格する」という目的を満たさない。
+**実装判断**: ADR 0016（0015を置換）。工程ごとに再分類し、検証済みhandoff付きの明示ペアsubagent、
+または明示ペアfresh sessionへ渡す。新規same-thread beginは停止。旧pendingは自然文の復旧依頼を
+受け付け、Codex内からdiagnose / cancelを実行できる。通常local toolは取消まで止める。
 
-**実装結果**: `docs/adr/0015-codex-parent-routing-runtime-boundary.md`
+**実測済み**: 隔離HOME・一時repo・localhost mockを使う実App Serverで、新規begin拒否、旧pendingの
+副作用拒否→診断→取消→通常操作、およびresumeのmodel観測とeffort申告を検証した。
+Python 3.9の深いJSONによるhook例外も拒否へ変換し、providerへ配送しないことを検証した。
 
-工程遷移時の再分類を実装した。標準経路は検証済みhandoff付きの明示ペアsubagent、または
-親ペア自体を保証する明示ペアfresh sessionとした。同一thread switch gateは、同じturnの実
-UserPromptSubmit / PreToolUse配送をone-time grantで確認できる場合だけ使う補助経路として残した。
-pending中の通常promptと対象local toolをhookでfail-closedにし、diagnoseと直接cancelを追加した。
+**残作業**（[運用引継書](../docs/codex-parent-routing-operations-handoff.md)を正本とする）:
 
-**確定した境界**:
-
-- fresh App Server threadでは実hook配送、model、thread / turn / session ID、manifest遷移を照合できる
-- hook入力に無いeffortは`user-attested`とし、ペア保証が必要ならfresh sessionへ移す
-- 旧Desktop threadの失敗原因は未確定であり、fresh App Server成功へ畳まない
-- ADR 0015がADR 0014を置換し、ADR 0010の基準ペアとADR 0011のhandoff契約は維持する
-
-**完了条件**:
-
-- サブエージェント無しでも、Sol設計からLuna実装への切替要求で最初のrepo変更前に停止する
-- model + effortをペアで検証し、切替前に検証済みhandoffを保存する
-- pending中の変更をhookが拒否し、切替確認または明示overrideまで進めない
-- runtime検証済みとユーザー申告だけの状態を区別する
-- review runner、provider、通常のmodel既定を変更しない
+- コード学習の実装タスクで明示ペアの委譲・handoff読了・最終reviewまで完走する
+- Desktop/CLIとhosted modelでの利用を記録し、旧Desktop threadの原因は証拠が揃った時点で再調査する
+- fresh sessionの起動・両軸のloaded設定・handoff受信を同じ試行で記録する
+- review runner本体は別タスクで実装する。設計資料を稼働証拠と呼ばない
+- 新規beginを再開するなら、別hookの拒否・turn終了・後続のraw CLI実行にまたがるgrant流用を防ぐ
+  実行束縛を実runtimeで証明する。期限追加やActive表示だけでは再開しない
 
 ### Codex review runnerの初回除外項目
 

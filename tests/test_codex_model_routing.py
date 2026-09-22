@@ -47,9 +47,9 @@ class CodexModelRoutingTests(unittest.TestCase):
         self.assertIn('親工程の標準経路', self.text)
         self.assertRegex(self.text, r'明示ペアの(?:subagent|サブエージェント)')
         self.assertRegex(self.text, r'明示ペアのfresh session')
-        self.assertIn('同一thread gateは補助経路', self.text)
+        self.assertIn('新規`begin`は常に拒否', self.text)
 
-    def test_same_thread_gate_requires_runtime_preflight_and_recovery_cli(self):
+    def test_same_thread_begin_disabled_with_in_session_recovery(self):
         self.assertIn('同じturn', self.text)
         self.assertIn('UserPromptSubmit', self.text)
         self.assertIn('PreToolUse', self.text)

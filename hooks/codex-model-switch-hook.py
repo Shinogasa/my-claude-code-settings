@@ -14,7 +14,7 @@ from pathlib import Path
 BIN = Path(__file__).resolve().parents[1] / "bin"
 sys.path.insert(0, str(BIN))
 from codex_model_switch import (  # noqa: E402
-    SwitchError, bound_repo, cancel, issue_begin_preflight, override,
+    SwitchError, bound_repo, cancel, override,
     record_user_prompt_delivery, resume, status, validate_handoff_edit_target,
 )
 
@@ -82,6 +82,22 @@ def _session_state(cwd_repo: Path | None, session_id: str) -> tuple[Path | None,
     return cwd_repo, data
 
 
+def _recovery_context(repo: Path, session_id: str, data: dict) -> int:
+    base = ["python3", str(BIN / "codex-model-switch.py")]
+    flags = ["--repo", str(repo), "--session-id", session_id]
+    diagnose_command = shlex.join([*base, "diagnose", *flags])
+    cancel_command = shlex.join([
+        *base, "cancel", *flags, "--transition-id", data["transition_id"],
+    ])
+    _context(
+        f"旧モデル切替が{data['state']}です。通常作業へ進まず、ユーザーの復旧依頼に応じて"
+        f"診断: {diagnose_command} または取消: {cancel_command} を実行してください。"
+        "取消完了までは許可済みの復旧・handoff操作だけを実行してください。",
+        "UserPromptSubmit",
+    )
+    return 0
+
+
 def _prompt(repo: Path | None, data: dict | None, session_id: str, model: str, prompt: str) -> int:
     match = CANCEL_RE.fullmatch(prompt)
     if data is not None and match and data["state"] != "CANCELLED":
@@ -93,7 +109,9 @@ def _prompt(repo: Path | None, data: dict | None, session_id: str, model: str, p
             return _block_prompt("有効な切替待ちではありません")
         return 0
     if data["state"] != "SWITCH_PENDING":
-        return _block_prompt("handoff準備中です。publishまたは取消を完了してください")
+        if prompt.startswith("MODEL_SWITCH_"):
+            return _block_prompt("handoff準備中です。publishまたは取消を完了してください")
+        return _recovery_context(repo, session_id, data)
     match = RESUME_RE.fullmatch(prompt)
     if match:
         updated = resume(repo, session_id, *match.groups(), model)
@@ -115,7 +133,9 @@ def _prompt(repo: Path | None, data: dict | None, session_id: str, model: str, p
             "UserPromptSubmit",
         )
         return 0
-    return _block_prompt("切替待ちです。厳密なRESUME、OVERRIDE、CANCELだけを受け付けます")
+    if prompt.startswith("MODEL_SWITCH_"):
+        return _block_prompt("切替指示は厳密なRESUME、OVERRIDE、CANCELが必要です")
+    return _recovery_context(repo, session_id, data)
 
 
 def _same_script(argument: str, expected: Path) -> bool:
@@ -137,36 +157,6 @@ def _flag_values(arguments: list[str]) -> dict[str, str] | None:
     return values
 
 
-def _begin_flags(command: str, repo: Path, session_id: str) -> dict[str, str] | None:
-    if not isinstance(command, str) or set(command) & SHELL_META:
-        return None
-    try:
-        arguments = shlex.split(command)
-    except ValueError:
-        return None
-    if arguments[:2] == ["rtk", "proxy"]:
-        arguments = arguments[2:]
-    if len(arguments) < 4 or arguments[0] != "python3":
-        return None
-    script, operation = arguments[1:3]
-    if operation != "begin" or not _same_script(script, BIN / "codex-model-switch.py"):
-        return None
-    flags = _flag_values(arguments[3:])
-    expected = {
-        "--repo", "--session-id", "--task-id", "--current-phase", "--next-phase",
-        "--model", "--effort", "--handoff",
-    }
-    if flags is None or set(flags) != expected or flags["--session-id"] != session_id:
-        raise SwitchError("begin commandの引数がhook preflight契約と一致しません")
-    candidate = Path(flags["--repo"]).expanduser()
-    try:
-        if not candidate.is_absolute() or not candidate.samefile(repo):
-            raise SwitchError("begin commandのrepoが現在のrepoと一致しません")
-    except OSError as error:
-        raise SwitchError("begin commandのrepoを確認できません") from error
-    return {key: value for key, value in flags.items() if key != "--repo"}
-
-
 def _allowed_bash(command: str, repo: Path, session_id: str, data: dict) -> bool:
     if not isinstance(command, str) or set(command) & SHELL_META:
         return False
@@ -182,10 +172,13 @@ def _allowed_bash(command: str, repo: Path, session_id: str, data: dict) -> bool
     tail = arguments[3:]
     flags = _flag_values(tail)
     if _same_script(script, BIN / "codex-model-switch.py"):
-        return (
-            operation in ({"status", "publish"} if data["state"] == "PREPARING" else {"status"})
-            and flags == {"--repo": str(repo), "--session-id": session_id}
-        )
+        expected = {"--repo": str(repo), "--session-id": session_id}
+        if operation == "cancel":
+            return flags == {**expected, "--transition-id": data["transition_id"]}
+        operations = {"status", "diagnose"}
+        if data["state"] == "PREPARING":
+            operations.add("publish")
+        return operation in operations and flags == expected
     if not _same_script(script, BIN / "validate-codex-handoff.py"):
         return False
     if operation == "state" and data["state"] == "PREPARING":
@@ -239,14 +232,6 @@ def _allowed_patch(command: str, repo: Path, cwd: str, data: dict) -> bool:
 
 def _pretool(repo: Path | None, data: dict | None, session_id: str, cwd: str, tool_name: str, tool_input: object) -> int:
     if data is None or data["state"] in {"ACTIVE", "CANCELLED"}:
-        if repo is None or not isinstance(tool_input, dict):
-            return 0
-        command = tool_input.get("command", tool_input.get("cmd"))
-        flags = _begin_flags(command, repo, session_id)
-        if flags is None:
-            return 0
-        turn_id = tool_input.get("turn_id")
-        issue_begin_preflight(repo, session_id, turn_id, flags)
         return 0
     if not isinstance(tool_input, dict):
         return _reject("tool入力が不正です")
@@ -281,7 +266,7 @@ def main() -> int:
             state = data["state"] if data else "NONE"
             _context(
                 f"Codex model switch session_id={session_id} state={state}。"
-                "切替中は指定handoffだけを扱い、hookが無効ならguard確認済みと表示しないでください。",
+                "旧切替中は復旧・指定handoff操作だけを扱い、hookが無効ならguard確認済みと表示しないでください。",
                 event,
             )
             return 0
@@ -289,16 +274,14 @@ def main() -> int:
             prompt = payload.get("prompt")
             if not isinstance(prompt, str):
                 raise SwitchError("promptが不正です")
-            if repo is not None:
+            if cwd_repo is not None:
                 record_user_prompt_delivery(
-                    repo, session_id, payload.get("turn_id"), payload.get("model", ""),
+                    cwd_repo, session_id, payload.get("turn_id"), payload.get("model", ""),
                 )
             return _prompt(repo, data, session_id, payload.get("model", ""), prompt)
         tool_input = payload.get("tool_input")
-        if isinstance(tool_input, dict):
-            tool_input = {**tool_input, "turn_id": payload.get("turn_id")}
         return _pretool(repo, data, session_id, payload["cwd"], payload.get("tool_name"), tool_input)
-    except (SwitchError, OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
+    except (SwitchError, OSError, ValueError, KeyError, TypeError, RecursionError, subprocess.TimeoutExpired) as error:
         if event == "UserPromptSubmit":
             return _block_prompt(str(error))
         return _reject(str(error))

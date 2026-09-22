@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""親セッションのモデル切替を開始・公開・照会するCLI。"""
+"""旧親モデル切替を診断・復旧するCLI。新規beginは停止中。"""
 import argparse
 import json
 import sys
@@ -48,7 +48,7 @@ def main():
             )
         else:
             result = status(arguments.repo, arguments.session_id)
-    except (SwitchError, OSError, ValueError) as error:
+    except (SwitchError, OSError, ValueError, RecursionError) as error:
         print(f"MODEL_SWITCH_ERROR: {error}", file=sys.stderr)
         return 2
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))

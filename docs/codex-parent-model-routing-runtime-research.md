@@ -1,5 +1,14 @@
 # Codex親モデル切替の実行境界と先行例（2026-09-21）
 
+## 2026-09-22追記: 現行運用
+
+現行判断は[ADR 0016](adr/0016-codex-parent-routing-pilot.md)。以下の旧begin成功sequenceは
+549aebcまでの実測記録であり、現在の開始手順ではない。別hookが元のbeginを拒否した後に残る
+未消費grantをraw CLIが使えることを追加実測したため、新規beginを停止した。
+現行runtimeテストは新規begin拒否と旧fixtureの復旧・resume・不正JSON拒否を検証する。
+通常pending promptは復旧依頼として配送し、許可外のlocal toolを止める。
+手順と未検証事項は[運用引継書](codex-parent-routing-operations-handoff.md)を参照する。
+
 ## 調査の問い
 
 親セッションの工程変更に合わせてモデルを選び直す運用はCodexで成立するか。
@@ -57,7 +66,7 @@ hookが同一turn・repo・session・hook hash・begin引数へ束縛したone-t
 一方、旧Desktop threadで失敗した原因は未配送、session ID差、設定保持、surface差のどれかに
 まだ絞り込めず、fresh試行の成功を「古いthreadが原因だった」という断定には使わない。
 
-このsequenceは`tests/test_codex_model_switch_runtime.py`へ固定した。テストは現行hookのhashを
+当初このsequenceを`tests/test_codex_model_switch_runtime.py`へ固定した（現行版は上記追記の4ケースへ変更）。テストは現行hookのhashを
 `hooks/list`から取得して隔離configだけでtrustし、event ID、thread / turn / session ID、model、
 manifest遷移、副作用fileの不在を照合する。`codex` CLIが無い環境ではskipする。
 
@@ -130,4 +139,4 @@ ADR 0014の採用範囲を変える際は新ADRに却下案と理由を残す。
 失敗原因も未確定である。このため選択肢Aを標準経路として採用する。分割可能な作業は明示ペアの
 subagentへ渡し、親ペア自体が保証条件なら検証済みhandoffでfresh sessionへ移す。
 同一thread gateは標準経路にせず、同じturnの実`UserPromptSubmit`と`PreToolUse`を
-one-time grantで証明できた場合だけ使える補助経路として残す。詳細はADR 0015を正本とする。
+one-time grantで証明できた場合だけ使える補助経路として残す。これは当初の採用判断であり、現在はADR 0016によって新規beginを停止している。

@@ -1,10 +1,13 @@
 ---
 adr: 15
 date: 2026-09-22
-status: accepted
+status: superseded by 0016
 ---
 
 # Codex親工程の標準経路を明示agentとfresh sessionにする
+
+> 現行判断は[ADR 0016](0016-codex-parent-routing-pilot.md)。新規beginは停止した。
+> 以下は置換前の判断・実測の記録であり、現行操作手順ではない。
 
 ## 背景
 

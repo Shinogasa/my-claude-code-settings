@@ -16,6 +16,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
+from tests.model_switch_fixtures import seed_legacy_preparing
+
+
 ROOT = Path(__file__).resolve().parents[1]
 SWITCH = ROOT / "bin" / "codex-model-switch.py"
 VALIDATOR = ROOT / "bin" / "validate-codex-handoff.py"
@@ -151,14 +154,11 @@ class ProbeHandler(BaseHTTPRequestHandler):
         probe = self.server.probe
         with probe.lock:
             probe.requests.append(body)
-            index = len(probe.requests)
         model = body.get("model", "gpt-5.6-luna")
-        if index == 1:
-            call_id, events = function_call_events(model, probe.begin_command)
-            probe.begin_call_id = call_id
-        elif index == 2:
-            call_id, events = function_call_events(model, "touch forbidden-by-pretool.txt")
-            probe.forbidden_call_id = call_id
+        if probe.commands:
+            command = probe.commands.pop(0)
+            call_id, events = function_call_events(model, command)
+            probe.call_ids.append(call_id)
         else:
             events = text_events(model)
         payload = "".join(
@@ -180,9 +180,8 @@ class MockProvider:
     def __init__(self):
         self.lock = threading.Lock()
         self.requests = []
-        self.begin_command = ""
-        self.begin_call_id = None
-        self.forbidden_call_id = None
+        self.commands = []
+        self.call_ids = []
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), ProbeHandler)
         self.server.probe = self
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -451,7 +450,7 @@ eventと状態を返す。
             and message.get("params", {}).get("run", {}).get("eventName") == event_name
         ]
 
-    def test_fresh_thread_delivers_prompt_and_tool_hooks(self):
+    def start_runtime(self):
         self.discover_and_trust_hooks()
         server = AppServer(self.repo, self.environment, self.sqlite_runtime)
         self.addCleanup(server.close)
@@ -486,108 +485,104 @@ eventと状態を返す。
         thread = started["result"]["thread"]
         self.assertEqual(thread["id"], thread["sessionId"])
         session_id = thread["sessionId"]
-        self.provider.begin_command = shlex.join([
-            "python3", str(SWITCH), "begin",
-            "--repo", str(self.repo),
-            "--session-id", session_id,
-            "--task-id", "runtime-probe",
-            "--current-phase", "design",
-            "--next-phase", "implementation",
-            "--model", "gpt-5.6-sol",
-            "--effort", "high",
-            "--handoff", ".superpowers/handoffs/runtime-probe.md",
-        ])
+        return server, thread
 
-        turn_started, initial_messages = server.request(4, "turn/start", {
+    def run_turn(self, server, thread, request_id, prompt, **options):
+        started, messages = server.request(request_id, "turn/start", {
             "threadId": thread["id"],
-            "input": [{"type": "text", "text": "Run the runtime preflight."}],
+            "input": [{"type": "text", "text": prompt}], **options,
         })
-        turn_id = turn_started["result"]["turn"]["id"]
-        _completed, remaining = server.wait_for(
+        turn_id = started["result"]["turn"]["id"]
+        completed, remaining = server.wait_for(
             lambda message: message.get("method") == "turn/completed"
             and message.get("params", {}).get("turn", {}).get("id") == turn_id,
         )
-        initial_messages.extend(remaining)
-        prompt_runs = self.hook_runs(initial_messages, "userPromptSubmit")
-        pretool_runs = [
-            run for run in self.hook_runs(initial_messages, "preToolUse")
-            if run.get("displayOrder") == 0
-        ]
-        self.assertEqual(prompt_runs[-1]["status"], "completed")
-        self.assertEqual(pretool_runs[0]["status"], "completed")
-        self.assertEqual(pretool_runs[1]["status"], "blocked")
-        self.assertIn(self.provider.begin_call_id, pretool_runs[0]["id"])
-        self.assertIn(self.provider.forbidden_call_id, pretool_runs[1]["id"])
-        model_switch_completions = [
-            message for message in initial_messages
-            if message.get("method") == "hook/completed"
-            and message.get("params", {}).get("run", {}).get("displayOrder") in {0, 6}
-        ]
-        self.assertTrue(all(
-            message["params"]["threadId"] == thread["id"]
-            and message["params"]["turnId"] == turn_id
-            for message in model_switch_completions
-        ))
-        started_run_ids = {
-            message["params"]["run"]["id"]
-            for message in initial_messages
-            if message.get("method") == "hook/started"
-        }
-        self.assertTrue({run["id"] for run in pretool_runs} <= started_run_ids)
-        self.assertFalse((self.repo / "forbidden-by-pretool.txt").exists())
-        preparing = self.switch("status", "--session-id", session_id)
-        self.assertEqual(preparing["state"], "PREPARING")
-        self.assertEqual(preparing["session_id"], session_id)
+        messages.extend(remaining)
+        self.assertEqual(completed["params"]["turn"]["status"], "completed")
+        completions = [m["params"] for m in messages if m.get("method") == "hook/completed"]
+        starts = {m["params"]["run"]["id"] for m in messages if m.get("method") == "hook/started"}
+        self.assertTrue(completions)
+        for event in completions:
+            self.assertEqual(event["threadId"], thread["id"])
+            self.assertEqual(event["turnId"], turn_id)
+            self.assertIn(event["run"]["id"], starts)
+        return turn_id, messages
 
+    def assert_tool_statuses(self, messages, expected):
+        runs = [run for run in self.hook_runs(messages, "preToolUse") if run.get("displayOrder") == 0]
+        self.assertEqual([run["status"] for run in runs], expected)
+        for call_id, run in zip(self.provider.call_ids, runs):
+            self.assertIn(call_id, run["id"])
+
+    def test_new_begin_is_disabled_after_real_hook_delivery(self):
+        server, thread = self.start_runtime()
+        session_id = thread["sessionId"]
+        command = shlex.join([
+            "python3", str(SWITCH), "begin", "--repo", str(self.repo),
+            "--session-id", session_id, "--task-id", "runtime-probe",
+            "--current-phase", "design", "--next-phase", "implementation",
+            "--model", "gpt-5.6-sol", "--effort", "high",
+            "--handoff", ".superpowers/handoffs/runtime-probe.md",
+        ])
+        self.provider.commands = [command, "touch allowed-after-refusal.txt"]
+        turn_id, messages = self.run_turn(server, thread, 4, "新規切替の拒否を検証する")
+        self.assertEqual(self.hook_runs(messages, "userPromptSubmit")[-1]["status"], "completed")
+        self.assert_tool_statuses(messages, ["completed", "completed"])
+        tool_results = [m["params"]["item"] for m in messages
+                        if m.get("method") == "item/completed" and m["params"]["item"].get("type") == "commandExecution"]
+        self.assertEqual(tool_results[0]["exitCode"], 2)
+        self.assertIn("begin is disabled", tool_results[0]["aggregatedOutput"])
+        self.assertTrue((self.repo / "allowed-after-refusal.txt").exists())
+        self.assertIsNone(self.switch("status", "--session-id", session_id))
+        diagnosed = self.switch("diagnose", "--session-id", session_id)
+        self.assertIsNone(diagnosed["bound_repo"])
+        self.assertFalse(diagnosed["same_thread_begin_enabled"])
+        self.assertFalse(diagnosed["preflight"]["grant_pending"])
+        self.assertEqual(diagnosed["preflight"]["turn_id"], turn_id)
+        self.assertTrue(diagnosed["preflight"]["current_hook"])
+
+    def seed_pending(self, session_id):
+        preparing = seed_legacy_preparing(
+            self.repo, self.environment, session_id, task_id="runtime-probe",
+            model="gpt-5.6-sol", effort="high",
+        )
+        self.assertEqual(self.switch("status", "--session-id", session_id), preparing)
         self.write_handoff()
         pending = self.switch("publish", "--session-id", session_id)
         self.assertEqual(pending["state"], "SWITCH_PENDING")
-        requests_before_block = len(self.provider.requests)
+        return pending
 
-        normal_started, normal_messages = server.request(5, "turn/start", {
-            "threadId": thread["id"],
-            "input": [{"type": "text", "text": "This prompt must be blocked."}],
-        })
-        normal_turn_id = normal_started["result"]["turn"]["id"]
-        _normal_completed, remaining = server.wait_for(
-            lambda message: message.get("method") == "turn/completed"
-            and message.get("params", {}).get("turn", {}).get("id") == normal_turn_id,
-        )
-        normal_messages.extend(remaining)
-        normal_prompt_runs = self.hook_runs(normal_messages, "userPromptSubmit")
-        self.assertEqual(normal_prompt_runs[-1]["status"], "blocked")
-        self.assertTrue(any(
-            message.get("method") == "hook/completed"
-            and message.get("params", {}).get("turnId") == normal_turn_id
-            and message.get("params", {}).get("run", {}).get("id") == normal_prompt_runs[-1]["id"]
-            for message in normal_messages
-        ))
-        self.assertEqual(len(self.provider.requests), requests_before_block)
-        self.assertEqual(self.switch("status", "--session-id", session_id)["state"], "SWITCH_PENDING")
+    def test_legacy_pending_allows_diagnose_cancel_and_then_normal_tools(self):
+        server, thread = self.start_runtime()
+        session_id = thread["sessionId"]
+        pending = self.seed_pending(session_id)
+        flags = ["--repo", str(self.repo), "--session-id", session_id]
+        self.provider.commands = [
+            "touch forbidden-by-pretool.txt",
+            shlex.join(["python3", str(SWITCH), "diagnose", *flags]),
+            shlex.join(["python3", str(SWITCH), "cancel", *flags, "--transition-id", pending["transition_id"]]),
+            "touch recovered.txt",
+        ]
+        _turn_id, messages = self.run_turn(server, thread, 4, "切替待ちを診断して取り消して")
+        self.assertEqual(self.hook_runs(messages, "userPromptSubmit")[-1]["status"], "completed")
+        self.assert_tool_statuses(messages, ["blocked", "completed", "completed", "completed"])
+        self.assertFalse((self.repo / "forbidden-by-pretool.txt").exists())
+        self.assertTrue((self.repo / "recovered.txt").exists())
+        outputs = [m["params"]["item"].get("aggregatedOutput", "") for m in messages if m.get("method") == "item/completed"]
+        self.assertTrue(any('"state": "SWITCH_PENDING"' in output for output in outputs))
+        diagnosed = self.switch("diagnose", "--session-id", session_id)
+        self.assertIsNone(diagnosed["bound_repo"])
+        self.assertEqual(diagnosed["manifest"]["state"], "CANCELLED")
 
-        resume_text = (
-            f"MODEL_SWITCH_RESUME {pending['transition_id']} gpt-5.6-sol high"
+    def test_legacy_resume_model_observed_effort_user_attested(self):
+        server, thread = self.start_runtime()
+        session_id = thread["sessionId"]
+        pending = self.seed_pending(session_id)
+        _turn_id, messages = self.run_turn(
+            server, thread, 4, f"MODEL_SWITCH_RESUME {pending['transition_id']} gpt-5.6-sol high",
+            model="gpt-5.6-sol", effort="high",
         )
-        resume_started, resume_messages = server.request(6, "turn/start", {
-            "threadId": thread["id"],
-            "input": [{"type": "text", "text": resume_text}],
-            "model": "gpt-5.6-sol",
-            "effort": "high",
-        })
-        resume_turn_id = resume_started["result"]["turn"]["id"]
-        _resume_completed, remaining = server.wait_for(
-            lambda message: message.get("method") == "turn/completed"
-            and message.get("params", {}).get("turn", {}).get("id") == resume_turn_id,
-        )
-        resume_messages.extend(remaining)
-        resume_runs = self.hook_runs(resume_messages, "userPromptSubmit")
-        self.assertEqual(resume_runs[-1]["status"], "completed")
-        self.assertTrue(any(
-            message.get("method") == "hook/completed"
-            and message.get("params", {}).get("turnId") == resume_turn_id
-            and message.get("params", {}).get("run", {}).get("id") == resume_runs[-1]["id"]
-            for message in resume_messages
-        ))
+        self.assertEqual(self.hook_runs(messages, "userPromptSubmit")[-1]["status"], "completed")
         active = self.switch("status", "--session-id", session_id)
         self.assertEqual(active["state"], "ACTIVE")
         self.assertEqual(active["session_id"], session_id)
@@ -597,6 +592,25 @@ eventと状態を返す。
         self.assertEqual(active["effort_evidence"], "user-attested")
         self.assertEqual(active["verification_tier"], "user-attested")
         self.assertEqual(self.provider.requests[-1]["model"], "gpt-5.6-sol")
+
+    @unittest.skipUnless(Path("/usr/bin/python3").exists(), "system Python unavailable")
+    def test_system_python_deep_receipt_blocks_before_provider(self):
+        # hook定義を隔離HOME内でsystem Pythonへ変え、その定義のhashをtrustする。
+        path = self.codex_home / "hooks.json"
+        content = path.read_text().replace("python3 ", "/usr/bin/python3 ")
+        path.unlink()
+        path.write_text(content)
+        server, thread = self.start_runtime()
+        session_id = thread["sessionId"]
+        self.seed_pending(session_id)
+        self.run_turn(server, thread, 4, "配送記録を作る")
+        receipt = next((self.codex_home / "model-switch-preflight").glob("*.json"))
+        receipt.write_text("[" * 1500 + "0" + "]" * 1500)
+        requests_before = len(self.provider.requests)
+        _turn_id, messages = self.run_turn(server, thread, 5, "不正JSONはproviderへ配送しない")
+        self.assertEqual(self.hook_runs(messages, "userPromptSubmit")[-1]["status"], "blocked")
+        self.assertEqual(len(self.provider.requests), requests_before)
+        self.assertEqual(self.switch("status", "--session-id", session_id)["state"], "SWITCH_PENDING")
 
 
 if __name__ == "__main__":

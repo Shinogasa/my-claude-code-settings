@@ -10,7 +10,6 @@ import os
 import re
 import stat
 import tempfile
-import uuid
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Iterator
@@ -134,7 +133,7 @@ def _read_manifest(path: Path, session_id: str, repo: Path) -> dict | None:
         with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
             descriptor = -1
             data = json.load(stream)
-    except (ValueError, UnicodeError) as error:
+    except (ValueError, UnicodeError, RecursionError) as error:
         raise SwitchError(f"manifestが不正です: {error}") from error
     finally:
         if descriptor >= 0:
@@ -307,7 +306,7 @@ def _read_preflight(path: Path, session_id: str) -> dict | None:
             ):
                 raise SwitchError("hook preflightの型、所有者、権限またはサイズが不正です")
             data = json.load(stream)
-    except (ValueError, UnicodeError) as error:
+    except (ValueError, UnicodeError, RecursionError) as error:
         raise SwitchError(f"hook preflightが不正です: {error}") from error
     if (
         not isinstance(data, dict)
@@ -363,7 +362,7 @@ def _locked_preflight(session_id: str, create: bool) -> Iterator[tuple[Path | No
 
 
 def record_user_prompt_delivery(repo: Path, session_id: str, turn_id: str, model: str) -> None:
-    """同じturnでbeginするため、実UserPromptSubmit配送をprivate領域へ記録する。"""
+    """診断用に実UserPromptSubmit配送を記録する。開始許可には使わない。"""
     root = _repo_root(repo)
     if not isinstance(turn_id, str) or not turn_id:
         raise SwitchError("UserPromptSubmitのturn_idが不正です")
@@ -382,73 +381,6 @@ def record_user_prompt_delivery(repo: Path, session_id: str, turn_id: str, model
             },
             "grant": None,
         })
-
-
-def issue_begin_preflight(repo: Path, session_id: str, turn_id: str, fields: dict[str, str]) -> str:
-    """実PreToolUseからだけ、同じturnのbeginへ一回用tokenを発行する。"""
-    root = _repo_root(repo)
-    expected_fields = {
-        "--session-id", "--task-id", "--current-phase", "--next-phase",
-        "--model", "--effort", "--handoff",
-    }
-    if set(fields) != expected_fields or fields["--session-id"] != session_id:
-        raise SwitchError("begin hook preflightの引数が不正です")
-    with _locked_preflight(session_id, create=True) as (path, data):
-        assert path is not None
-        if data is None:
-            raise SwitchError("同じturnのUserPromptSubmit配送を確認できません")
-        prompt = data["user_prompt"]
-        digest = _hook_digest()
-        if (
-            prompt["turn_id"] != turn_id
-            or prompt["repo"] != str(root)
-            or prompt["hook_sha256"] != digest
-        ):
-            raise SwitchError("UserPromptSubmitとPreToolUseが同じturn・repo・hookではありません")
-        token = uuid.uuid4().hex
-        data["grant"] = {
-            "token": token,
-            "turn_id": turn_id,
-            "repo": str(root),
-            "task_id": fields["--task-id"],
-            "current_phase": fields["--current-phase"],
-            "next_phase": fields["--next-phase"],
-            "target_model": fields["--model"],
-            "target_effort": fields["--effort"],
-            "handoff_path": fields["--handoff"],
-            "hook_sha256": digest,
-        }
-        _write_manifest(path, data)
-        return token
-
-
-def _consume_begin_preflight(
-    root: Path, session_id: str, token: str | None, task_id: str,
-    current_phase: str, next_phase: str, model: str, effort: str, handoff_path: str,
-) -> None:
-    if token is not None and re.fullmatch(r"[0-9a-f]{32}", token) is None:
-        raise SwitchError("begin用hook preflight tokenが不正です")
-    with _locked_preflight(session_id, create=False) as (path, data):
-        if path is None or data is None or data["grant"] is None:
-            raise SwitchError("begin用hook preflight grantがありません")
-        grant = data["grant"]
-        expected = {
-            "repo": str(root),
-            "task_id": task_id,
-            "current_phase": current_phase,
-            "next_phase": next_phase,
-            "target_model": model,
-            "target_effort": effort,
-            "handoff_path": handoff_path,
-            "hook_sha256": _hook_digest(),
-        }
-        if (
-            any(grant.get(key) != value for key, value in expected.items())
-            or (token is not None and grant["token"] != token)
-        ):
-            raise SwitchError("begin用hook preflight grantが引数または現行hookと一致しません")
-        data["grant"] = None
-        _write_manifest(path, data)
 
 
 def preflight_status(repo: Path, session_id: str) -> dict:
@@ -485,7 +417,7 @@ def _read_binding(path: Path, session_id: str) -> Path | None:
             if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 4096:
                 raise SwitchError("session registry fileが不正です")
             record = json.load(stream)
-    except (OSError, ValueError, UnicodeError) as error:
+    except (OSError, ValueError, UnicodeError, RecursionError) as error:
         raise SwitchError(f"session registryを読めません: {error}") from error
     if (
         not isinstance(record, dict)
@@ -547,6 +479,7 @@ def diagnose(repo: Path, session_id: str) -> dict:
         "session_id": session_id,
         "repo": str(root),
         "bound_repo": str(binding) if binding is not None else None,
+        "same_thread_begin_enabled": False,
         "manifest": status(root, session_id),
         "preflight": preflight_status(root, session_id),
     }
@@ -563,56 +496,11 @@ def begin(
     handoff: Path,
     preflight_token: str | None = None,
 ) -> dict:
-    root = _repo_root(repo)
-    if VALIDATOR.TASK_ID_RE.fullmatch(task_id) is None:
-        raise SwitchError("task_idが不正です")
-    if not PHASE_RE.fullmatch(current_phase) or not PHASE_RE.fullmatch(next_phase):
-        raise SwitchError("phaseが不正です")
-    if effort not in VALIDATOR.MODEL_REASONING_EFFORTS.get(model, set()):
-        raise SwitchError("modelとeffortの組合せが使えません")
-    handoff_path = _safe_handoff_path(handoff)
-    validate_handoff_edit_target(root, handoff_path)
-    _consume_begin_preflight(
-        root, session_id, preflight_token, task_id, current_phase, next_phase,
-        model, effort, handoff_path,
+    # 配送済みgrantと実際に実行されたcommandを束縛できるまで再開しない。
+    raise SwitchError(
+        "same-thread begin is disabled。検証済みhandoff付きの明示ペアsubagent、"
+        "または明示ペアのfresh sessionを使ってください"
     )
-    with _locked_binding(session_id, create=True) as (binding_path, bound):
-        assert binding_path is not None
-        if bound is not None and bound != root:
-            previous_bound = status(bound, session_id)
-            if previous_bound is None or previous_bound["state"] in {"PREPARING", "SWITCH_PENDING"}:
-                raise SwitchError("このsessionは別repoの切替に束縛されています")
-        with _locked(root, session_id) as (path, previous):
-            if previous and previous["state"] in {"PREPARING", "SWITCH_PENDING"}:
-                raise SwitchError("このsessionには進行中の切替があります")
-            with VALIDATOR.repository_root(root) as (_root, descriptor):
-                git_state = VALIDATOR.current_state(descriptor)
-            data = {
-                "schema": 1,
-                "state": "PREPARING",
-                "repo": str(root),
-                "session_id": session_id,
-                "transition_id": uuid.uuid4().hex,
-                "task_id": task_id,
-                "current_phase": current_phase,
-                "next_phase": next_phase,
-                "target_model": model,
-                "target_effort": effort,
-                "handoff_path": handoff_path,
-                "pre_switch_git": git_state,
-                "input_digest": None,
-                "model_evidence": "unverified",
-                "effort_evidence": "unverified",
-                "verification_tier": "unverified",
-                "override_reason": None,
-                "phase_lease": None,
-            }
-            # registry lock中に両fileを公開し、hookが中間状態を読まないようにする。
-            _write_manifest(path, data)
-            _write_manifest(binding_path, {
-                "schema": 1, "session_id": session_id, "repo": str(root)
-            })
-            return data
 
 
 def publish(repo: Path, session_id: str) -> dict:
