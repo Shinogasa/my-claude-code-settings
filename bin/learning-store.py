@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import sys
 
-from learning_store.store import StoreError, bind_store, init_store, status
+from learning_store.store import StoreError, bind_store, init_store, list_records, status
 
 
 def parser() -> argparse.ArgumentParser:
@@ -19,6 +19,8 @@ def parser() -> argparse.ArgumentParser:
     bind.add_argument("--repo", required=True)
     bind.add_argument("--replace-binding", action="store_true")
     subcommands.add_parser("status")
+    listing = subcommands.add_parser("list")
+    listing.add_argument("--capability")
     return result
 
 
@@ -29,11 +31,15 @@ def main() -> int:
             response = init_store(Path(arguments.repo), os.environ)
         elif arguments.command == "bind":
             response = bind_store(Path(arguments.repo), arguments.replace_binding, os.environ)
-        else:
+        elif arguments.command == "status":
             response = status(os.environ)
+        else:
+            response = list_records(os.environ, arguments.capability)
     except StoreError as error:
+        error_value = {"code": error.code, "message": error.message}
+        error_value.update(error.details)
         json.dump(
-            {"ok": False, "error": {"code": error.code, "message": error.message}},
+            {"ok": False, "error": error_value},
             sys.stderr,
             ensure_ascii=False,
             sort_keys=True,

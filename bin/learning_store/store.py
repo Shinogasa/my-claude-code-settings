@@ -13,10 +13,11 @@ import uuid
 class StoreError(Exception):
     """利用者が修正できるstore境界の失敗。"""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, details: Optional[Dict[str, object]] = None):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.details = details or {}
 
 
 @dataclass(frozen=True)
@@ -242,3 +243,90 @@ def status(env: Mapping[str, str]) -> Dict[str, object]:
         "store_id": store.store_id,
         "writable": store.state == "active" and os.access(str(store.root), os.W_OK),
     }
+
+
+def _safe_files(root: Path, directory_name: str, suffix: str):
+    directory = root / directory_name
+    if not directory.exists() and not directory.is_symlink():
+        return ()
+    if directory.is_symlink() or not directory.is_dir():
+        raise StoreError("UNSAFE_PATH", f"{directory_name}は実directoryである必要があります")
+    files = []
+    for path in directory.rglob("*"):
+        relative = path.relative_to(root)
+        current = root
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                raise StoreError("UNSAFE_PATH", f"{directory_name}配下にsymlinkがあります")
+        if path.is_dir():
+            continue
+        if not path.is_file() or path.suffix != suffix:
+            raise StoreError("UNSAFE_PATH", f"{directory_name}配下に想定外のfileがあります")
+        files.append(path)
+    return tuple(sorted(files))
+
+
+def scan_records(store: Store):
+    from learning_store.schema import parse_record, validate_operation
+
+    records = []
+    for path in _safe_files(store.root, "records", ".md"):
+        try:
+            raw = path.read_bytes()
+        except OSError as error:
+            raise StoreError("INVALID_RECORD", "recordを読み取れません") from error
+        record = parse_record(raw)
+        relative = path.relative_to(store.root)
+        observed = str(record["observed_at"])
+        expected_name = f"{observed[:10]}-{record['id']}.md"
+        expected = Path("records") / str(record["kind"]) / observed[:4] / expected_name
+        if relative != expected:
+            raise StoreError("INVALID_RECORD", "record pathと内容が一致しません")
+        records.append(record)
+
+    for path in _safe_files(store.root, "operations", ".json"):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise StoreError("INVALID_OPERATION", "operationを読み取れません") from error
+        operation = validate_operation(value)
+        relative = path.relative_to(store.root)
+        observed = str(operation["observed_at"])
+        expected = Path("operations") / observed[:4] / f"{observed[:10]}-{operation['id']}.json"
+        if relative != expected:
+            raise StoreError("INVALID_OPERATION", "operation pathと内容が一致しません")
+    return tuple(records)
+
+
+def list_records(env: Mapping[str, str], capability: Optional[str]) -> Dict[str, object]:
+    from learning_store.schema import analyze_history, conflicting_events
+
+    store = load_store(env)
+    records = scan_records(store)
+    history = analyze_history(records)
+    conflicts = conflicting_events(history)
+    if conflicts:
+        raise StoreError(
+            "EVENT_CONFLICT",
+            "訂正履歴に複数の有効末尾があります",
+            {"conflicts": {key: list(value) for key, value in conflicts.items()}},
+        )
+    heads = [heads[0] for heads in history.heads_by_event.values()]
+    heads.sort(key=lambda item: (str(item["observed_at"]), str(item["id"])))
+    if capability is not None:
+        selected = [item for item in heads if item["capability_id"] == capability]
+        return {"ok": True, "records": selected, "count": len(selected)}
+    grouped: Dict[str, Dict[str, object]] = {}
+    for item in heads:
+        identifier = str(item["capability_id"])
+        summary = grouped.setdefault(identifier, {
+            "capability_id": identifier,
+            "count": 0,
+            "scopes": [],
+        })
+        summary["count"] = int(summary["count"]) + 1
+        if item["scope"] not in summary["scopes"]:
+            summary["scopes"].append(item["scope"])
+    capabilities = [grouped[key] for key in sorted(grouped)]
+    return {"ok": True, "capabilities": capabilities, "count": len(capabilities)}

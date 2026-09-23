@@ -14,6 +14,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "learning-store.py"
+FRONTMATTER_KEYS = (
+    "schema_version", "id", "event_id", "observed_at", "kind", "mode",
+    "capability_id", "scope", "initial_result", "retry_result",
+    "transfer_result", "supersedes",
+)
 
 
 class LearningStoreCliTests(unittest.TestCase):
@@ -24,6 +29,7 @@ class LearningStoreCliTests(unittest.TestCase):
         self.home.mkdir()
         self.env = os.environ.copy()
         self.env.update(HOME=str(self.home), XDG_CONFIG_HOME=str(self.base / "xdg"))
+        self.event_id = str(uuid.uuid4())
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -50,6 +56,63 @@ class LearningStoreCliTests(unittest.TestCase):
         result = self.cli("init", "--repo", str(repo))
         self.assertEqual(result.returncode, 0, result.stderr)
         return repo
+
+    def make_prepared_store(self):
+        self.store = self.init_store()
+        return self.store
+
+    def marker(self):
+        return json.loads((self.store / ".learning-store.json").read_text(encoding="utf-8"))
+
+    def make_active_store(self):
+        self.make_prepared_store()
+        marker = self.marker()
+        marker["state"] = "active"
+        (self.store / ".learning-store.json").write_text(
+            json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return self.store
+
+    def record_payload(self, *, record_id=None, event_id=None, supersedes=(),
+                       body="## 担当範囲\n仮説を区別する", capability_id=None,
+                       scope="競合する仮説を観測で区別する"):
+        return {
+            "schema_version": 1,
+            "id": record_id or str(uuid.uuid4()),
+            "event_id": event_id or self.event_id,
+            "observed_at": "2026-09-23T00:00:00+00:00",
+            "kind": "code",
+            "mode": "investigate",
+            "capability_id": capability_id or "diagnosis.distinguish-competing-hypotheses",
+            "scope": scope,
+            "initial_result": "unverified",
+            "retry_result": "not_attempted",
+            "transfer_result": "not_attempted",
+            "supersedes": list(supersedes),
+            "body": body,
+        }
+
+    def write_record_fixture(self, value, *, filename_id=None):
+        target_id = filename_id or value["id"]
+        target = self.store / "records" / value["kind"] / "2026" / f"2026-09-23-{target_id}.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        lines = ["---"]
+        lines.extend(
+            f"{key}: {json.dumps(value[key], ensure_ascii=False)}"
+            for key in FRONTMATTER_KEYS
+        )
+        lines.extend(["---", "", value["body"], ""])
+        target.write_text("\n".join(lines), encoding="utf-8")
+        return target
+
+    def branch_fixture(self):
+        self.make_active_store()
+        first = self.record_payload()
+        left = self.record_payload(event_id=first["event_id"], supersedes=[first["id"]])
+        right = self.record_payload(event_id=first["event_id"], supersedes=[first["id"]])
+        for value in (first, left, right):
+            self.write_record_fixture(value)
+        return first, left, right
 
     def file_hash(self, path):
         return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -188,6 +251,101 @@ class LearningStoreCliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.home / ".config/agent-learning/config.json").is_file())
+
+    def test_list_distinguishes_empty_store_and_returns_capability_scope(self):
+        self.make_active_store()
+        empty = self.cli("list")
+        self.assertEqual(empty.returncode, 0, empty.stderr)
+        self.assertEqual(json.loads(empty.stdout), {"ok": True, "capabilities": [], "count": 0})
+
+        first = self.record_payload(scope="仮説Aと仮説Bを観測で区別する")
+        self.write_record_fixture(first)
+        listed = self.cli("list")
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertEqual(json.loads(listed.stdout)["capabilities"], [{
+            "capability_id": first["capability_id"],
+            "count": 1,
+            "scopes": [first["scope"]],
+        }])
+
+    def test_list_returns_only_the_effective_correction(self):
+        self.make_active_store()
+        first = self.record_payload(body="初版")
+        corrected = self.record_payload(
+            event_id=first["event_id"], supersedes=[first["id"]], body="訂正版"
+        )
+        self.write_record_fixture(first)
+        self.write_record_fixture(corrected)
+
+        result = self.cli("list", "--capability", first["capability_id"])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        records = json.loads(result.stdout)["records"]
+        self.assertEqual([item["id"] for item in records], [corrected["id"]])
+        self.assertEqual(records[0]["observed_at"], "2026-09-23T00:00:00+00:00")
+
+    def test_branch_is_an_explicit_event_conflict(self):
+        first, left, right = self.branch_fixture()
+
+        result = self.cli("list", "--capability", first["capability_id"])
+
+        self.assertEqual(self.error_code(result), "EVENT_CONFLICT")
+        detail = json.loads(result.stderr)["error"]["conflicts"]
+        self.assertEqual(set(detail[first["event_id"]]), {left["id"], right["id"]})
+
+    def test_invalid_history_rejects_missing_parent(self):
+        self.make_active_store()
+        self.write_record_fixture(self.record_payload(supersedes=[str(uuid.uuid4())]))
+        self.assertEqual(self.error_code(self.cli("list")), "INVALID_HISTORY")
+
+    def test_invalid_history_rejects_cross_event_parent(self):
+        self.make_active_store()
+        first = self.record_payload()
+        cross = self.record_payload(event_id=str(uuid.uuid4()), supersedes=[first["id"]])
+        self.write_record_fixture(first)
+        self.write_record_fixture(cross)
+        self.assertEqual(self.error_code(self.cli("list")), "INVALID_HISTORY")
+
+    def test_invalid_history_rejects_cycle(self):
+        self.make_active_store()
+        left_id = str(uuid.uuid4())
+        right_id = str(uuid.uuid4())
+        self.write_record_fixture(self.record_payload(record_id=left_id, supersedes=[right_id]))
+        self.write_record_fixture(self.record_payload(record_id=right_id, supersedes=[left_id]))
+        self.assertEqual(self.error_code(self.cli("list")), "INVALID_HISTORY")
+
+    def test_list_rejects_malformed_record(self):
+        self.make_active_store()
+        target = self.store / "records/code/2026/broken.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("---\nid: not-json\n---\n", encoding="utf-8")
+        self.assertEqual(self.error_code(self.cli("list")), "INVALID_RECORD")
+
+    def test_list_rejects_unknown_record_schema(self):
+        self.make_active_store()
+        value = self.record_payload()
+        value["schema_version"] = 2
+        self.write_record_fixture(value)
+        self.assertEqual(self.error_code(self.cli("list")), "INVALID_RECORD")
+
+    def test_list_rejects_record_filename_id_mismatch(self):
+        self.make_active_store()
+        self.write_record_fixture(self.record_payload(), filename_id=str(uuid.uuid4()))
+        self.assertEqual(self.error_code(self.cli("list")), "INVALID_RECORD")
+
+    def test_list_rejects_symlinked_record_tree_and_broken_operation(self):
+        self.make_active_store()
+        outside = self.base / "outside"
+        outside.mkdir()
+        records = self.store / "records"
+        records.symlink_to(outside, target_is_directory=True)
+        self.assertEqual(self.error_code(self.cli("list")), "UNSAFE_PATH")
+
+        records.unlink()
+        operation = self.store / "operations/2026/broken.json"
+        operation.parent.mkdir(parents=True)
+        operation.write_text("{broken", encoding="utf-8")
+        self.assertEqual(self.error_code(self.cli("list")), "INVALID_OPERATION")
 
 
 if __name__ == "__main__":
