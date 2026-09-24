@@ -10,6 +10,7 @@ import sys
 from learning_store.store import (
     StoreError,
     bind_store,
+    import_legacy,
     init_store,
     list_records,
     load_store,
@@ -33,6 +34,8 @@ def parser() -> argparse.ArgumentParser:
     record = subcommands.add_parser("record")
     record.add_argument("--input", required=True)
     record.add_argument("--resolve-conflict", action="store_true")
+    importing = subcommands.add_parser("import")
+    importing.add_argument("--source", required=True)
     return result
 
 
@@ -47,9 +50,11 @@ def main() -> int:
             response = status(os.environ)
         elif arguments.command == "list":
             response = list_records(os.environ, arguments.capability)
-        else:
+        elif arguments.command == "record":
             value = read_record_input(Path(arguments.input))
             response = save_record(load_store(os.environ), value, arguments.resolve_conflict)
+        else:
+            response = import_legacy(load_store(os.environ), Path(arguments.source))
     except StoreError as error:
         error_value = {"code": error.code, "message": error.message}
         error_value.update(error.details)

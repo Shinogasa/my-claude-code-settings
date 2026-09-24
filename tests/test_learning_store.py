@@ -136,6 +136,29 @@ class LearningStoreCliTests(unittest.TestCase):
             "wait_count": 1,
         }
 
+    def make_legacy_source(self, *, with_records=True):
+        source = self.base / "settings"
+        source.mkdir()
+        if with_records:
+            decision = source / "learning/entries/decision.md"
+            code = source / "learning/code/entries/code.md"
+            decision.parent.mkdir(parents=True)
+            code.parent.mkdir(parents=True)
+            decision.write_bytes(b"decision original\n")
+            code.write_bytes(b"code original\n")
+        empty_hooks = self.base / "empty-hooks"
+        empty_hooks.mkdir(exist_ok=True)
+        subprocess.run(["git", "init", "-b", "main", str(source)], check=True, capture_output=True, env=self.env)
+        subprocess.run(["git", "-C", str(source), "config", "user.name", "Fixture"], check=True, env=self.env)
+        subprocess.run(["git", "-C", str(source), "config", "user.email", "fixture@example.invalid"], check=True, env=self.env)
+        subprocess.run(["git", "-C", str(source), "add", "."], check=True, env=self.env)
+        subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={empty_hooks}",
+             "-C", str(source), "commit", "--allow-empty", "-m", "fixture"],
+            check=True, capture_output=True, env=self.env,
+        )
+        return source
+
     def file_hash(self, path):
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -513,6 +536,113 @@ class LearningStoreCliTests(unittest.TestCase):
         outside.mkdir()
         (self.store / "records").symlink_to(outside, target_is_directory=True)
         self.assertEqual(self.error_code(self.cli_with_json(value)), "UNSAFE_PATH")
+
+    def test_import_copies_tracked_legacy_bytes_and_activates_after_manifest(self):
+        self.make_prepared_store()
+        source = self.make_legacy_source()
+        source_commit = subprocess.check_output(
+            ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
+        ).strip()
+
+        result = self.cli("import", "--source", str(source))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        response = json.loads(result.stdout)
+        self.assertTrue(response["created"])
+        self.assertEqual(response["count"], 2)
+        self.assertEqual(self.marker()["state"], "active")
+        self.assertEqual(
+            (self.store / "legacy/decision/decision.md").read_bytes(),
+            (source / "learning/entries/decision.md").read_bytes(),
+        )
+        self.assertEqual(
+            (self.store / "legacy/code/code.md").read_bytes(),
+            (source / "learning/code/entries/code.md").read_bytes(),
+        )
+        manifests = tuple((self.store / "imports").glob("*.json"))
+        self.assertEqual(len(manifests), 1)
+        manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+        self.assertEqual(manifest["source_commit"], source_commit)
+        self.assertEqual(manifest["count"], 2)
+        self.assertEqual(
+            {item["source_path"] for item in manifest["files"]},
+            {"learning/entries/decision.md", "learning/code/entries/code.md"},
+        )
+        for item in manifest["files"]:
+            source_bytes = (source / item["source_path"]).read_bytes()
+            self.assertEqual(item["sha256"], hashlib.sha256(source_bytes).hexdigest())
+
+    def test_partial_import_conflict_never_activates_and_can_resume(self):
+        self.make_prepared_store()
+        source = self.make_legacy_source()
+        decision = source / "learning/entries/decision.md"
+        code = source / "learning/code/entries/code.md"
+        legacy_decision = self.store / "legacy/decision/decision.md"
+        legacy_code = self.store / "legacy/code/code.md"
+        legacy_decision.parent.mkdir(parents=True)
+        legacy_code.parent.mkdir(parents=True)
+        legacy_decision.write_bytes(decision.read_bytes())
+        legacy_code.write_bytes(b"conflicting existing bytes\n")
+
+        failed = self.cli("import", "--source", str(source))
+
+        self.assertEqual(self.error_code(failed), "LEGACY_CONFLICT")
+        self.assertEqual(self.marker()["state"], "prepared")
+        self.assertEqual(legacy_decision.read_bytes(), decision.read_bytes())
+        self.assertFalse((self.store / "imports").exists())
+
+        legacy_code.write_bytes(code.read_bytes())
+        resumed = self.cli("import", "--source", str(source))
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertEqual(self.marker()["state"], "active")
+        self.assertEqual(legacy_code.read_bytes(), code.read_bytes())
+
+    def test_empty_import_writes_manifest_and_is_idempotent(self):
+        self.make_prepared_store()
+        source = self.make_legacy_source(with_records=False)
+
+        first = self.cli("import", "--source", str(source))
+        repeated = self.cli("import", "--source", str(source))
+
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertTrue(json.loads(first.stdout)["created"])
+        self.assertEqual(json.loads(first.stdout)["count"], 0)
+        self.assertEqual(repeated.returncode, 0, repeated.stderr)
+        self.assertFalse(json.loads(repeated.stdout)["created"])
+        self.assertEqual(len(tuple((self.store / "imports").glob("*.json"))), 1)
+        self.assertEqual(self.marker()["state"], "active")
+
+    def test_import_rejects_symlink_source_and_uncommitted_target_changes(self):
+        self.make_prepared_store()
+        source = self.make_legacy_source()
+        source_link = self.base / "settings-link"
+        source_link.symlink_to(source, target_is_directory=True)
+        self.assertEqual(
+            self.error_code(self.cli("import", "--source", str(source_link))),
+            "INVALID_SOURCE",
+        )
+        (source / "learning/entries/decision.md").write_bytes(b"dirty change\n")
+        failed = self.cli("import", "--source", str(source))
+        self.assertEqual(self.error_code(failed), "SOURCE_NOT_CLEAN")
+        self.assertEqual(self.marker()["state"], "prepared")
+
+    def test_active_import_rejects_changed_source(self):
+        self.make_prepared_store()
+        source = self.make_legacy_source()
+        first = self.cli("import", "--source", str(source))
+        self.assertEqual(first.returncode, 0, first.stderr)
+        (source / "learning/entries/new.md").write_bytes(b"new legacy\n")
+        subprocess.run(["git", "-C", str(source), "add", "."], check=True, env=self.env)
+        subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={self.base / 'empty-hooks'}",
+             "-C", str(source), "commit", "-m", "changed"],
+            check=True, capture_output=True, env=self.env,
+        )
+
+        changed = self.cli("import", "--source", str(source))
+
+        self.assertEqual(self.error_code(changed), "IMPORT_CONFLICT")
+        self.assertEqual(len(tuple((self.store / "imports").glob("*.json"))), 1)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -527,3 +528,222 @@ def read_record_input(path: Path) -> Dict[str, object]:
     if not isinstance(value, dict):
         raise StoreError("INVALID_INPUT", "inputはJSON objectである必要があります")
     return value
+
+
+def _source_entries(source: Path):
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(source), "ls-tree", "-r", "-z", "--name-only", "HEAD", "--",
+             "learning/entries", "learning/code/entries"],
+            check=True,
+            capture_output=True,
+        )
+        commit = subprocess.run(
+            ["git", "-C", str(source), "rev-parse", "HEAD"],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise StoreError("INVALID_SOURCE", "取込元のGit HEADを読み取れません") from error
+    try:
+        tracked = {item for item in result.stdout.decode("utf-8").split("\0") if item}
+    except UnicodeDecodeError as error:
+        raise StoreError("INVALID_SOURCE", "取込元pathはUTF-8である必要があります") from error
+
+    expected = set()
+    locations = (
+        (Path("learning/entries"), "decision"),
+        (Path("learning/code/entries"), "code"),
+    )
+    for relative_directory, _kind in locations:
+        directory = source / relative_directory
+        if directory.is_symlink():
+            raise StoreError("INVALID_SOURCE", "取込対象directoryにsymlinkは使えません")
+        if not directory.exists():
+            continue
+        if not directory.is_dir():
+            raise StoreError("INVALID_SOURCE", "取込対象がdirectoryではありません")
+        for path in directory.glob("*.md"):
+            if path.is_symlink() or not path.is_file():
+                raise StoreError("INVALID_SOURCE", "取込対象にsymlinkまたは非通常fileがあります")
+            expected.add(path.relative_to(source).as_posix())
+
+    tracked_targets = set()
+    for name in tracked:
+        candidate = Path(name)
+        if candidate.suffix != ".md":
+            continue
+        if candidate.parent in {location[0] for location in locations}:
+            tracked_targets.add(candidate.as_posix())
+    if expected != tracked_targets:
+        raise StoreError("SOURCE_NOT_CLEAN", "取込対象の作業ツリーとHEADのfile集合が一致しません")
+
+    entries = []
+    for source_path in sorted(expected):
+        path = source / source_path
+        try:
+            working_bytes = path.read_bytes()
+            committed = subprocess.run(
+                ["git", "-C", str(source), "cat-file", "blob", f"HEAD:{source_path}"],
+                check=True,
+                capture_output=True,
+            ).stdout
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise StoreError("INVALID_SOURCE", "取込対象のGit blobを読み取れません") from error
+        if working_bytes != committed:
+            raise StoreError("SOURCE_NOT_CLEAN", "取込対象の内容がHEADと一致しません")
+        kind = "code" if source_path.startswith("learning/code/") else "decision"
+        legacy_path = Path("legacy") / kind / path.name
+        entries.append({
+            "kind": kind,
+            "source_path": source_path,
+            "legacy_path": legacy_path.as_posix(),
+            "sha256": hashlib.sha256(committed).hexdigest(),
+            "payload": committed,
+        })
+    return commit, entries
+
+
+def _canonical_source(source: Path) -> Path:
+    if not source.is_absolute():
+        raise StoreError("INVALID_SOURCE", "sourceは正規化された絶対pathで指定してください")
+    try:
+        resolved = source.resolve(strict=True)
+    except OSError as error:
+        raise StoreError("INVALID_SOURCE", "source directoryが存在しません") from error
+    if resolved != source or not source.is_dir():
+        raise StoreError("INVALID_SOURCE", "sourceにsymlinkは使えません")
+    try:
+        assert_git_root(source)
+    except StoreError as error:
+        raise StoreError("INVALID_SOURCE", "sourceはGit rootである必要があります") from error
+    return source
+
+
+def _manifest_files(store: Store):
+    directory = store.root / "imports"
+    if not directory.exists() and not directory.is_symlink():
+        return ()
+    if directory.is_symlink() or not directory.is_dir():
+        raise StoreError("UNSAFE_PATH", "importsは実directoryである必要があります")
+    manifests = []
+    for path in sorted(directory.iterdir()):
+        if path.is_symlink() or not path.is_file() or path.suffix != ".json":
+            raise StoreError("IMPORT_CONFLICT", "imports配下に想定外のfileがあります")
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise StoreError("IMPORT_CONFLICT", "import manifestを読み取れません") from error
+        if not isinstance(value, dict) or set(value) != {
+            "schema_version", "import_id", "source_commit", "count", "files"
+        }:
+            raise StoreError("IMPORT_CONFLICT", "import manifestのキー集合が不正です")
+        try:
+            import_id = _uuid(value["import_id"], "IMPORT_CONFLICT")
+        except StoreError as error:
+            raise StoreError("IMPORT_CONFLICT", error.message) from error
+        if value["schema_version"] != 1 or path.name != f"{import_id}.json":
+            raise StoreError("IMPORT_CONFLICT", "import manifestのschemaまたはpathが不正です")
+        if not isinstance(value["source_commit"], str) or len(value["source_commit"]) != 40:
+            raise StoreError("IMPORT_CONFLICT", "source_commitが不正です")
+        if not isinstance(value["count"], int) or isinstance(value["count"], bool):
+            raise StoreError("IMPORT_CONFLICT", "manifest countが不正です")
+        files = value["files"]
+        if not isinstance(files, list) or len(files) != value["count"]:
+            raise StoreError("IMPORT_CONFLICT", "manifest filesとcountが一致しません")
+        for item in files:
+            if not isinstance(item, dict) or set(item) != {
+                "kind", "source_path", "legacy_path", "sha256"
+            }:
+                raise StoreError("IMPORT_CONFLICT", "manifest file entryが不正です")
+        manifests.append((path, value))
+    return tuple(manifests)
+
+
+def _manifest_core(commit: str, entries) -> Dict[str, object]:
+    return {
+        "schema_version": 1,
+        "source_commit": commit,
+        "count": len(entries),
+        "files": [
+            {key: entry[key] for key in ("kind", "source_path", "legacy_path", "sha256")}
+            for entry in entries
+        ],
+    }
+
+
+def _matching_manifest(store: Store, core: Dict[str, object]):
+    manifests = _manifest_files(store)
+    matches = []
+    for path, value in manifests:
+        comparable = {key: value[key] for key in core}
+        if comparable == core:
+            matches.append((path, value))
+    if manifests and len(matches) != 1:
+        raise StoreError("IMPORT_CONFLICT", "既存manifestと取込元が一致しません")
+    return matches[0] if matches else None
+
+
+def import_legacy(store: Store, source: Path) -> Dict[str, object]:
+    source = _canonical_source(source)
+    commit, entries = _source_entries(source)
+    core = _manifest_core(commit, entries)
+    lock_path = _git_lock_path(store.root)
+    try:
+        lock_file = lock_path.open("a+b")
+    except OSError as error:
+        raise StoreError("WRITE_FAILED", "排他lockを開けません") from error
+    with lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        current = _load_store_from_binding(store.binding)
+        if current.root != store.root or current.store_id != store.store_id:
+            raise StoreError("STORE_CHANGED", "操作中にbindingまたはmarkerが変わりました")
+        match = _matching_manifest(current, core)
+        if current.state == "active" and match is None:
+            raise StoreError("IMPORT_CONFLICT", "active storeへ異なる取込は追加できません")
+
+        for entry in entries:
+            relative = Path(str(entry["legacy_path"]))
+            target = current.root / relative
+            if target.exists() or target.is_symlink():
+                if target.is_symlink() or not target.is_file():
+                    raise StoreError("LEGACY_CONFLICT", "既存legacyが通常fileではありません")
+                try:
+                    existing = target.read_bytes()
+                except OSError as error:
+                    raise StoreError("LEGACY_CONFLICT", "既存legacyを照合できません") from error
+                if existing != entry["payload"]:
+                    raise StoreError("LEGACY_CONFLICT", "既存legacyの内容が取込元と一致しません")
+                continue
+            parent = _safe_parent(current.root, relative.parent)
+            try:
+                publish_exclusive(parent, relative.name, entry["payload"])
+            except StoreError as error:
+                if error.code == "RECORD_ID_CONFLICT":
+                    raise StoreError("LEGACY_CONFLICT", error.message) from error
+                raise
+
+        created = match is None
+        if match is None:
+            import_id = str(uuid.uuid4())
+            manifest = dict(core, import_id=import_id)
+            payload = (json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+            parent = _safe_parent(current.root, Path("imports"))
+            publish_exclusive(parent, f"{import_id}.json", payload)
+            manifest_path = Path("imports") / f"{import_id}.json"
+        else:
+            existing_path, manifest = match
+            import_id = str(manifest["import_id"])
+            manifest_path = existing_path.relative_to(current.root)
+
+        marker = {"schema_version": 1, "store_id": current.store_id, "state": "active"}
+        _atomic_json(current.root / ".learning-store.json", marker)
+        return {
+            "ok": True,
+            "import_id": import_id,
+            "path": manifest_path.as_posix(),
+            "count": len(entries),
+            "created": created,
+            "state": "active",
+        }
