@@ -117,6 +117,16 @@ def parse_record(raw: bytes) -> Record:
     return validate_input(value)
 
 
+def serialize_record(value: Record) -> bytes:
+    lines = ["---"]
+    lines.extend(
+        f"{key}: {json.dumps(value[key], ensure_ascii=False)}"
+        for key in FRONTMATTER_KEYS
+    )
+    lines.extend(["---", "", str(value["body"]), ""])
+    return "\n".join(lines).encode("utf-8")
+
+
 def validate_operation(value: object) -> Dict[str, object]:
     if not isinstance(value, dict) or set(value) != OPERATION_KEYS:
         raise StoreError("INVALID_OPERATION", "operationのキー集合が不正です")
@@ -138,6 +148,10 @@ def validate_operation(value: object) -> Dict[str, object]:
     result = dict(value)
     result.update(id=record_id, event_id=event_id, observed_at=observed_at)
     return result
+
+
+def serialize_operation(value: Mapping[str, object]) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
 
 
 def analyze_history(records: Tuple[Record, ...]) -> History:

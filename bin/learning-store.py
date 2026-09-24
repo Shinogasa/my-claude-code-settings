@@ -7,7 +7,16 @@ import os
 from pathlib import Path
 import sys
 
-from learning_store.store import StoreError, bind_store, init_store, list_records, status
+from learning_store.store import (
+    StoreError,
+    bind_store,
+    init_store,
+    list_records,
+    load_store,
+    read_record_input,
+    save_record,
+    status,
+)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -21,6 +30,9 @@ def parser() -> argparse.ArgumentParser:
     subcommands.add_parser("status")
     listing = subcommands.add_parser("list")
     listing.add_argument("--capability")
+    record = subcommands.add_parser("record")
+    record.add_argument("--input", required=True)
+    record.add_argument("--resolve-conflict", action="store_true")
     return result
 
 
@@ -33,8 +45,11 @@ def main() -> int:
             response = bind_store(Path(arguments.repo), arguments.replace_binding, os.environ)
         elif arguments.command == "status":
             response = status(os.environ)
-        else:
+        elif arguments.command == "list":
             response = list_records(os.environ, arguments.capability)
+        else:
+            value = read_record_input(Path(arguments.input))
+            response = save_record(load_store(os.environ), value, arguments.resolve_conflict)
     except StoreError as error:
         error_value = {"code": error.code, "message": error.message}
         error_value.update(error.details)

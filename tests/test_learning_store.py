@@ -43,6 +43,11 @@ class LearningStoreCliTests(unittest.TestCase):
             check=False,
         )
 
+    def cli_with_json(self, value, *record_arguments):
+        input_path = self.base / f"input-{uuid.uuid4()}.json"
+        input_path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        return self.cli("record", *record_arguments, "--input", str(input_path))
+
     def error_code(self, result):
         self.assertEqual(result.returncode, 2, result.stdout)
         return json.loads(result.stderr)["error"]["code"]
@@ -113,6 +118,23 @@ class LearningStoreCliTests(unittest.TestCase):
         for value in (first, left, right):
             self.write_record_fixture(value)
         return first, left, right
+
+    def list_event(self, event_id):
+        result = self.cli("list", "--capability", "diagnosis.distinguish-competing-hypotheses")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return [item for item in json.loads(result.stdout)["records"] if item["event_id"] == event_id]
+
+    def operation_payload(self, *, record_id=None, event_id=None):
+        return {
+            "schema_version": 1,
+            "id": record_id or str(uuid.uuid4()),
+            "event_id": event_id or self.event_id,
+            "observed_at": "2026-09-23T00:00:00+00:00",
+            "kind": "operation",
+            "capability_id": "diagnosis.distinguish-competing-hypotheses",
+            "end_reason": "completed",
+            "wait_count": 1,
+        }
 
     def file_hash(self, path):
         return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -346,6 +368,151 @@ class LearningStoreCliTests(unittest.TestCase):
         operation.parent.mkdir(parents=True)
         operation.write_text("{broken", encoding="utf-8")
         self.assertEqual(self.error_code(self.cli("list")), "INVALID_OPERATION")
+
+    def test_record_is_exclusive_and_idempotent_by_generated_bytes(self):
+        self.make_active_store()
+        value = self.record_payload()
+
+        first = self.cli_with_json(value)
+        repeated = self.cli_with_json(value)
+        changed = dict(value, body="異なる本文")
+        conflict = self.cli_with_json(changed)
+
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertTrue(json.loads(first.stdout)["created"])
+        self.assertEqual(repeated.returncode, 0, repeated.stderr)
+        self.assertFalse(json.loads(repeated.stdout)["created"])
+        self.assertEqual(json.loads(first.stdout)["path"], json.loads(repeated.stdout)["path"])
+        self.assertEqual(self.error_code(conflict), "RECORD_ID_CONFLICT")
+        self.assertEqual(len(tuple((self.store / "records").rglob("*.md"))), 1)
+
+    def test_record_rejects_prepared_store_and_duplicate_initial_event(self):
+        self.make_prepared_store()
+        self.assertEqual(self.error_code(self.cli_with_json(self.record_payload())), "STORE_NOT_ACTIVE")
+
+        marker = self.marker()
+        marker["state"] = "active"
+        (self.store / ".learning-store.json").write_text(json.dumps(marker) + "\n", encoding="utf-8")
+        first = self.record_payload()
+        self.assertEqual(self.cli_with_json(first).returncode, 0)
+        duplicate = self.record_payload(event_id=first["event_id"])
+        self.assertEqual(self.error_code(self.cli_with_json(duplicate)), "INVALID_SUPERSEDES")
+
+    def test_record_allows_idempotent_resend_of_non_head_revision(self):
+        self.make_active_store()
+        first = self.record_payload(body="初版")
+        corrected = self.record_payload(
+            event_id=first["event_id"], supersedes=[first["id"]], body="訂正版"
+        )
+        self.assertEqual(self.cli_with_json(first).returncode, 0)
+        self.assertEqual(self.cli_with_json(corrected).returncode, 0)
+
+        repeated = self.cli_with_json(first)
+
+        self.assertEqual(repeated.returncode, 0, repeated.stderr)
+        self.assertFalse(json.loads(repeated.stdout)["created"])
+        self.assertEqual([item["id"] for item in self.list_event(first["event_id"])], [corrected["id"]])
+
+    def test_branch_requires_all_current_heads_and_integration_reason(self):
+        first, left, right = self.branch_fixture()
+        incomplete = self.record_payload(
+            event_id=first["event_id"], supersedes=[left["id"]],
+            body="## 統合理由\n一方だけを採用",
+        )
+        self.assertEqual(
+            self.error_code(self.cli_with_json(incomplete, "--resolve-conflict")),
+            "INVALID_SUPERSEDES",
+        )
+        no_reason = self.record_payload(
+            event_id=first["event_id"], supersedes=[left["id"], right["id"]],
+            body="理由見出しなし",
+        )
+        self.assertEqual(
+            self.error_code(self.cli_with_json(no_reason, "--resolve-conflict")),
+            "INVALID_SUPERSEDES",
+        )
+        complete = self.record_payload(
+            event_id=first["event_id"], supersedes=[left["id"], right["id"]],
+            body="## 統合理由\n両枝の証拠を照合し未確定はunverified",
+        )
+
+        result = self.cli_with_json(complete, "--resolve-conflict")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([item["id"] for item in self.list_event(first["event_id"])], [complete["id"]])
+
+    def test_normal_record_rejects_branch_and_resolve_rejects_single_head(self):
+        first, left, right = self.branch_fixture()
+        correction = self.record_payload(
+            event_id=first["event_id"], supersedes=[left["id"], right["id"]],
+            body="## 統合理由\n統合する",
+        )
+        self.assertEqual(self.error_code(self.cli_with_json(correction)), "EVENT_CONFLICT")
+
+        fresh_event = self.record_payload(event_id=str(uuid.uuid4()))
+        self.assertEqual(self.error_code(self.cli_with_json(fresh_event, "--resolve-conflict")), "INVALID_SUPERSEDES")
+
+    def test_operation_is_idempotent_and_excluded_from_capability_list(self):
+        self.make_active_store()
+        operation = self.operation_payload()
+        first = self.cli_with_json(operation)
+        repeated = self.cli_with_json(operation)
+
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertTrue(json.loads(first.stdout)["created"])
+        self.assertFalse(json.loads(repeated.stdout)["created"])
+        listed = self.cli("list")
+        self.assertEqual(json.loads(listed.stdout)["count"], 0)
+        self.assertEqual(len(tuple((self.store / "operations").rglob("*.json"))), 1)
+
+    def test_two_processes_publish_one_record(self):
+        self.make_active_store()
+        value = self.record_payload()
+        input_path = self.base / "concurrent.json"
+        input_path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        command = [sys.executable, str(CLI), "record", "--input", str(input_path)]
+        processes = [
+            subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env)
+            for _ in range(2)
+        ]
+        results = []
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 0, stderr)
+            results.append(json.loads(stdout))
+        self.assertEqual(sorted(item["created"] for item in results), [False, True])
+        self.assertEqual(len(tuple((self.store / "records").rglob("*.md"))), 1)
+
+    def test_save_record_rechecks_the_store_binding_not_process_environment(self):
+        self.make_active_store()
+        sys.path.insert(0, str(ROOT / "bin"))
+        try:
+            from learning_store.store import load_store, save_record
+
+            store = load_store(self.env)
+            result = save_record(store, self.record_payload())
+        finally:
+            sys.path.remove(str(ROOT / "bin"))
+
+        self.assertTrue(result["created"])
+        self.assertEqual(result["event_id"], self.event_id)
+
+    def test_record_rejects_symlink_input_and_symlinked_destination(self):
+        self.make_active_store()
+        value = self.record_payload()
+        real_input = self.base / "real-input.json"
+        real_input.write_text(json.dumps(value), encoding="utf-8")
+        input_link = self.base / "input-link.json"
+        input_link.symlink_to(real_input)
+        self.assertEqual(
+            self.error_code(self.cli("record", "--input", str(input_link))),
+            "INVALID_INPUT",
+        )
+
+        outside = self.base / "outside-records"
+        outside.mkdir()
+        (self.store / "records").symlink_to(outside, target_is_directory=True)
+        self.assertEqual(self.error_code(self.cli_with_json(value)), "UNSAFE_PATH")
 
 
 if __name__ == "__main__":
