@@ -7,6 +7,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
 AGENTS_MD = REPO_ROOT / "AGENTS.md"
+LEARNING_README = REPO_ROOT / "learning" / "README.md"
 
 EXPECTED_AGENTS = """# Codex project guidance
 
@@ -97,6 +98,62 @@ class TestCodexProjectDelta(unittest.TestCase):
 
     def test_stays_below_project_instruction_budget(self):
         self.assertLess(len(self.content), 4096)
+
+
+class TestLearningStoreDocumentation(unittest.TestCase):
+    """新規記録の正本と両ホスト運用が一意に読めることを検査する。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.learning = LEARNING_README.read_text(encoding="utf-8")
+        cls.claude = CLAUDE_MD.read_text(encoding="utf-8")
+        cls.tasks = (REPO_ROOT / "rules/task-management.md").read_text(
+            encoding="utf-8"
+        )
+        cls.readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    def test_external_store_is_the_new_record_authority(self):
+        for marker in ("専用学習store", "新規記録の正本", "読み取り専用"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.learning)
+        self.assertNotIn(
+            "★ Delta を返したら `learning/entries/` に1エントリ1ファイルで作成",
+            self.claude,
+        )
+        self.assertNotIn(
+            "★ Predict の予測と ★ Delta の差分を `learning/entries/` に記録する",
+            self.tasks,
+        )
+        self.assertNotIn(
+            "実体は **このリポジトリの `learning/entries/`**",
+            self.readme,
+        )
+        self.assertNotIn("`learning/code/entries/` に記録する", self.readme)
+
+    def test_documentation_covers_both_hosts_and_store_lifecycle(self):
+        for marker in (
+            "~/.claude/bin/learning-store.py",
+            "~/.codex/bin/learning-store.py",
+            "init",
+            "bind",
+            "status",
+            "list",
+            "record",
+            "import",
+            "store_id",
+            "clone",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.learning)
+        self.assertIn("ファイル保存", self.learning)
+        self.assertIn("Git commit", self.learning)
+        self.assertIn("remote反映", self.learning)
+
+    def test_legacy_hit_rate_is_not_interpreted_as_mastery_or_difficulty(self):
+        self.assertNotIn(
+            "hit 率が高いのは出題が易しすぎる兆候",
+            self.learning,
+        )
 
 
 if __name__ == "__main__":

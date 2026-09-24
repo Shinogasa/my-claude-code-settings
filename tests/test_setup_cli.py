@@ -165,6 +165,27 @@ class SetupCliTests(unittest.TestCase):
             with self.subTest(installed=installed):
                 self.assertEqual(installed.resolve(), source)
 
+    def test_learning_store_is_distributed_without_initializing(self):
+        (self.home / ".claude").mkdir()
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--all")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        source = (self.repository / "bin" / "learning-store.py").resolve()
+        self.assertEqual(
+            (self.home / ".claude/bin/learning-store.py").resolve(),
+            source,
+        )
+        self.assertEqual(
+            (self.home / ".codex/bin/learning-store.py").resolve(),
+            source,
+        )
+        self.assertFalse(
+            (self.home / ".config/agent-learning/config.json").exists()
+        )
+        self.assertFalse((self.repository / ".learning-store.json").exists())
+
     def test_codex_installs_global_rtk_instructions(self):
         (self.home / ".codex").mkdir()
 

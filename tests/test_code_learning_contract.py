@@ -130,6 +130,30 @@ class CodeLearningSkillContract(unittest.TestCase):
         self.assertIn("実質ヒントなし", text)
         self.assertIn("自動同期しない", text)
 
+    def test_record_documentation_covers_attempts_support_and_retention(self):
+        text = RECORD_SCHEMA.read_text(encoding="utf-8")
+        for marker in (
+            "Investigate",
+            "能力ID",
+            "scope",
+            "初回結果",
+            "再試行",
+            "開始契機",
+            "支援",
+            "完了",
+            "中断",
+            "operation",
+            "習得証拠",
+            "7日以上",
+            "関連実作業",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, text)
+        self.assertNotIn(
+            "1イベントにつき `learning/code/entries/",
+            text,
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

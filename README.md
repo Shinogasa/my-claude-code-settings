@@ -543,26 +543,15 @@ paths:
 
 ## learning/ の運用
 
-学習ログ（★ Predict / ★ Delta の記録）の実体は **このリポジトリの `learning/entries/`** に置き、git で追跡する。運用の詳細は `learning/README.md`。
+新規の学習記録は、この設定リポジトリとは別の専用学習storeへ保存する。
+`setup.sh` はClaude Codeの `~/.claude/bin/learning-store.py` とCodex CLIの
+`~/.codex/bin/learning-store.py` に同じCLIを配布するが、storeの初期化やbindingは行わない。
+初回作成、別マシンでのcloneとbind、保存・commit・remote反映の状態区分は
+`learning/README.md` を参照する。コード学習のschemaと証拠条件は `learning/code/README.md` に置く。
 
-コード学習は独立した `code-learning` skillで行い、ユーザーが実証した内容だけを
-`learning/code/entries/` に記録する。schemaと非保存条件は `learning/code/README.md` を参照。
-記録なしを未習得とみなさず、teachへ自動同期もしない。
-
-- **1エントリ1ファイル + frontmatter**: 2026-08-09 に単一ファイル `tasks/learning-journal.md`
-  から移行した。後日の集計と学び直しのため、日付・当否・欠けた軸を構造化データで持つ。
-  単一ファイルへの追記だった頃は、テンプレート行を実エントリとして数える誤りが2回起きており、
-  この形式ではその混同が構造的に起きない。並行セッションでの追記衝突も避けられる。
-- **なぜこのリポジトリに置くか**: マシン間で同期され、バックアップされ、後から振り返れる。
-  以前は業務用の PRIVATE リポジトリに実体を集約し symlink で参照していたが、
-  個人の学習ログを業務用リポジトリに同居させる構成が適切でないため 2026-08-02 に移行した。
-  これに伴い `setup.sh` の symlink 集約機構は撤去した。
-- **PUBLIC であることの制約**: このリポジトリは PUBLIC のため、社名・プロジェクト名・
-  リポジトリ名・内部パス・業務コードを書かない。技術的本質のみを一般化して記録する
-  （`rules/learning-mode.md` の抽象化ルール）。抽象化の強制はセキュリティ要件であると同時に、
-  本質だけを取り出して言語化する訓練としても機能する。
-- **移行前のアーカイブ**: 2026-08-02 以前の詳細版（業務固有情報を含む）は移行元の
-  PRIVATE リポジトリにアーカイブとして残しており、以降そちらには追記しない。
+このリポジトリの `learning/entries/` と旧 `learning/code/entries/` は、既存ADRから参照される
+読み取り専用履歴である。新規記録を追加せず、旧hit/missやAI評価を新schemaの習得証拠へ変換しない。
+このリポジトリはPUBLICのため、旧履歴も業務固有情報を抽象化した状態を保つ。
 
 ## 禁止パターン検査（pre-commit フック）
 
