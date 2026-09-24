@@ -50,17 +50,22 @@ class CodeLearningSkillContract(unittest.TestCase):
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, text)
-        modes = [text.index(f"| {mode} |") for mode in ("Write", "Modify", "Review", "Explain")]
+        modes = [
+            text.index(f"| {mode} |")
+            for mode in ("Investigate", "Review", "Modify", "Write", "Explain")
+        ]
         self.assertEqual(modes, sorted(modes))
 
     def test_router_has_only_activation_responsibilities(self):
         self.assertTrue(ROUTER.is_file(), "コード学習の常時ruleが存在する")
         text = ROUTER.read_text(encoding="utf-8")
+        common = (ROOT / "rules" / "learning-mode.md").read_text(encoding="utf-8")
         self.assertIn("skills/code-learning/SKILL.md", text)
         self.assertIn("~/.claude/skills/code-learning/SKILL.md", text)
         self.assertIn("~/.agents/skills/code-learning/SKILL.md", text)
         self.assertIn("導入未完了をユーザーへ明示", text)
-        self.assertIn("学習なし", text)
+        self.assertIn("学習なし", common)
+        self.assertNotIn("最大2", text)
         self.assertIn("生成物", text)
         self.assertNotIn("paths:", text)
         self.assertLess(len(text), 3000)
@@ -68,7 +73,43 @@ class CodeLearningSkillContract(unittest.TestCase):
     def test_review_style_does_not_reveal_a_review_exercise_early(self):
         text = REVIEW_STYLE.read_text(encoding="utf-8")
         self.assertIn("code-learning", text)
-        self.assertIn("ユーザーの指摘後", text)
+        self.assertIn("理由まで回答", text)
+        for form in ("Write", "Modify", "Review", "Investigate", "Predict"):
+            with self.subTest(form=form):
+                self.assertIn(form, text)
+
+    def test_investigate_retry_and_resume_keep_user_ownership(self):
+        text = SKILL.read_text(encoding="utf-8")
+        for marker in (
+            "対象箇所を先に示さない",
+            "固定の再試行回数",
+            "同じevent_id",
+            "反例または観測差を一つ",
+            "本人が選んだ次の行動",
+            "完成実装は本人が引取りを依頼するまで保留",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, text)
+        self.assertNotIn("真正かつ安全に成立する最初の形式", text)
+
+    def test_tool_output_and_ai_tests_are_recorded_as_support(self):
+        text = SKILL.read_text(encoding="utf-8")
+        self.assertIn("tool出力", text)
+        self.assertIn("AIが完成させたテスト", text)
+        self.assertIn("本人が検証方法を設計した証拠", text)
+
+    def test_capability_growth_requires_scope_and_comparable_contexts(self):
+        common = (ROOT / "rules" / "learning-mode.md").read_text(encoding="utf-8")
+        for marker in (
+            "能力ID",
+            "scope",
+            "別文脈2回",
+            "2回目",
+            "ヒントなし",
+            "比較不能",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, common)
 
     def test_record_schema_requires_evidence_and_public_safety(self):
         self.assertTrue(RECORD_SCHEMA.is_file())

@@ -34,12 +34,43 @@ class TestLearningBoundaryContract(unittest.TestCase):
     def test_code_learning_is_delegated_to_its_skill(self):
         self.assertIn("skills/code-learning/SKILL.md", RULE)
         self.assertIn("同じ箇所で二重に", RULE)
-        self.assertIn("設計Predictとコード学習の合計", RULE)
+        self.assertIn("合計最大2イベント", RULE)
 
     def test_predict_layer_gate_does_not_exclude_code_practice(self):
         self.assertIn("L2", RULE)
         self.assertIn("コード学習には適用しない", RULE)
         self.assertEqual(RULE.count("- **上限:"), 1)
+
+    def test_common_policy_is_single_owner_for_routing_disclosure_and_storage(self):
+        code_rule = (ROOT / "rules" / "code-learning.md").read_text(encoding="utf-8")
+        code_skill = (ROOT / "skills" / "code-learning" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("## 両学習モードの共通方針", RULE)
+        for marker in (
+            "同じ能力・同じ解法",
+            "合計最大2イベント",
+            "理由まで回答する前",
+            "status",
+            "未保存",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, RULE)
+        for consumer in (code_rule, code_skill):
+            with self.subTest(consumer=consumer[:30]):
+                self.assertIn("rules/learning-mode.md", consumer)
+                self.assertIn("共通方針", consumer)
+
+    def test_multiple_options_do_not_force_predict_and_hit_rate_is_not_mastery(self):
+        self.assertIn("複数案", RULE)
+        self.assertIn("強制発火", RULE)
+        self.assertNotIn("必ず発火する場面: こちらが複数案", RULE)
+        self.assertNotIn("外した予測ほど後の定着に効く", RULE)
+        self.assertIn("結論の一致", RULE)
+        self.assertIn("習得の証拠", RULE)
+
+    def test_retention_candidate_requires_related_work_after_seven_days(self):
+        self.assertIn("7日以上", RULE)
+        self.assertIn("関連実作業", RULE)
+        self.assertIn("保持は未確認", RULE)
 
 
 class TestLearningPluginPolicy(unittest.TestCase):
