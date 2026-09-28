@@ -71,12 +71,17 @@ class LearningStoreCliTests(unittest.TestCase):
 
     def make_active_store(self):
         self.make_prepared_store()
+        source = self.make_legacy_source(with_records=False)
+        result = self.cli("import", "--source", str(source))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return self.store
+
+    def force_active_marker(self):
         marker = self.marker()
         marker["state"] = "active"
         (self.store / ".learning-store.json").write_text(
             json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8"
         )
-        return self.store
 
     def record_payload(self, *, record_id=None, event_id=None, supersedes=(),
                        body="## 担当範囲\n仮説を区別する", capability_id=None,
@@ -210,6 +215,27 @@ class LearningStoreCliTests(unittest.TestCase):
         link.symlink_to(target, target_is_directory=True)
         self.assertEqual(self.error_code(self.cli("init", "--repo", str(link))), "INVALID_REPO")
 
+    def test_active_marker_requires_one_verified_import_manifest(self):
+        self.make_prepared_store()
+        self.force_active_marker()
+
+        self.assertEqual(self.error_code(self.cli("status")), "INCOMPLETE_IMPORT")
+        self.assertEqual(
+            self.error_code(self.cli_with_json(self.record_payload())),
+            "INCOMPLETE_IMPORT",
+        )
+
+        marker = self.marker()
+        marker["state"] = "prepared"
+        (self.store / ".learning-store.json").write_text(
+            json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        source = self.make_legacy_source()
+        imported = self.cli("import", "--source", str(source))
+        self.assertEqual(imported.returncode, 0, imported.stderr)
+        (self.store / "legacy/decision/decision.md").write_bytes(b"tampered\n")
+        self.assertEqual(self.error_code(self.cli("status")), "INCOMPLETE_IMPORT")
+
     def test_existing_binding_blocks_other_init_without_mutating_target(self):
         first = self.init_store("first")
         binding_hash = self.file_hash(self.binding_path())
@@ -296,6 +322,31 @@ class LearningStoreCliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.home / ".config/agent-learning/config.json").is_file())
+
+    def test_git_calls_ignore_poisoned_path_and_git_environment(self):
+        self.make_active_store()
+        fake_bin = self.base / "fake-bin"
+        fake_bin.mkdir()
+        sentinel = self.base / "fake-git-ran"
+        fake_git = fake_bin / "git"
+        fake_git.write_text(
+            "#!/bin/sh\nprintf invoked > \"$FAKE_GIT_SENTINEL\"\nexit 91\n",
+            encoding="utf-8",
+        )
+        fake_git.chmod(0o755)
+        poisoned = self.env.copy()
+        poisoned.update(
+            PATH=f"{fake_bin}{os.pathsep}{poisoned['PATH']}",
+            GIT_DIR=str(self.base / "attacker-git-dir"),
+            GIT_WORK_TREE=str(self.base / "attacker-work-tree"),
+            FAKE_GIT_SENTINEL=str(sentinel),
+        )
+
+        result = self.cli("status", env=poisoned)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["root"], str(self.store))
+        self.assertFalse(sentinel.exists())
 
     def test_list_distinguishes_empty_store_and_returns_capability_scope(self):
         self.make_active_store()
@@ -413,9 +464,9 @@ class LearningStoreCliTests(unittest.TestCase):
         self.make_prepared_store()
         self.assertEqual(self.error_code(self.cli_with_json(self.record_payload())), "STORE_NOT_ACTIVE")
 
-        marker = self.marker()
-        marker["state"] = "active"
-        (self.store / ".learning-store.json").write_text(json.dumps(marker) + "\n", encoding="utf-8")
+        source = self.make_legacy_source(with_records=False)
+        activated = self.cli("import", "--source", str(source))
+        self.assertEqual(activated.returncode, 0, activated.stderr)
         first = self.record_payload()
         self.assertEqual(self.cli_with_json(first).returncode, 0)
         duplicate = self.record_payload(event_id=first["event_id"])
@@ -537,6 +588,76 @@ class LearningStoreCliTests(unittest.TestCase):
         (self.store / "records").symlink_to(outside, target_is_directory=True)
         self.assertEqual(self.error_code(self.cli_with_json(value)), "UNSAFE_PATH")
 
+    def test_record_rejects_oversized_input_before_json_decode(self):
+        input_path = self.base / "oversized-input.json"
+        input_path.write_bytes(b" " * (1024 * 1024 + 1))
+
+        result = self.cli("record", "--input", str(input_path))
+
+        self.assertEqual(self.error_code(result), "INVALID_INPUT")
+        self.assertIn("size上限", json.loads(result.stderr)["error"]["message"])
+
+    def test_list_rejects_oversized_record_before_parse(self):
+        self.make_active_store()
+        value = self.record_payload()
+        target = self.write_record_fixture(value)
+        target.write_bytes(b"x" * (1024 * 1024 + 1))
+
+        result = self.cli("list")
+        self.assertEqual(self.error_code(result), "INVALID_RECORD")
+        self.assertIn("size上限", json.loads(result.stderr)["error"]["message"])
+
+    def test_active_store_rejects_oversized_manifest_and_legacy(self):
+        self.make_prepared_store()
+        source = self.make_legacy_source()
+        imported = self.cli("import", "--source", str(source))
+        self.assertEqual(imported.returncode, 0, imported.stderr)
+        manifest = next((self.store / "imports").glob("*.json"))
+        manifest.write_bytes(manifest.read_bytes() + b" " * (1024 * 1024))
+        oversized_manifest = self.cli("status")
+        self.assertEqual(self.error_code(oversized_manifest), "IMPORT_CONFLICT")
+        self.assertIn(
+            "size上限",
+            json.loads(oversized_manifest.stderr)["error"]["message"],
+        )
+
+        manifest.write_text(
+            json.dumps(json.loads(manifest.read_text(encoding="utf-8")), sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        legacy = self.store / "legacy/decision/decision.md"
+        legacy.write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+        oversized_legacy = self.cli("status")
+        self.assertEqual(self.error_code(oversized_legacy), "INCOMPLETE_IMPORT")
+        self.assertIn(
+            "size上限",
+            json.loads(oversized_legacy.stderr)["error"]["message"],
+        )
+
+    def test_store_and_write_directories_reject_group_or_other_writes(self):
+        self.make_active_store()
+        original_root_mode = self.store.stat().st_mode & 0o777
+        self.store.chmod(0o777)
+        try:
+            self.assertEqual(
+                self.error_code(self.cli("status")),
+                "UNSAFE_PERMISSIONS",
+            )
+        finally:
+            self.store.chmod(original_root_mode)
+
+        records = self.store / "records"
+        records.mkdir()
+        records.chmod(0o777)
+        self.assertEqual(
+            self.error_code(self.cli("status")),
+            "UNSAFE_PERMISSIONS",
+        )
+        self.assertEqual(
+            self.error_code(self.cli_with_json(self.record_payload())),
+            "UNSAFE_PERMISSIONS",
+        )
+
     def test_import_copies_tracked_legacy_bytes_and_activates_after_manifest(self):
         self.make_prepared_store()
         source = self.make_legacy_source()
@@ -611,6 +732,9 @@ class LearningStoreCliTests(unittest.TestCase):
         self.assertFalse(json.loads(repeated.stdout)["created"])
         self.assertEqual(len(tuple((self.store / "imports").glob("*.json"))), 1)
         self.assertEqual(self.marker()["state"], "active")
+        status = self.cli("status")
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertTrue(json.loads(status.stdout)["writable"])
 
     def test_import_rejects_symlink_source_and_uncommitted_target_changes(self):
         self.make_prepared_store()

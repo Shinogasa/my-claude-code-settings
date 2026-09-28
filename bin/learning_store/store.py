@@ -6,11 +6,18 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import tempfile
 from typing import Dict, Mapping, Optional
 import uuid
+
+
+_GIT_EXECUTABLE = shutil.which("git", path=os.defpath)
+MAX_JSON_BYTES = 1024 * 1024
+MAX_RECORD_BYTES = 1024 * 1024
+MAX_LEGACY_BYTES = 8 * 1024 * 1024
 
 
 class StoreError(Exception):
@@ -29,6 +36,44 @@ class Store:
     binding: Path
     store_id: str
     state: str
+
+
+def _run_git(arguments, **kwargs):
+    if _GIT_EXECUTABLE is None:
+        raise OSError("trusted git executable was not found")
+    environment = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith("GIT_")
+    }
+    environment["PATH"] = os.defpath
+    return subprocess.run(
+        [_GIT_EXECUTABLE, *arguments],
+        env=environment,
+        **kwargs,
+    )
+
+
+def _read_limited(path: Path, limit: int, code: str, label: str) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(str(path), flags)
+    except OSError as error:
+        raise StoreError(code, f"{label}を読み取れません") from error
+    try:
+        with os.fdopen(descriptor, "rb") as source:
+            metadata = os.fstat(source.fileno())
+            if not stat.S_ISREG(metadata.st_mode):
+                raise StoreError(code, f"{label}は通常fileである必要があります")
+            if metadata.st_size > limit:
+                raise StoreError(code, f"{label}がsize上限を超えています")
+            payload = source.read(limit + 1)
+    except StoreError:
+        raise
+    except OSError as error:
+        raise StoreError(code, f"{label}を読み取れません") from error
+    if len(payload) > limit:
+        raise StoreError(code, f"{label}がsize上限を超えています")
+    return payload
 
 
 def binding_path(env: Mapping[str, str]) -> Path:
@@ -57,9 +102,9 @@ def _read_json(path: Path, code: str, label: str) -> Dict[str, object]:
     if path.is_symlink():
         raise StoreError(code, f"{label}にsymlinkは使えません")
     try:
-        raw = path.read_bytes()
+        raw = _read_limited(path, MAX_JSON_BYTES, code, label)
         value = json.loads(raw.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise StoreError(code, f"{label}を読み取れません") from error
     if not isinstance(value, dict):
         raise StoreError(code, f"{label}はJSON objectである必要があります")
@@ -105,10 +150,38 @@ def _canonical_directory(repo: Path, *, require_empty: bool = False) -> Path:
     return repo
 
 
+def _assert_private_directory(path: Path, label: str) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise StoreError("UNSAFE_PERMISSIONS", f"{label}の権限を確認できません") from error
+    if not stat.S_ISDIR(metadata.st_mode) or path.is_symlink():
+        raise StoreError("UNSAFE_PERMISSIONS", f"{label}は実directoryである必要があります")
+    if metadata.st_uid != os.geteuid():
+        raise StoreError("UNSAFE_PERMISSIONS", f"{label}のownerが実行userと一致しません")
+    if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise StoreError("UNSAFE_PERMISSIONS", f"{label}をgroupまたはotherが書き込めます")
+
+
+def _assert_private_store_tree(root: Path) -> None:
+    for name in ("imports", "legacy", "operations", "records"):
+        base = root / name
+        if not base.exists() and not base.is_symlink():
+            continue
+        if base.is_symlink() or not base.is_dir():
+            raise StoreError("UNSAFE_PATH", f"{name}は実directoryである必要があります")
+        _assert_private_directory(base, name)
+        for path in base.rglob("*"):
+            if path.is_symlink():
+                raise StoreError("UNSAFE_PATH", f"{name}配下にsymlinkがあります")
+            if path.is_dir():
+                _assert_private_directory(path, f"{name}配下のdirectory")
+
+
 def assert_git_root(root: Path) -> None:
     try:
-        result = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+        result = _run_git(
+            ["-C", str(root), "rev-parse", "--show-toplevel"],
             check=True,
             text=True,
             capture_output=True,
@@ -125,6 +198,7 @@ def assert_git_root(root: Path) -> None:
 
 def _atomic_json(path: Path, value: Dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    _assert_private_directory(path.parent, f"{path.name}の親directory")
     payload = (json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     temporary = Path(temporary_name)
@@ -157,6 +231,8 @@ def _existing_binding(env: Mapping[str, str]) -> Optional[Dict[str, object]]:
 
 def _store_at(repo: Path, env: Mapping[str, str]) -> Store:
     root = _canonical_directory(repo)
+    _assert_private_directory(root, "store root")
+    _assert_private_store_tree(root)
     marker = _validate_marker(_read_json(root / ".learning-store.json", "INVALID_MARKER", "marker"))
     assert_git_root(root)
     return Store(
@@ -174,6 +250,9 @@ def _load_store_from_binding(path: Path) -> Store:
     root = Path(str(binding["store_root"]))
     if not root.exists():
         raise StoreError("STORE_NOT_FOUND", "binding先のstoreが存在しません")
+    root = _canonical_directory(root)
+    _assert_private_directory(root, "store root")
+    _assert_private_store_tree(root)
     marker = _validate_marker(_read_json(root / ".learning-store.json", "INVALID_MARKER", "marker"))
     assert_git_root(root)
     store = Store(
@@ -184,6 +263,8 @@ def _load_store_from_binding(path: Path) -> Store:
     )
     if store.store_id != binding["store_id"]:
         raise StoreError("STORE_ID_MISMATCH", "bindingとmarkerのstore_idが一致しません")
+    if store.state == "active":
+        _verify_active_import(store)
     return store
 
 
@@ -221,11 +302,12 @@ def bind_store(repo: Path, replace: bool, env: Mapping[str, str]) -> Dict[str, o
 
 def init_store(repo: Path, env: Mapping[str, str]) -> Dict[str, object]:
     root = _canonical_directory(repo, require_empty=True)
+    _assert_private_directory(root, "store root")
     if _existing_binding(env) is not None:
         raise StoreError("BINDING_CONFLICT", "bindingが既にあります")
     try:
-        subprocess.run(
-            ["git", "init", "-b", "learning-records", str(root)],
+        _run_git(
+            ["init", "-b", "learning-records", str(root)],
             check=True,
             text=True,
             capture_output=True,
@@ -264,6 +346,7 @@ def _safe_files(root: Path, directory_name: str, suffix: str):
         return ()
     if directory.is_symlink() or not directory.is_dir():
         raise StoreError("UNSAFE_PATH", f"{directory_name}は実directoryである必要があります")
+    _assert_private_directory(directory, directory_name)
     files = []
     for path in directory.rglob("*"):
         relative = path.relative_to(root)
@@ -273,6 +356,7 @@ def _safe_files(root: Path, directory_name: str, suffix: str):
             if current.is_symlink():
                 raise StoreError("UNSAFE_PATH", f"{directory_name}配下にsymlinkがあります")
         if path.is_dir():
+            _assert_private_directory(path, f"{directory_name}配下のdirectory")
             continue
         if not path.is_file() or path.suffix != suffix:
             raise StoreError("UNSAFE_PATH", f"{directory_name}配下に想定外のfileがあります")
@@ -285,10 +369,7 @@ def scan_records(store: Store):
 
     records = []
     for path in _safe_files(store.root, "records", ".md"):
-        try:
-            raw = path.read_bytes()
-        except OSError as error:
-            raise StoreError("INVALID_RECORD", "recordを読み取れません") from error
+        raw = _read_limited(path, MAX_RECORD_BYTES, "INVALID_RECORD", "record")
         record = parse_record(raw)
         relative = path.relative_to(store.root)
         observed = str(record["observed_at"])
@@ -300,8 +381,9 @@ def scan_records(store: Store):
 
     for path in _safe_files(store.root, "operations", ".json"):
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raw = _read_limited(path, MAX_JSON_BYTES, "INVALID_OPERATION", "operation")
+            value = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise StoreError("INVALID_OPERATION", "operationを読み取れません") from error
         operation = validate_operation(value)
         relative = path.relative_to(store.root)
@@ -347,8 +429,8 @@ def list_records(env: Mapping[str, str], capability: Optional[str]) -> Dict[str,
 
 def _git_lock_path(root: Path) -> Path:
     try:
-        result = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--git-path", "agent-learning.lock"],
+        result = _run_git(
+            ["-C", str(root), "rev-parse", "--git-path", "agent-learning.lock"],
             check=True,
             text=True,
             capture_output=True,
@@ -358,11 +440,13 @@ def _git_lock_path(root: Path) -> Path:
     path = Path(result.stdout.strip())
     if not path.is_absolute():
         path = root / path
+    _assert_private_directory(path.parent, "Git metadata directory")
     return path
 
 
 def _safe_parent(root: Path, relative: Path) -> Path:
     current = root
+    _assert_private_directory(current, "store root")
     for part in relative.parts:
         if part in {"", ".", ".."}:
             raise StoreError("UNSAFE_PATH", "保存先pathが不正です")
@@ -375,6 +459,7 @@ def _safe_parent(root: Path, relative: Path) -> Path:
                 current.mkdir()
             except OSError as error:
                 raise StoreError("WRITE_FAILED", "保存先directoryを作成できません") from error
+        _assert_private_directory(current, "保存先directory")
     try:
         if current.resolve(strict=True).is_relative_to(root.resolve(strict=True)):
             return current
@@ -390,6 +475,7 @@ def _safe_parent(root: Path, relative: Path) -> Path:
 
 
 def publish_exclusive(parent: Path, name: str, payload: bytes) -> None:
+    _assert_private_directory(parent, "保存先directory")
     descriptor, temporary_name = tempfile.mkstemp(prefix=".learning-", dir=str(parent))
     temporary = Path(temporary_name)
     try:
@@ -430,10 +516,8 @@ def _idempotent_existing(store: Store, relative: Path, payload: bytes) -> Option
         return None
     if target.is_symlink() or not target.is_file():
         raise StoreError("UNSAFE_PATH", "既存の保存先が通常fileではありません")
-    try:
-        existing = target.read_bytes()
-    except OSError as error:
-        raise StoreError("RECORD_ID_CONFLICT", "既存fileを照合できません") from error
+    limit = MAX_JSON_BYTES if relative.suffix == ".json" else MAX_RECORD_BYTES
+    existing = _read_limited(target, limit, "RECORD_ID_CONFLICT", "既存file")
     if existing != payload:
         raise StoreError("RECORD_ID_CONFLICT", "同じIDに異なる内容が保存されています")
     return {
@@ -462,6 +546,9 @@ def save_record(store: Store, value: Dict[str, object], resolve_conflict: bool =
     else:
         normalized = validate_input(value)
         payload = serialize_record(normalized)
+    payload_limit = MAX_JSON_BYTES if normalized["kind"] == "operation" else MAX_RECORD_BYTES
+    if len(payload) > payload_limit:
+        raise StoreError("INVALID_INPUT", "serialize後のrecordがsize上限を超えています")
     relative = _target_for(normalized)
     lock_path = _git_lock_path(store.root)
     try:
@@ -522,8 +609,9 @@ def read_record_input(path: Path) -> Dict[str, object]:
     if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
         raise StoreError("INVALID_INPUT", "inputはsymlinkではない通常fileである必要があります")
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raw = _read_limited(path, MAX_JSON_BYTES, "INVALID_INPUT", "input")
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise StoreError("INVALID_INPUT", "inputはUTF-8のJSON objectである必要があります") from error
     if not isinstance(value, dict):
         raise StoreError("INVALID_INPUT", "inputはJSON objectである必要があります")
@@ -532,14 +620,14 @@ def read_record_input(path: Path) -> Dict[str, object]:
 
 def _source_entries(source: Path):
     try:
-        result = subprocess.run(
-            ["git", "-C", str(source), "ls-tree", "-r", "-z", "--name-only", "HEAD", "--",
+        result = _run_git(
+            ["-C", str(source), "ls-tree", "-r", "-z", "--name-only", "HEAD", "--",
              "learning/entries", "learning/code/entries"],
             check=True,
             capture_output=True,
         )
-        commit = subprocess.run(
-            ["git", "-C", str(source), "rev-parse", "HEAD"],
+        commit = _run_git(
+            ["-C", str(source), "rev-parse", "HEAD"],
             check=True,
             text=True,
             capture_output=True,
@@ -583,13 +671,28 @@ def _source_entries(source: Path):
     for source_path in sorted(expected):
         path = source / source_path
         try:
-            working_bytes = path.read_bytes()
-            committed = subprocess.run(
-                ["git", "-C", str(source), "cat-file", "blob", f"HEAD:{source_path}"],
+            working_bytes = _read_limited(
+                path, MAX_LEGACY_BYTES, "INVALID_SOURCE", "取込対象"
+            )
+            size_text = _run_git(
+                ["-C", str(source), "cat-file", "-s", f"HEAD:{source_path}"],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout.strip()
+            committed_size = int(size_text)
+            if committed_size > MAX_LEGACY_BYTES:
+                raise StoreError("INVALID_SOURCE", "取込対象がsize上限を超えています")
+            committed = _run_git(
+                ["-C", str(source), "cat-file", "blob", f"HEAD:{source_path}"],
                 check=True,
                 capture_output=True,
             ).stdout
-        except (OSError, subprocess.CalledProcessError) as error:
+            if len(committed) != committed_size:
+                raise StoreError("INVALID_SOURCE", "取込対象のGit blob sizeが一致しません")
+        except StoreError:
+            raise
+        except (OSError, ValueError, subprocess.CalledProcessError) as error:
             raise StoreError("INVALID_SOURCE", "取込対象のGit blobを読み取れません") from error
         if working_bytes != committed:
             raise StoreError("SOURCE_NOT_CLEAN", "取込対象の内容がHEADと一致しません")
@@ -627,14 +730,12 @@ def _manifest_files(store: Store):
         return ()
     if directory.is_symlink() or not directory.is_dir():
         raise StoreError("UNSAFE_PATH", "importsは実directoryである必要があります")
+    _assert_private_directory(directory, "imports")
     manifests = []
     for path in sorted(directory.iterdir()):
         if path.is_symlink() or not path.is_file() or path.suffix != ".json":
             raise StoreError("IMPORT_CONFLICT", "imports配下に想定外のfileがあります")
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise StoreError("IMPORT_CONFLICT", "import manifestを読み取れません") from error
+        value = _read_json(path, "IMPORT_CONFLICT", "import manifest")
         if not isinstance(value, dict) or set(value) != {
             "schema_version", "import_id", "source_commit", "count", "files"
         }:
@@ -657,8 +758,42 @@ def _manifest_files(store: Store):
                 "kind", "source_path", "legacy_path", "sha256"
             }:
                 raise StoreError("IMPORT_CONFLICT", "manifest file entryが不正です")
+            kind = item["kind"]
+            source_path = item["source_path"]
+            legacy_path = item["legacy_path"]
+            digest = item["sha256"]
+            if kind not in {"decision", "code"}:
+                raise StoreError("IMPORT_CONFLICT", "manifest kindが不正です")
+            if not all(isinstance(value, str) for value in (source_path, legacy_path, digest)):
+                raise StoreError("IMPORT_CONFLICT", "manifest file entryの型が不正です")
+            source = Path(source_path)
+            expected_source_parent = (
+                Path("learning/code/entries") if kind == "code" else Path("learning/entries")
+            )
+            if source.parent != expected_source_parent or source.name in {"", ".", ".."}:
+                raise StoreError("IMPORT_CONFLICT", "manifest source pathが不正です")
+            if Path(legacy_path) != Path("legacy") / str(kind) / source.name:
+                raise StoreError("IMPORT_CONFLICT", "manifest legacy pathが不正です")
+            if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+                raise StoreError("IMPORT_CONFLICT", "manifest hashが不正です")
         manifests.append((path, value))
     return tuple(manifests)
+
+
+def _verify_active_import(store: Store) -> None:
+    manifests = _manifest_files(store)
+    if len(manifests) != 1:
+        raise StoreError("INCOMPLETE_IMPORT", "active storeには照合済みmanifestが1件必要です")
+    _path, manifest = manifests[0]
+    for item in manifest["files"]:
+        target = store.root / str(item["legacy_path"])
+        if target.is_symlink() or not target.is_file():
+            raise StoreError("INCOMPLETE_IMPORT", "manifestが参照するlegacy fileがありません")
+        payload = _read_limited(
+            target, MAX_LEGACY_BYTES, "INCOMPLETE_IMPORT", "legacy file"
+        )
+        if hashlib.sha256(payload).hexdigest() != item["sha256"]:
+            raise StoreError("INCOMPLETE_IMPORT", "legacy fileのhashがmanifestと一致しません")
 
 
 def _manifest_core(commit: str, entries) -> Dict[str, object]:
@@ -709,10 +844,9 @@ def import_legacy(store: Store, source: Path) -> Dict[str, object]:
             if target.exists() or target.is_symlink():
                 if target.is_symlink() or not target.is_file():
                     raise StoreError("LEGACY_CONFLICT", "既存legacyが通常fileではありません")
-                try:
-                    existing = target.read_bytes()
-                except OSError as error:
-                    raise StoreError("LEGACY_CONFLICT", "既存legacyを照合できません") from error
+                existing = _read_limited(
+                    target, MAX_LEGACY_BYTES, "LEGACY_CONFLICT", "既存legacy"
+                )
                 if existing != entry["payload"]:
                     raise StoreError("LEGACY_CONFLICT", "既存legacyの内容が取込元と一致しません")
                 continue
@@ -729,6 +863,8 @@ def import_legacy(store: Store, source: Path) -> Dict[str, object]:
             import_id = str(uuid.uuid4())
             manifest = dict(core, import_id=import_id)
             payload = (json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+            if len(payload) > MAX_JSON_BYTES:
+                raise StoreError("IMPORT_CONFLICT", "import manifestがsize上限を超えています")
             parent = _safe_parent(current.root, Path("imports"))
             publish_exclusive(parent, f"{import_id}.json", payload)
             manifest_path = Path("imports") / f"{import_id}.json"
