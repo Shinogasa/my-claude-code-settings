@@ -31,9 +31,9 @@
 | CLI helpと両ホスト入口 | 確認済み | version、exec/resume/stream-jsonのoption、同じsourceへのpath解決 |
 | 保存CLI・Python 3.9実動 | 関連49件成功 | `/usr/bin/python3`、ResourceWarningをerrorにして再検証 |
 | 両ホスト入口から同じstoreへの保存・冪等再送 | 成功 | 親がPython3.9.6で6コマンド実行、全て終了0。下記の保存結果を照合 |
-| 実Codex対話 | 一部確認済み | GPT-6 Sol/highでInvestigate提示・turn終了、同じthreadの模擬観測後に理由だけを質問・turn終了。模擬回答は本人の能力証拠ではない |
+| 実Codex対話 | 一部確認・継続修正を1例で確認 | GPT-6 Sol/highの模擬誤答でAIが完成修正を引き取る失敗を再現。入口rule修正後のfresh 3ターンでは観測差を返して停止し、製品コードは無変更 |
 | 実Claude Code対話 | 追加実施しない | 9月28日の学習OFFは修正・検証を完了。ユーザーの運用はCodex中心で、Claude Codeは契約対象外のため、以降の対話検証を停止 |
-| CLI securityレビュー | 修正後の再レビュー待ち | 初回Terra/highのMedium 3件・Low 1件を修正済み。9月28日の新レビューは資料不足でConfidence insufficientとなり、所見なしとは扱わない |
+| CLI securityレビュー | 再レビュー済み | 初回Terra/highのMedium 3件・Low 1件を修正済み。資料不足判定後にコード全文・差分・検査結果をvalidatorへ固定し、GPT-6 Sol/highがConfidence sufficient・新規所見なしと報告 |
 | 最終統合レビュー | 未実施 | security所見対応と学習ルール実装後に独立担当が実施 |
 | 旧記録の公開監査 | 全件読了・3件を抽象化 | 原文99件のhash照合。Terraが1〜60、親が61〜99の本文を全文確認。ユーザー承認後に3件を更新 |
 | 専用repoへの旧記録移管 | 未実施 | CLI検証・レビュー後、更新済み原文のhashを取り直して実施 |
@@ -110,13 +110,56 @@ fixtureの製品コードは無変更。模擬観測を同threadの次turnへ送
 storeのrecords/operationsは各0件だった。
 本人の実提出・理由・再修正・転移・record保存は未観測。
 
+同threadの3ターン目へ、理由として誤った予想と「どう直せばいいですか？」を
+模擬入力した。Codexは予想を実行して反証したが、本人に再調査を返さず、
+`★ Code Delta`で原因と修正方針を開示し、使い捨てrepoの製品コードとテストを
+自分で変更した。`turn.completed`、終了0、テスト2件成功でも、学習継続の契約には
+失敗した。操作・能力recordは0件で、本人の成功には数えない。
+このターンのJSONLには通常のdebugging skillの読込があり、進行中の
+code-learning skillの再読は無かった。新規候補の入口だけが明示されていた
+`rules/code-learning.md`へ、継続ターンもskillを再読し、助言要求を明示的な
+実装引取りと扱わない条件を追加した。静的契約はRED→GREENで13件成功。
+この段階では実ホストでの修正効果は未確定だった。
+
+新しい使い捨てsessionで再検証を始めたが、並行する全suite実行中に
+PreToolUse hook内のGit確認が5秒でタイムアウトし、必須ruleとskillの読込が
+複数回ブロックされた。`status`も`NOT_CONFIGURED`を返し、配布・環境条件が
+前回と一致しなかった。終了0で最初の調査依頼を返したが、この試行は
+ルール修正の有効性を示す証拠から除外した。
+
+全suite終了後、さらに別のfresh Codex session（thread
+`01a0e851-36e0-7811-9ccb-576977b02475`）で3ターンを再試行した。
+最初は原因を区別する観測を本人へ依頼し、2ターン目は模擬観測の理由を
+一問だけ尋ねた。3ターン目へ前回と同じ誤った理由と「どう直せば」を送ると、
+モデルはcode-learning skillを再読し、実行した観測差を一つ示して本人の
+次の調査を待った。全ターン終了0・`turn.completed`、使い捨てrepoの
+製品コード差分なし、records/operations各0件。修正前と同じ場面で
+担当を維持した一例だが、一般的な遵守率や本人の習得を示さない。
+このfresh sessionではCodex内の`status`が`NOT_CONFIGURED`を返した。
+親から同じ一時`XDG_CONFIG_HOME`を明示して直接・`rtk proxy`の両方で
+`status`を実行するとactive/writableだった。ローカルCodex設定は
+`shell_environment_policy.inherit = "core"`で、起動元の一時変数が
+tool commandへ継承されない。OpenAIの[設定リファレンス](https://learn.chatgpt.com/docs/config-file/config-reference)は
+環境継承の範囲と`set`による個別注入を定義している。
+使い捨てrunnerへ`-c shell_environment_policy.set.XDG_CONFIG_HOME=<一時path>`を
+追加して別のfresh Codex sessionで`status`を実行すると、終了0・
+`state:active`・`writable:true`になった。先の`NOT_CONFIGURED`は
+probe側の環境伝播不足と判定する。3ターンの学習対話自体は
+保存不能を一度通知して進めたため、record保存の実機検証には使わない。
+
 全suiteはsandbox内でlocalhost bindとGit署名agentの制約により16件エラー。
 権限昇格後にGit署名を環境変数で無効化すると、runtime fixtureがその変数を
 部分的に除去して4件エラー。署名無効の一時Git設定ファイルへ切り替えると、
 全495件中2件がGit user identity不足でエラー、他493件は成功した。
 一時設定へ検証用name/emailを足すと残る2件は単独再実行で成功。
-同じ設定での全495件一括成功はまだ未確認であり、全suite成功とは表現しない。
+同じ設定で全495件を一括再実行すると、494件成功・1件失敗、1040秒。
+失敗は未追跡の`skills/synced/`がskill manifestの分類対象に入るため。
+このディレクトリは他作業の所有物であり、変更・stageしない。
+追加した継続ルールの静的契約13件はPython 3.9で別途成功した。
+全suite成功とは表現しない。
 macOS Python 3.9で関連49件、`bash -n setup.sh`、`git diff --check`は成功した。
+最終変更後、Python 3.9で学習契約・instruction graphの39件、
+`bash -n setup.sh`、`git diff --check`も終了0だった。
 
 最初の実Codex子processは外側のCodex sandbox内で`Operation not permitted`により起動失敗した。
 同一コマンドを承認済みの権限昇格で再実行すると正常終了した。拒否された個別操作は未特定。
@@ -155,6 +198,14 @@ SHA-256付きでvalidatorから全文を取得できるようにした。
 manifest 0件にもかかわらず`status`が`writable:true`、`record`が成功終了した。
 これは取込照合完了後だけ保存するという設計契約に反する。
 他の所見は攻撃者が変更できる環境と、既存権限の境界を分けて評価してから修正する。
+
+その後の修正を含む現行コードについて、別のsecurity-reviewerは入力資料不足で
+`Confidence: insufficient`と返した。コード全文、前回所見後の差分、
+検証ログをvalidatorで読める約3962行のpackageへ固定し、
+`rules/security-review-policy.md`に従ってユーザーの再レビュー確認を得た。
+GPT-6 Sol/highの担当は3文書を全文読み、CLI・Git・公開記録・配布境界を
+読み取り専用で再評価し、`Confidence: sufficient`、具体的な新規所見なしと報告した。
+これは未実施の対話scenarioや最終統合レビューの代替ではない。
 
 ## 旧記録の移管前に残す判断
 

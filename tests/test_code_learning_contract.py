@@ -79,6 +79,13 @@ class CodeLearningSkillContract(unittest.TestCase):
         self.assertIn("~/.codex/bin/learning-store.py status", text)
         self.assertIn("symlink", text)
 
+    def test_router_reloads_skill_for_active_learning_event(self):
+        text = ROUTER.read_text(encoding="utf-8")
+        self.assertIn("継続中の学習イベント", text)
+        self.assertIn("skillを再読", text)
+        self.assertIn("どう直せば", text)
+        self.assertIn("明示的な引取り", text)
+
     def test_review_style_does_not_reveal_a_review_exercise_early(self):
         text = REVIEW_STYLE.read_text(encoding="utf-8")
         self.assertIn("code-learning", text)
