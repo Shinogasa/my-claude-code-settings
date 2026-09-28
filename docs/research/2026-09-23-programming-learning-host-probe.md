@@ -1,6 +1,6 @@
 # コード学習拡張の実装・実ホスト検証
 
-実施開始: 2026-09-23。継続: 2026-09-24、2026-09-28。
+実施開始: 2026-09-23。継続: 2026-09-24、2026-09-28、2026-09-29。
 
 ## 検証する範囲
 
@@ -11,7 +11,7 @@
 
 ## 環境と分離
 
-- ローカルCLI: Codex 0.155.1、Claude Code 2.1.274（9月23日）/2.1.283（9月28日、いずれも`--version`で確認）。
+- ローカルCLI: Codex 0.155.1（9月28日）/0.158.0（9月29日）、Claude Code 2.1.274（9月23日）/2.1.283（9月28日、いずれも`--version`で確認）。
 - macOS付属Python: `/usr/bin/python3 --version` は 3.9.6。
 - `~/.claude/bin/learning-store.py` と `~/.codex/bin/learning-store.py` は、どちらも本設定repoの同じ実装へ解決する。
   これは配布pathの確認であり、保存成功の証拠ではない。
@@ -31,7 +31,7 @@
 | CLI helpと両ホスト入口 | 確認済み | version、exec/resume/stream-jsonのoption、同じsourceへのpath解決 |
 | 保存CLI・Python 3.9実動 | 関連49件成功 | `/usr/bin/python3`、ResourceWarningをerrorにして再検証 |
 | 両ホスト入口から同じstoreへの保存・冪等再送 | 成功 | 親がPython3.9.6で6コマンド実行、全て終了0。下記の保存結果を照合 |
-| 実Codex対話 | 一部確認・継続修正を1例で確認 | GPT-6 Sol/highの模擬誤答でAIが完成修正を引き取る失敗を再現。入口rule修正後のfresh 3ターンでは観測差を返して停止し、製品コードは無変更 |
+| 実Codex対話 | Investigateの継続修正とReviewの開示順を各1例で確認 | GPT-6 Sol/highの模擬誤答でAIが完成修正を引き取る失敗を再現。入口rule修正後のInvestigate fresh 3ターンとReview fresh 4ターンでは本人の担当を維持し、製品コードは無変更 |
 | 実Claude Code対話 | 追加実施しない | 9月28日の学習OFFは修正・検証を完了。ユーザーの運用はCodex中心で、Claude Codeは契約対象外のため、以降の対話検証を停止 |
 | CLI securityレビュー | 再レビュー済み | 初回Terra/highのMedium 3件・Low 1件を修正済み。資料不足判定後にコード全文・差分・検査結果をvalidatorへ固定し、GPT-6 Sol/highがConfidence sufficient・新規所見なしと報告 |
 | 最終統合レビュー | 未実施 | security所見対応と学習ルール実装後に独立担当が実施 |
@@ -164,6 +164,41 @@ macOS Python 3.9で関連49件、`bash -n setup.sh`、`git diff --check`は成�
 最初の実Codex子processは外側のCodex sandbox内で`Operation not permitted`により起動失敗した。
 同一コマンドを承認済みの権限昇格で再実行すると正常終了した。拒否された個別操作は未特定。
 この環境制約による失敗を製品の学習機能の失敗に数えない。
+
+## 9月29日のCodex Review対話
+
+Codex 0.158.0の`exec`と`exec resume`のoptionをhelpで再確認し、通常providerの
+`gpt-6-sol` / `high`で、別の使い捨てGit repoからfresh sessionを起動した。
+repoには非同期完了のfixtureと失敗する契約テストだけを置き、Reviewの依頼には
+原因箇所・正解を含めなかった。既存の別fixture repoには「テストを修正せよ」という
+局所指示があったため使わず、新しいrepoを作成した。使い捨てstoreへのbindingは
+一時`XDG_CONFIG_HOME`を`-c shell_environment_policy.set.XDG_CONFIG_HOME`で
+tool環境まで渡した。初回の子process起動は外側sandboxで`Operation not permitted`と
+なり、承認済みの権限昇格で同じ入力を実行した。
+
+thread `01a0e865-9cfb-7d20-86bb-46cb0537dd0b`の4ターンはいずれも終了0・
+`turn.completed`を回収した。各turnの入力・JSONL・最終message・前後のGit statusは
+一時ログに保存した。
+
+| turn | 模擬入力と実際の停止 | 観測 |
+|---|---|---|
+| T1 | 本人が指摘と理由を説明するまで解説を待つReview依頼。モデルはコードとskillを読み、気になる箇所の指摘を待った | 原因や模範解の先出しなし。store `status`はactive/writable、製品コード差分なし |
+| T2 | `cancel()`で現在値を消す箇所だけを指摘。モデルは「なぜ気になったか」と一問だけ返した | 理由や解説の先出しなし。製品コード差分なし |
+| T3 | 「現在値を消すので旧完了は無視される」という誤った理由。モデルは既存テストを実行し、旧完了の値が反映されたという観測を一つ示して再調査を依頼した | `★ Code Delta`・修正コードの開示なし。既存テストは失敗、製品コード差分なし |
+| T4 | 保持した識別子が公開処理へ渡り、現在値と照合されずに結果を書き換えると説明。モデルは`★ Code Delta`で観測と初回予想との差を返した | 既存テストの失敗を再確認。製品コード差分なし。使い捨てstoreへcode recordを1件作成 |
+
+T3のテスト実行でfixture repoに未追跡の`__pycache__/`だけが生成された。
+追跡対象の製品コード・テストには4ターンを通してdiffが無い。T4のrecordは
+`initial_result: fail`、`retry_result: pass`、`transfer_result: not_attempted`で、
+AIがテストを実行した支援を明記し、本人がテストを設計・実行したとは記していない。
+operationsは0件。入力はすべて模擬利用者の回答であり、recordは使い捨てstore内だけの
+実ホスト動作証拠である。実ユーザーの能力向上や保持の証拠には加算しない。
+
+この例では正答後に転移確認を提示せず、`not_attempted`で終了した。転移を問う適切な
+条件を作れなかったという証拠は無く、転移確認の自動開始は未検証とする。
+Reviewの中断・再開、同一能力の競合、保存不能、上限・後日候補も未検証のまま残る。
+4ターンの合計はinput 1,357,546 tokens（cache済みを含む）、output 11,192 tokens。
+これは1つの模擬scenarioの観測値であり、一般的な運用コストの推定には使わない。
 
 ## 両ホストの保存入口の実測
 
