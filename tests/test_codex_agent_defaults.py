@@ -41,6 +41,15 @@ class CodexAgentDefaultsTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_default_pair_uses_gpt6(self):
+        self.assertEqual(
+            self.defaults.DEFAULTS,
+            {
+                "default_subagent_model": "gpt-6-luna",
+                "default_subagent_reasoning_effort": "medium",
+            },
+        )
+
     def test_creates_missing_config_with_private_permissions(self):
         outcome = self.defaults.configure(self.config)
 

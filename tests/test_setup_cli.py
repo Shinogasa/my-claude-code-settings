@@ -259,7 +259,7 @@ class SetupCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with (self.home / ".codex" / "config.toml").open("rb") as config_file:
             agents = tomllib.load(config_file)["agents"]
-        self.assertEqual(agents["default_subagent_model"], "gpt-5.6-luna")
+        self.assertEqual(agents["default_subagent_model"], "gpt-6-luna")
         self.assertEqual(agents["default_subagent_reasoning_effort"], "medium")
 
     def test_codex_setup_reports_signing_skip_without_config(self):
@@ -303,7 +303,7 @@ class SetupCliTests(unittest.TestCase):
         parsed = tomllib.loads(updated)
         self.assertEqual(parsed["model"], "gpt-test")
         self.assertEqual(parsed["private"]["token"], "must-stay-local")
-        self.assertEqual(parsed["agents"]["default_subagent_model"], "gpt-5.6-luna")
+        self.assertEqual(parsed["agents"]["default_subagent_model"], "gpt-6-luna")
         self.assertEqual(
             parsed["agents"]["default_subagent_reasoning_effort"],
             "medium",
@@ -359,7 +359,7 @@ class SetupCliTests(unittest.TestCase):
             parsed["shell_environment_policy"]["set"]["SSH_AUTH_SOCK"],
             str(socket_path),
         )
-        self.assertEqual(parsed["agents"]["default_subagent_model"], "gpt-5.6-luna")
+        self.assertEqual(parsed["agents"]["default_subagent_model"], "gpt-6-luna")
         attribute = subprocess.run(
             [xattr, "-p", "com.example.codex-setup-test", config],
             check=True,

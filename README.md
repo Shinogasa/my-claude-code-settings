@@ -212,7 +212,7 @@ Codex側ではpolicyで無効とする。詳細と全プラグインの判定は
 ### Codex subagentのモデルルーティング
 
 `setup.sh --codex`は`~/.codex/config.toml`の`[agents]`へ、指定漏れ用の既定値
-`gpt-5.6-luna` + `medium`を設定する。設定ファイル全体は置換せず、対象2キーだけを更新する。
+`gpt-6-luna` + `medium`を設定する。設定ファイル全体は置換せず、対象2キーだけを更新する。
 更新時はowner、`0600`相当、ACL、symlinkを検査し、同じリポジトリのconfig更新処理を
 永続lockで直列化する。共有lockを使うmutator間では競合を防ぎ、未協調writerについても
 内容・metadataをrename直前まで再検査し、検出した競合は原本を上書きせず停止する。
@@ -220,8 +220,8 @@ Codex側ではpolicyで無効とする。詳細と全プラグインの判定は
 この保証境界と残余リスクはADR 0009に記録している。
 各custom agentはモデルと推論強度を明示し、親AIは`~/.codex/MODEL_ROUTING.md`に従って
 深さ不足・探索範囲不足・設計判断不足を分けて自律的に昇降する。
-security boundaryに一致する通常の意味レビューは、OpenAI公式例に合わせて
-`security-reviewer`の`gpt-5.6-terra` + `high` + `read-only`を使う。
+security boundaryに一致する通常の意味レビューは、OpenAI公式のモデル選択指針を踏まえて
+`security-reviewer`の`gpt-6-sol` + `high` + `read-only`を使う。
 
 別モデルへ実装・探索・修正・レビューを移す前には、
 `.superpowers/handoffs/<task-id>.md`を作成する。Superpowersのtask brief / review packageが

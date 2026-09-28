@@ -81,7 +81,7 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0007](0007-learning-mode-decision-layer-gate.md) | 判断点を層で選別し、実装レベルの経験は定石欄で供給する | 2026-08-21 | accepted（共通開示・記録契約は0017で補完） |
 | [0008](0008-codex-rtk-prompt-integration.md) | CodexのRTK統合を指示アダプターで管理する | 2026-09-02 | accepted |
 | [0009](0009-codex-bitwarden-signing-agent.md) | Codex子プロセスへBitwarden SSH agentを配布する | 2026-09-03 | accepted |
-| [0010](0010-codex-adaptive-model-routing.md) | Codexサブエージェントのモデルと推論強度を適応的に選ぶ | 2026-09-14 | accepted（親sessionは0014→0015→0016で部分置換） |
+| [0010](0010-codex-adaptive-model-routing.md) | Codexサブエージェントのモデルと推論強度を適応的に選ぶ | 2026-09-14 | accepted（親sessionは0014→0015→0016、基準ペアは0018で部分置換） |
 | [0011](0011-codex-cross-model-handoff.md) | Codexのモデル間移行を検証可能なMarkdown handoffで行う | 2026-09-15 | accepted |
 | [0012](0012-code-learning-mode.md) | 実作業でコード理解を鍛える学習モードを独立させる | 2026-09-17 | accepted（形式優先・担当範囲・記録先は0017で部分置換） |
 | [0013](0013-codex-review-runner.md) | Codexレビュー実行と出力回収を専用runnerへ分離する | 2026-09-18 | accepted |
@@ -89,3 +89,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0015](0015-codex-parent-routing-runtime-boundary.md) | Codex親工程の標準経路を明示agentとfresh sessionにする | 2026-09-22 | superseded by 0016 |
 | [0016](0016-codex-parent-routing-pilot.md) | Codex親モデル切替の実運用pilotを限定的に行う | 2026-09-22 | accepted |
 | [0017](0017-programming-learning-integration.md) | 本人による実課題の完遂と専用リポジトリへの学習記録集約 | 2026-09-22 | accepted |
+| [0018](0018-codex-gpt6-routing-baseline.md) | Codexサブエージェントの基準ペアをGPT-6へ移す | 2026-09-28 | accepted |

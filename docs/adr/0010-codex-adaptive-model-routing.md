@@ -7,8 +7,9 @@ status: accepted
 # Codexサブエージェントのモデルと推論強度を適応的に選ぶ
 
 > **部分置換:** 親セッションの工程境界での切替と再開方法は
-> [ADR 0015](0015-codex-parent-routing-runtime-boundary.md)を適用する。
-> subagentの基準ペアとprovider・人間確認の境界は、このADRを引き続き適用する。
+> [ADR 0016](0016-codex-parent-routing-pilot.md)を適用する。
+> subagentの基準ペアは[ADR 0018](0018-codex-gpt6-routing-baseline.md)で部分置換する。
+> provider・人間確認の境界は、このADRを引き続き適用する。
 
 ## 背景
 

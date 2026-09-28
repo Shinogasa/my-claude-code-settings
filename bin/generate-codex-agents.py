@@ -21,14 +21,14 @@ OUTPUT_DIR = REPO_ROOT / "codex" / "agents"
 # Claude Code の model / effort は同ホスト向けの指定なので、Codex側は役割の性質から
 # 独立に割り当てる。動的な昇降条件は codex/MODEL_ROUTING.md が定める。
 CODEX_AGENT_PROFILES = {
-    "build-error-resolver": ("gpt-5.6-luna", "low"),
-    "code-architect": ("gpt-5.6-luna", "high"),
-    "code-explorer": ("gpt-5.6-luna", "medium"),
-    "code-simplifier": ("gpt-5.6-luna", "medium"),
-    "planner": ("gpt-5.6-sol", "high"),
-    "refactor-cleaner": ("gpt-5.6-luna", "high"),
-    "security-reviewer": ("gpt-5.6-terra", "high"),
-    "silent-failure-hunter": ("gpt-5.6-luna", "high"),
+    "build-error-resolver": ("gpt-6-luna", "low"),
+    "code-architect": ("gpt-6-sol", "high"),
+    "code-explorer": ("gpt-6-sol", "medium"),
+    "code-simplifier": ("gpt-6-luna", "medium"),
+    "planner": ("gpt-6-sol", "high"),
+    "refactor-cleaner": ("gpt-6-luna", "high"),
+    "security-reviewer": ("gpt-6-sol", "high"),
+    "silent-failure-hunter": ("gpt-6-luna", "high"),
 }
 
 # 書き込み系ツールを持つエージェントだけ workspace-write にする。

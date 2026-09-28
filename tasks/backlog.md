@@ -233,14 +233,14 @@ SessionStart helperがClaude pathなしで起動する。
 
 ### P2: `codex/agents/*.toml`のモデル・推論ペアを公式基準で再評価する
 
-現行8 roleの固定ペアは、個別roleを同じ深さで比較して決めたものではない。
-`security-reviewer`はOpenAI公式のcorrectness/security reviewer例に合わせて
-`gpt-5.6-terra` + `high`へ先行是正したが、他roleは暫定値として残っている。
+現行8 roleのGPT-6固定ペアは、公式のモデル位置づけと公開単価を基に移行した暫定値であり、
+個別roleの品質・所要時間・実際の総コストを代表タスクで比較して決めたものではない。
+`security-reviewer`のGPT-6 Sol + highと旧GPT-5.6 Terra + highも実測で比較する。
 
 **調べること**:
 
 - OpenAI公式のモデル選択・推論強度・custom agent例と各roleの責務を照合する
-- Luna / Terra / Solの品質、待ち時間、コストを代表タスクで比較する
+- GPT-6 Luna / Sol / Astraと旧GPT-5.6 Terraの品質、待ち時間、総コストを代表タスクで比較する
 - 固定roleが必要な範囲と、動的ルーターへ委ねる範囲を分ける
 - `sandbox_mode`とdeveloper instructionsも、モデル変更と独立に再監査する
 
@@ -256,6 +256,14 @@ SessionStart helperがClaude pathなしで起動する。
 - 生成元、生成済みTOML、テスト、モデルルーティング文書、ADRが一致する
 - read-only / workspace-writeの権限がモデル選択の都合で広がっていない
 - runtime smoke testで実際のmodel、reasoning effort、sandboxを確認する
+
+### P2 TODO: 新しいモデル世代へのルーティング更新を容易にする
+
+今回のGPT-6移行では生成元、既定値、validator、方針、テストを個別に更新した。
+次の世代交代前に、基準ペアの正本を一つに寄せ、生成物・validator許可ペア・setup既定値・
+文書とテストの整合性を検査する方法を設計する。履歴用handoff、ADR、runtime fixtureは
+一括置換しない。公式のmodel/effort対応、ローカルCLIの提供状況、代表タスクの品質・
+所要時間・総コストを確認してから新世代へ切り替える。今回の変更では共通化を実装しない。
 
 ### pilot待ち: 親工程ルーティングの実タスク検証
 
@@ -443,14 +451,15 @@ rules 3件、contexts 3件を含む34ファイルを導入した。自前`code-r
 | Claude Code | Codex | 扱い |
 |---|---|---|
 | `tools: [Read, Write, ...]` | `sandbox_mode`（2値のみ） | 書き込み系ツールの有無で read-only / workspace-write に粗く写す |
-| `model: sonnet / opus` | 世代名のみ（別名が無い） | `gpt-5.6-luna` / `gpt-5.6-sol` に固定。**新世代が出たら表を更新する** |
+| `model: sonnet / opus` | 世代名のみ（別名が無い） | 現在は`gpt-6-luna` / `gpt-6-sol`に固定。**新世代が出たら表を更新する** |
 | `effort` | `model_reasoning_effort` | そのまま |
 | `color` | 無し | 捨てる |
 
 **モデル別名が無いことは実測済み**（`codex debug models` の `alias` が全件 null）。
 Claude 側は `sonnet` / `opus` が別名なので世代交代で壊れないが、
 **Codex 側だけ世代交代のたびに書き換えが要る**。更新箇所は
-`bin/generate-codex-agents.py` の `MODEL_MAP` 1箇所。
+`bin/generate-codex-agents.py` の `CODEX_AGENT_PROFILES` を含む複数箇所。
+更新箇所の集約は上記TODOで扱う。
 
 **未検証**: 実機で spawn して定義が実際に適用されるか。
 `~/.codex/agents/*.toml` が適用されない不具合（openai/codex#26868）は
