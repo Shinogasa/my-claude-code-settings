@@ -3,6 +3,8 @@
 
 import unittest
 from pathlib import Path
+import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +12,7 @@ SKILL = ROOT / "skills" / "code-learning" / "SKILL.md"
 ROUTER = ROOT / "rules" / "code-learning.md"
 REVIEW_STYLE = ROOT / "output-styles" / "review-and-design.md"
 RECORD_SCHEMA = ROOT / "learning" / "code" / "README.md"
+HOST_FIXTURE = ROOT / "tests" / "fixtures" / "code-learning-host-probe"
 
 
 class CodeLearningSkillContract(unittest.TestCase):
@@ -153,6 +156,20 @@ class CodeLearningSkillContract(unittest.TestCase):
             "1イベントにつき `learning/code/entries/",
             text,
         )
+
+    def test_host_probe_fixture_has_one_deterministic_external_failure(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "unittest", "test_worker", "-v"],
+            cwd=HOST_FIXTURE,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("test_cancelled_work_does_not_publish_a_late_result", result.stderr)
+        self.assertIn("FAILED (failures=1)", result.stderr)
+        self.assertNotIn("ERROR", result.stderr)
 
 
 if __name__ == "__main__":

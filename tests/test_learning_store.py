@@ -236,6 +236,14 @@ class LearningStoreCliTests(unittest.TestCase):
         (self.store / "legacy/decision/decision.md").write_bytes(b"tampered\n")
         self.assertEqual(self.error_code(self.cli("status")), "INCOMPLETE_IMPORT")
 
+    def test_active_store_rejects_legacy_file_missing_from_manifest(self):
+        self.make_active_store()
+        extra = self.store / "legacy/decision/extra.md"
+        extra.parent.mkdir(parents=True)
+        extra.write_bytes(b"not imported\n")
+
+        self.assertEqual(self.error_code(self.cli("status")), "INCOMPLETE_IMPORT")
+
     def test_existing_binding_blocks_other_init_without_mutating_target(self):
         first = self.init_store("first")
         binding_hash = self.file_hash(self.binding_path())

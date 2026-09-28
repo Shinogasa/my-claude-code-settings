@@ -785,6 +785,13 @@ def _verify_active_import(store: Store) -> None:
     if len(manifests) != 1:
         raise StoreError("INCOMPLETE_IMPORT", "active storeには照合済みmanifestが1件必要です")
     _path, manifest = manifests[0]
+    expected = [Path(str(item["legacy_path"])) for item in manifest["files"]]
+    actual = {
+        path.relative_to(store.root)
+        for path in _safe_files(store.root, "legacy", ".md")
+    }
+    if len(expected) != len(set(expected)) or set(expected) != actual:
+        raise StoreError("INCOMPLETE_IMPORT", "manifestとlegacy file集合が一致しません")
     for item in manifest["files"]:
         target = store.root / str(item["legacy_path"])
         if target.is_symlink() or not target.is_file():
