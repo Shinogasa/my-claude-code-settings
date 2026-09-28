@@ -50,6 +50,11 @@
           },
           {
             "type": "command",
+            "command": "python3 \"$HOME/.codex/hooks/check-codex-base-provider.py\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "python3 \"$HOME/.codex/hooks/codex-model-switch-hook.py\"",
             "timeout": 10
           }

@@ -397,6 +397,14 @@ plugin 由来のサーバを有効化する場合は、その素性を自分で�
 エラーにせず base 設定で起動する**（実測: exit 0、provider は会社のまま）。
 `cxp` はプロファイルの実在を自分で検査して落とす。
 
+この向きの安全性は、base の `config.toml` がトップレベルの `model_provider` で
+会社の provider を選んでいることに依存する。このキーだけが消えると、素の `codex` は
+既定の `openai` に倒れ、`cxp` と共有している `auth.json` の個人アカウントで**黙って**動く。
+`hooks/check-codex-base-provider.py` が SessionStart でこの状態を検知し、UI へ警告する
+（`[model_providers.*]` を定義しているのに選ばれていないときだけ。正常時は何も出さない）。
+provider は起動時に確定するため、警告は次の起動前に直すための通知であり、そのセッションを
+止めるものではない。hook は `/hooks` で承認するまで動かない。
+
 ## ディレクトリ構成
 
 ```
