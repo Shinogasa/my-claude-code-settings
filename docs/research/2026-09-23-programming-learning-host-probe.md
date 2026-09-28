@@ -29,11 +29,11 @@
 | 検証 | 状態 | 判定の根拠 |
 |---|---|---|
 | CLI helpと両ホスト入口 | 確認済み | version、exec/resume/stream-jsonのoption、同じsourceへのpath解決 |
-| 保存CLI・Python 3.9実動 | Task1〜4の31件成功（担当報告） | `/usr/bin/python3`、ResourceWarningをerror。最終全体検査は別途 |
+| 保存CLI・Python 3.9実動 | 関連49件成功 | `/usr/bin/python3`、ResourceWarningをerrorにして再検証 |
 | 両ホスト入口から同じstoreへの保存・冪等再送 | 成功 | 親がPython3.9.6で6コマンド実行、全て終了0。下記の保存結果を照合 |
-| 実Codex対話 | 一部確認済み | OFFは通常修正・検証と保存0件。skill配布後の通常依頼はInvestigateを提示して停止し、skip後は理由を強制せず修正・検証。未設定storeの試行は利用上限でturn失敗 |
+| 実Codex対話 | 一部確認済み | GPT-6 Sol/highでInvestigate提示・turn終了、同じthreadの模擬観測後に理由だけを質問・turn終了。模擬回答は本人の能力証拠ではない |
 | 実Claude Code対話 | 追加実施しない | 9月28日の学習OFFは修正・検証を完了。ユーザーの運用はCodex中心で、Claude Codeは契約対象外のため、以降の対話検証を停止 |
-| CLI securityレビュー | 再レビュー済み、修正判定中 | 同じTerra/highが全文packageを読み、Medium 3件・Low 1件、Confidence sufficient。下記の再現と最小修正を検討 |
+| CLI securityレビュー | 修正後の再レビュー待ち | 初回Terra/highのMedium 3件・Low 1件を修正済み。9月28日の新レビューは資料不足でConfidence insufficientとなり、所見なしとは扱わない |
 | 最終統合レビュー | 未実施 | security所見対応と学習ルール実装後に独立担当が実施 |
 | 旧記録の公開監査 | 全件読了・3件を抽象化 | 原文99件のhash照合。Terraが1〜60、親が61〜99の本文を全文確認。ユーザー承認後に3件を更新 |
 | 専用repoへの旧記録移管 | 未実施 | CLI検証・レビュー後、更新済み原文のhashを取り直して実施 |
@@ -77,6 +77,50 @@ store未設定の別sessionも起動したが、初期tool実行後にCodexの�
 Claude Codeは9月28日に学習OFFを一度試し、修正と2件の検証を完了した。
 ユーザーはClaude Codeを通常利用せず、以後の実機検証はCodexに絞ると指定した。
 Claude Code側の学習ON・保存・再開の検証は保留し、必要が生じたときの検討事項とする。
+
+### 9月28日の追加Codex実測
+
+利用上限解除後、同じ通常providerを使い、`gpt-6-sol` / `high` のfresh sessionで
+3回試した。最初の2回は取消時に誤った結果を採用する小さいfixtureで、
+1回はbinding未設定、もう1回は使い捨てstoreへbinding済みだった。
+3回目は古い非同期完了通知が結果を公開するfixtureで、binding済みだった。
+いずれもskill本文の読込と失敗テストの再現、AIによる修正とテスト成功を確認したが、
+Investigate課題は提示せず、本人の回答待ちにも移らなかった。
+よってこの3回をコード学習の発火成功に数えない。
+
+非同期fixtureのJSONLでは、モデルが保存CLIを`rg --files`と`find`で探索した。
+`~/.codex/bin`はこのrepoの`bin`へのsymlinkであり、`find`の既定では配下を辿らず、
+既存の`learning-store.py`を発見できなかった。実際のpathは親が`ls -ld`で確認し、
+同じ`XDG_CONFIG_HOME`で直接`status`を実行すると`state:active`、`writable:true`を返した。
+モデルは`status`を実行せず、未保存の通知もせずに修正した。これは共通方針の
+「候補前のstatus」「保存不能なら一度通知」と食い違う実機観測である。
+入口を探索に依存させないため、両ホストのCLI pathを直接指定するruleと契約テストを追加した。
+修正後の別sessionでは`status`が成功し、AIが本人へコード変更を依頼する文まで進んだ。
+ただしAIがproductionに教材用TODOを追加し、対象関数と判定条件を先に伝えていた。
+240秒のrunner制限に達して`turn.completed`も無いため、正常な課題提示の成功には数えない。
+skillへ、未知の原因を本人が調べられるときはInvestigateを優先し、教材用TODOを
+productionへ追加しない規約を補った。
+
+その後のfresh session（thread `01a0e75d-0e85-77a2-9361-f2a62a443501`）は、
+直接`status`でactive/writableを確認し、失敗テストを再現した。最終回答で原因箇所や
+完成解を示さず、本人に次の観測を一つ選ばせて`turn.completed`となった。
+fixtureの製品コードは無変更。模擬観測を同threadの次turnへ送ると、
+「なぜ`ticket`とその時点の`_current`を比較しようと考えた？」と一問だけ返し、
+27.3秒で`turn.completed`となった。模擬入力の前後でfixture差分は増えず、
+storeのrecords/operationsは各0件だった。
+本人の実提出・理由・再修正・転移・record保存は未観測。
+
+全suiteはsandbox内でlocalhost bindとGit署名agentの制約により16件エラー。
+権限昇格後にGit署名を環境変数で無効化すると、runtime fixtureがその変数を
+部分的に除去して4件エラー。署名無効の一時Git設定ファイルへ切り替えると、
+全495件中2件がGit user identity不足でエラー、他493件は成功した。
+一時設定へ検証用name/emailを足すと残る2件は単独再実行で成功。
+同じ設定での全495件一括成功はまだ未確認であり、全suite成功とは表現しない。
+macOS Python 3.9で関連49件、`bash -n setup.sh`、`git diff --check`は成功した。
+
+最初の実Codex子processは外側のCodex sandbox内で`Operation not permitted`により起動失敗した。
+同一コマンドを承認済みの権限昇格で再実行すると正常終了した。拒否された個別操作は未特定。
+この環境制約による失敗を製品の学習機能の失敗に数えない。
 
 ## 両ホストの保存入口の実測
 

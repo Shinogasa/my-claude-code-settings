@@ -73,6 +73,12 @@ class CodeLearningSkillContract(unittest.TestCase):
         self.assertNotIn("paths:", text)
         self.assertLess(len(text), 3000)
 
+    def test_router_gives_direct_store_status_paths_for_both_hosts(self):
+        text = ROUTER.read_text(encoding="utf-8")
+        self.assertIn("~/.claude/bin/learning-store.py status", text)
+        self.assertIn("~/.codex/bin/learning-store.py status", text)
+        self.assertIn("symlink", text)
+
     def test_review_style_does_not_reveal_a_review_exercise_early(self):
         text = REVIEW_STYLE.read_text(encoding="utf-8")
         self.assertIn("code-learning", text)

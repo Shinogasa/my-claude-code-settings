@@ -17,6 +17,12 @@ Codex CLI では `~/.agents/skills/code-learning/SKILL.md`。skillを発見で�
 学習イベントを見送り、そのsessionで一度だけ導入未完了をユーザーへ明示して、
 通常の実装・検証を続ける。見送りを「候補が無かった」と記録しない。
 
+候補を扱う前の保存状態確認は、Claude Code では
+`python3 ~/.claude/bin/learning-store.py status`、Codex CLI では
+`python3 ~/.codex/bin/learning-store.py status` を直接実行する。
+`bin` は symlink のことがあるため、`find` の結果だけで入口の不在を判断しない。
+statusが失敗した場合も共通方針どおり一度通知し、未保存を明示して学習を続ける。
+
 生成物、vendored code、lockfile、ボイラープレート、機械的変更、単純な設定・文言変更、
 検証できない好みの評価では発火しない。検査や一次資料で重要な主張を裏付けられず、
 検証済みの教師routeも使えなければ学習イベントを見送る。
