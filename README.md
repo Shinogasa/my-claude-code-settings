@@ -212,7 +212,7 @@ Codex側ではpolicyで無効とする。詳細と全プラグインの判定は
 ### Codex subagentのモデルルーティング
 
 `setup.sh --codex`は`~/.codex/config.toml`の`[agents]`へ、指定漏れ用の既定値
-`gpt-5.6-luna` + `medium`を設定する。設定ファイル全体は置換せず、対象2キーだけを更新する。
+`gpt-6-luna` + `medium`を設定する。設定ファイル全体は置換せず、対象2キーだけを更新する。
 更新時はowner、`0600`相当、ACL、symlinkを検査し、同じリポジトリのconfig更新処理を
 永続lockで直列化する。共有lockを使うmutator間では競合を防ぎ、未協調writerについても
 内容・metadataをrename直前まで再検査し、検出した競合は原本を上書きせず停止する。
@@ -220,8 +220,8 @@ Codex側ではpolicyで無効とする。詳細と全プラグインの判定は
 この保証境界と残余リスクはADR 0009に記録している。
 各custom agentはモデルと推論強度を明示し、親AIは`~/.codex/MODEL_ROUTING.md`に従って
 深さ不足・探索範囲不足・設計判断不足を分けて自律的に昇降する。
-security boundaryに一致する通常の意味レビューは、OpenAI公式例に合わせて
-`security-reviewer`の`gpt-5.6-terra` + `high` + `read-only`を使う。
+security boundaryに一致する通常の意味レビューは、OpenAI公式のモデル選択指針を踏まえて
+`security-reviewer`の`gpt-6-sol` + `high` + `read-only`を使う。
 
 別モデルへ実装・探索・修正・レビューを移す前には、
 `.superpowers/handoffs/<task-id>.md`を作成する。Superpowersのtask brief / review packageが
@@ -409,6 +409,7 @@ plugin 由来のサーバを有効化する場合は、その素性を自分で�
 │   ├── architecture-decision-records/  # ADR記録
 │   ├── backend-patterns/        #   バックエンドパターン
 │   ├── claude-code-best-practice/  # 設定ベストプラクティス参照
+│   ├── code-learning/           #   実作業でのコード理解・変更・レビュー演習
 │   ├── coding-standards/        #   コーディング規約
 │   ├── database-migrations/     #   DBマイグレーション
 │   ├── deployment-patterns/     #   デプロイパターン
@@ -444,6 +445,7 @@ plugin 由来のサーバを有効化する場合は、その素性を自分で�
 │   └── hooks.json               #   Codex向けhookイベント定義
 ├── rules/                       # 常時適用ルール
 │   ├── learning-mode.md         #   学習モード詳細仕様
+│   ├── code-learning.md         #   コード学習の常時発火入口
 │   ├── proving-absence.md       #   「無い」と主張するときの形式
 │   ├── output-formatting.md     #   URL表示フォーマット
 │   ├── task-management.md       #   タスク管理手順
@@ -460,6 +462,9 @@ plugin 由来のサーバを有効化する場合は、その素性を自分で�
 ├── output-styles/               # カスタムアウトプットスタイル
 │   ├── review-and-design.md     #   Review & Design（コードレビュー・設計判断特化）
 │   └── fast.md                  #   高速実行（説明最小限）
+├── learning/                    # 学習ログ（公開可能な抽象化済み記録）
+│   ├── entries/                 #   設計Predict / ★ Delta
+│   └── code/                    #   コード学習の実証記録とschema
 ├── statusline.js                # ステータスライン表示
 ├── settings.json.template       # settings.jsonテンプレート（共通設定、.env不要）
 ├── env.json.template            # envブロックテンプレート（LiteLLM等APIキー利用時のみ、.env必要）
@@ -538,22 +543,15 @@ paths:
 
 ## learning/ の運用
 
-学習ログ（★ Predict / ★ Delta の記録）の実体は **このリポジトリの `learning/entries/`** に置き、git で追跡する。運用の詳細は `learning/README.md`。
+新規の学習記録は、この設定リポジトリとは別の専用学習storeへ保存する。
+`setup.sh` はClaude Codeの `~/.claude/bin/learning-store.py` とCodex CLIの
+`~/.codex/bin/learning-store.py` に同じCLIを配布するが、storeの初期化やbindingは行わない。
+初回作成、別マシンでのcloneとbind、保存・commit・remote反映の状態区分は
+`learning/README.md` を参照する。コード学習のschemaと証拠条件は `learning/code/README.md` に置く。
 
-- **1エントリ1ファイル + frontmatter**: 2026-08-09 に単一ファイル `tasks/learning-journal.md`
-  から移行した。後日の集計と学び直しのため、日付・当否・欠けた軸を構造化データで持つ。
-  単一ファイルへの追記だった頃は、テンプレート行を実エントリとして数える誤りが2回起きており、
-  この形式ではその混同が構造的に起きない。並行セッションでの追記衝突も避けられる。
-- **なぜこのリポジトリに置くか**: マシン間で同期され、バックアップされ、後から振り返れる。
-  以前は業務用の PRIVATE リポジトリに実体を集約し symlink で参照していたが、
-  個人の学習ログを業務用リポジトリに同居させる構成が適切でないため 2026-08-02 に移行した。
-  これに伴い `setup.sh` の symlink 集約機構は撤去した。
-- **PUBLIC であることの制約**: このリポジトリは PUBLIC のため、社名・プロジェクト名・
-  リポジトリ名・内部パス・業務コードを書かない。技術的本質のみを一般化して記録する
-  （`rules/learning-mode.md` の抽象化ルール）。抽象化の強制はセキュリティ要件であると同時に、
-  本質だけを取り出して言語化する訓練としても機能する。
-- **移行前のアーカイブ**: 2026-08-02 以前の詳細版（業務固有情報を含む）は移行元の
-  PRIVATE リポジトリにアーカイブとして残しており、以降そちらには追記しない。
+このリポジトリの `learning/entries/` と旧 `learning/code/entries/` は、既存ADRから参照される
+読み取り専用履歴である。新規記録を追加せず、旧hit/missやAI評価を新schemaの習得証拠へ変換しない。
+このリポジトリはPUBLICのため、旧履歴も業務固有情報を抽象化した状態を保つ。
 
 ## 禁止パターン検査（pre-commit フック）
 

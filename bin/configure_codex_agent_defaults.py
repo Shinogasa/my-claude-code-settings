@@ -15,7 +15,7 @@ import codex_config_io as safe_config
 
 
 DEFAULTS = {
-    "default_subagent_model": "gpt-5.6-luna",
+    "default_subagent_model": "gpt-6-luna",
     "default_subagent_reasoning_effort": "medium",
 }
 TARGET_TABLE = ("agents",)

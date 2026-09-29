@@ -420,6 +420,8 @@ frontmatterのmodelとeffortを使う。
     def test_reasoning_effort_unsupported_by_model_is_rejected(self):
         for model, effort in (
             ("gpt-5.6-luna", "ultra"),
+            ("gpt-6-luna", "ultra"),
+            ("gpt-6-sol", "ultra"),
             ("gpt-5.5", "max"),
         ):
             with self.subTest(model=model, effort=effort):
@@ -433,6 +435,21 @@ frontmatterのmodelとeffortを使う。
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("NEEDS_CONTEXT", result.stderr)
                 self.assertIn("unsupported model/reasoning pair", result.stderr)
+
+    def test_gpt6_routing_pairs_are_accepted(self):
+        for model, effort in (
+            ("gpt-6-luna", "medium"),
+            ("gpt-6-sol", "medium"),
+            ("gpt-6-sol", "high"),
+            ("gpt-6-astra", "high"),
+        ):
+            with self.subTest(model=model, effort=effort):
+                self.write_handoff(
+                    target_model=model,
+                    target_reasoning_effort=effort,
+                )
+                result = self.validate()
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_handoff_is_rejected_after_worktree_content_changes(self):
         self.write_handoff()

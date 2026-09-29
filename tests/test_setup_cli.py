@@ -133,6 +133,59 @@ class SetupCliTests(unittest.TestCase):
         self.assertFalse((self.home / ".codex" / "prompts").exists())
         self.assertFalse((self.home / ".claude" / "CLAUDE.md").exists())
 
+    def test_code_learning_skill_is_linked_for_both_hosts(self):
+        (self.home / ".claude").mkdir()
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--all")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        source = (self.repository / "skills" / "code-learning").resolve()
+        for installed in (
+            self.home / ".claude" / "skills" / "code-learning",
+            self.home / ".agents" / "skills" / "code-learning",
+        ):
+            with self.subTest(installed=installed):
+                self.assertTrue(installed.is_symlink())
+                self.assertEqual(installed.resolve(), source)
+
+    def test_code_learning_rule_is_visible_for_both_hosts(self):
+        (self.home / ".claude").mkdir()
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--all")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        source = (self.repository / "rules" / "code-learning.md").resolve()
+        self.assertTrue(source.is_file())
+        for installed in (
+            self.home / ".claude" / "rules" / "code-learning.md",
+            self.home / ".codex" / "rules" / "code-learning.md",
+        ):
+            with self.subTest(installed=installed):
+                self.assertEqual(installed.resolve(), source)
+
+    def test_learning_store_is_distributed_without_initializing(self):
+        (self.home / ".claude").mkdir()
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--all")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        source = (self.repository / "bin" / "learning-store.py").resolve()
+        self.assertEqual(
+            (self.home / ".claude/bin/learning-store.py").resolve(),
+            source,
+        )
+        self.assertEqual(
+            (self.home / ".codex/bin/learning-store.py").resolve(),
+            source,
+        )
+        self.assertFalse(
+            (self.home / ".config/agent-learning/config.json").exists()
+        )
+        self.assertFalse((self.repository / ".learning-store.json").exists())
+
     def test_codex_installs_global_rtk_instructions(self):
         (self.home / ".codex").mkdir()
 
@@ -206,7 +259,7 @@ class SetupCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with (self.home / ".codex" / "config.toml").open("rb") as config_file:
             agents = tomllib.load(config_file)["agents"]
-        self.assertEqual(agents["default_subagent_model"], "gpt-5.6-luna")
+        self.assertEqual(agents["default_subagent_model"], "gpt-6-luna")
         self.assertEqual(agents["default_subagent_reasoning_effort"], "medium")
 
     def test_codex_setup_reports_signing_skip_without_config(self):
@@ -250,7 +303,7 @@ class SetupCliTests(unittest.TestCase):
         parsed = tomllib.loads(updated)
         self.assertEqual(parsed["model"], "gpt-test")
         self.assertEqual(parsed["private"]["token"], "must-stay-local")
-        self.assertEqual(parsed["agents"]["default_subagent_model"], "gpt-5.6-luna")
+        self.assertEqual(parsed["agents"]["default_subagent_model"], "gpt-6-luna")
         self.assertEqual(
             parsed["agents"]["default_subagent_reasoning_effort"],
             "medium",
@@ -306,7 +359,7 @@ class SetupCliTests(unittest.TestCase):
             parsed["shell_environment_policy"]["set"]["SSH_AUTH_SOCK"],
             str(socket_path),
         )
-        self.assertEqual(parsed["agents"]["default_subagent_model"], "gpt-5.6-luna")
+        self.assertEqual(parsed["agents"]["default_subagent_model"], "gpt-6-luna")
         attribute = subprocess.run(
             [xattr, "-p", "com.example.codex-setup-test", config],
             check=True,

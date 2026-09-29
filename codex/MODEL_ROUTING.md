@@ -5,20 +5,23 @@
 
 ## 初期値
 
-分類できない通常作業は `gpt-5.6-luna` + `medium` を使う。
+分類できない通常作業は `gpt-6-luna` + `medium` を使う。
 `~/.codex/config.toml` の `[agents]` にも同じペアを設定し、指定漏れのバックストップにする。
 
 ## 基準ペア
 
 | 状況 | model | reasoning_effort |
 |---|---|---|
-| 手順が一意な機械作業 | `gpt-5.6-luna` | `low` |
-| 明確で反復可能な通常作業 | `gpt-5.6-luna` | `medium` |
-| 複雑なロジック、仮定確認、エッジケース、狭い一次確認・再レビュー | `gpt-5.6-luna` | `high` |
-| 対象は狭いが特に難しい推論 | `gpt-5.6-luna` | `max` |
-| 広い読み取り調査、大きなファイル、コードベース探索 | `gpt-5.6-terra` | `medium` |
-| 複数レイヤーをまたぐデバッグ、統合判断、通常の意味的セキュリティレビュー | `gpt-5.6-terra` | `high` |
-| 曖昧で多段の設計、アーキテクチャ、最終統合レビュー | `gpt-5.6-sol` | `high` |
+| 手順が一意な機械作業 | `gpt-6-luna` | `low` |
+| 明確で反復可能な通常作業 | `gpt-6-luna` | `medium` |
+| 複雑なロジック、仮定確認、エッジケース、狭い一次確認・再レビュー | `gpt-6-luna` | `high` |
+| 対象は狭いが特に難しい推論 | `gpt-6-luna` | `max` |
+| 広い読み取り調査、大きなファイル、コードベース探索 | `gpt-6-sol` | `medium` |
+| 複数レイヤーをまたぐデバッグ、統合判断、通常の意味的セキュリティレビュー | `gpt-6-sol` | `high` |
+| 曖昧で多段の設計、アーキテクチャ、最終統合レビュー | `gpt-6-sol` | `high` |
+
+特に曖昧・高難度でSolでは十分な根拠を揃えられない工程は、検証済みhandoffを使った
+明示ペアの`gpt-6-astra` + `high`へ昇格する。単価だけで自動昇格しない。
 
 custom agentを使う場合は、そのTOMLに固定された基準ペアを適用する。明示spawn値より
 custom agentファイルが優先されるため、別ペアが必要なら一致するroleを選ぶか、固定roleを
@@ -26,12 +29,12 @@ custom agentファイルが優先されるため、別ペアが必要なら一�
 
 ## セキュリティレビュー
 
-OpenAI公式のcorrectness/security reviewer例に合わせ、必須の通常レビューは
-`security-reviewer`の`gpt-5.6-terra` + `high` + `read-only`で行う。Luna highは、対象と
+OpenAI公式のモデル選択指針を踏まえ、必須の通常レビューは
+`security-reviewer`の`gpt-6-sol` + `high` + `read-only`で行う。Luna highは、対象と
 確認観点が絞られた狭い一次確認・再レビューには使えるが、security boundaryに一致する変更の
 必須レビューを単独では満たさない。
 
-重大・多層・曖昧でSol highによる追加レビューが必要な場合、またはレビューがCritical findingか
+重大・多層・曖昧でAstra highによる追加レビューが必要な場合、またはレビューがCritical findingか
 `Confidence: insufficient`を返した場合は、`rules/security-review-policy.md`に従って人間へ
 確認する。標準レビューから上位モデルへ黙って切り替えない。
 
@@ -40,8 +43,8 @@ OpenAI公式のcorrectness/security reviewer例に合わせ、必須の通常レ
 開始時だけでなく、調査結果や失敗原因が変わるたびに再分類する。
 
 - 推論の深さ不足: 同じモデル内で `low` → `medium` → `high` → `max` と上げる
-- 探索範囲不足: effortを上げ続けず、LunaからTerraへモデルを上げる
-- 設計判断不足: 要件が曖昧、多段のトレードオフ、最終統合判断ならSolへ上げる
+- 探索範囲不足: effortを上げ続けず、LunaからSolへモデルを上げる
+- 設計判断不足: 要件が曖昧、多段のトレードオフ、最終統合判断ならSolへ上げ、Solで根拠不足ならAstraを検討する
 - 作業が明確・局所的・機械的になった: 後続agentをLuna mediumまたはlowへ降格する
 - 失敗した: 回数だけで昇格せず、証拠から深さ不足・範囲不足・権限／環境問題を分類する
 

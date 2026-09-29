@@ -72,22 +72,23 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 
 | # | タイトル | 日付 | 状態 |
 |---|---|---|---|
-| [0001](0001-learning-mode-prediction-format.md) | 学習モードの予測フェーズを再認から生成へ変える | 2026-08-14 | accepted |
+| [0001](0001-learning-mode-prediction-format.md) | 学習モードの予測フェーズを再認から生成へ変える | 2026-08-14 | accepted（発火・正答率の解釈・記録先は0017で部分置換） |
 | [0002](0002-host-specific-activation-adapters.md) | 共有ポリシーをホスト別アダプターで発火させる | 2026-08-18 | superseded by 0003 |
 | [0003](0003-codex-native-first-activation-policy.md) | Codex移行をnative-firstなallowlistで管理する | 2026-08-18 | accepted |
 | [0004](0004-codex-runtime-enforcement-policy.md) | Codexの起動時規約とセキュリティレビューを段階的に強制する | 2026-08-20 | accepted（モデル選択は0010で部分置換） |
 | [0005](0005-codex-personal-profile-mcp-inheritance.md) | 個人プロファイルが会社設定の MCP サーバを継承する既定 | 2026-08-31 | accepted |
 | [0006](0006-codex-personal-profile-standalone-mcp-transport.md) | Codex個人プロファイルのMCP定義を単体検証可能にする | 2026-09-01 | accepted |
-| [0007](0007-learning-mode-decision-layer-gate.md) | 判断点を層で選別し、実装レベルの経験は定石欄で供給する | 2026-08-21 | accepted |
+| [0007](0007-learning-mode-decision-layer-gate.md) | 判断点を層で選別し、実装レベルの経験は定石欄で供給する | 2026-08-21 | accepted（共通開示・記録契約は0017で補完） |
 | [0008](0008-codex-rtk-prompt-integration.md) | CodexのRTK統合を指示アダプターで管理する | 2026-09-02 | accepted |
 | [0009](0009-codex-bitwarden-signing-agent.md) | Codex子プロセスへBitwarden SSH agentを配布する | 2026-09-03 | accepted |
-| [0010](0010-codex-adaptive-model-routing.md) | Codexサブエージェントのモデルと推論強度を適応的に選ぶ | 2026-09-14 | accepted（親sessionは0014→0015→0016で部分置換） |
+| [0010](0010-codex-adaptive-model-routing.md) | Codexサブエージェントのモデルと推論強度を適応的に選ぶ | 2026-09-14 | accepted（親sessionは0014→0015→0016、基準ペアは0018で部分置換） |
 | [0011](0011-codex-cross-model-handoff.md) | Codexのモデル間移行を検証可能なMarkdown handoffで行う | 2026-09-15 | accepted |
-| 0012 | コード学習モードをreview-firstへ再設計する | 2026-09-18 | accepted（`feat/code-learning-mode-plan`で割当済み・統合待ち） |
+| [0012](0012-code-learning-mode.md) | 実作業でコード理解を鍛える学習モードを独立させる | 2026-09-17 | accepted（形式優先・担当範囲・記録先は0017で部分置換） |
 | [0013](0013-codex-review-runner.md) | Codexレビュー実行と出力回収を専用runnerへ分離する | 2026-09-18 | accepted |
 | [0014](0014-codex-primary-session-model-routing.md) | Codex親セッションを工程境界で手動切替する | 2026-09-18 | superseded by 0015 |
 | [0015](0015-codex-parent-routing-runtime-boundary.md) | Codex親工程の標準経路を明示agentとfresh sessionにする | 2026-09-22 | superseded by 0016 |
 | [0016](0016-codex-parent-routing-pilot.md) | Codex親モデル切替の実運用pilotを限定的に行う | 2026-09-22 | accepted |
-
-`0012`は並行して作成された`feat/code-learning-mode-plan`が所有する。統合前のこのブランチには
-実体が無いが、番号を再利用すると将来の統合で衝突するため、リンクせず予約状態を明示している。
+| [0017](0017-programming-learning-integration.md) | 本人による実課題の完遂と専用リポジトリへの学習記録集約 | 2026-09-22 | accepted |
+| [0018](0018-codex-gpt6-routing-baseline.md) | Codexサブエージェントの基準ペアをGPT-6へ移す | 2026-09-28 | accepted |
+| [0019](0019-learning-store-lock-outside-git.md) | 学習storeの排他lockをGit metadataの外に置く | 2026-09-29 | superseded by 0020 |
+| [0020](0020-learning-store-directory-lock.md) | 学習store directoryを排他し旧CLIと書込方式を分離する | 2026-09-29 | accepted |

@@ -31,6 +31,7 @@ skills / commands / rules / CLAUDE.md は単一ソースを両ホストへリン
 `~/.claude/`、Codex CLIでは `~/.codex/` を起点に解決する。
 
 - `rules/learning-mode.md`
+- `rules/code-learning.md`
 - `rules/proving-absence.md`
 - `rules/task-management.md`
 - `rules/parallel-worktree.md`
@@ -98,6 +99,12 @@ skills の発火方式がホストで異なる。
 - 1タスク完了後は自動的にONに戻る
 - 詳細仕様は `rules/learning-mode.md`、設計の経緯は `docs/adr/0001-learning-mode-prediction-format.md` を参照
 
+コード学習は別レイヤー。実装・修正・レビューで真正かつ検証可能な能力を見つけたら、
+本質部分を確定する前に `rules/code-learning.md` に従ってskillを読む。
+設計PredictのL2優先ゲートはコード学習に適用しない。同じ箇所で二重に出題せず、
+pilot中は両モードを合わせて最大2回（コード学習は最大1回）とする。
+ユーザーが学習なしを望んだタスクでは両方OFFにする。
+
 ## 不在の主張
 
 「X は無い」は**二重の主張**である。「探した範囲に無かった」と「探した範囲が、在りうる範囲を覆っている」。
@@ -125,7 +132,7 @@ skills の発火方式がホストで異なる。
 - **検証**: 動作証明できるまでタスク完了とマークしない。「スタッフエンジニアはこれを承認するか？」と自問
 - **エレガントさ**: 重要な変更前に「もっとエレガントな方法は？」と立ち止まる。シンプルな修正はスキップ
 - **バグ修正**: バグレポートを受けたらログ・テストから自律的に修正する
-- **学習アウトプット**: ★ Delta を返したら `learning/entries/` に1エントリ1ファイルで作成する（運用は `learning/README.md`）。このリポジトリは PUBLIC のため、業務固有情報を抽象化してから書く（`rules/learning-mode.md` の抽象化ルール参照）
+- **学習アウトプット**: ★ Delta / ★ Code Delta の実証記録はbinding済みの専用学習storeへ保存する（運用は `learning/README.md`）。このリポジトリ内の旧記録は読み取り専用。保存前に業務固有情報を抽象化する（`rules/learning-mode.md` の抽象化ルール参照）
 - **並列作業**: 複数エージェントが同一リポジトリで動くときは worktree で分離する。
   サブエージェント起動時は `isolation: "worktree"` を既定とする。ただし本リポジトリ
   自身は対象外（理由は同ファイル参照）。詳細は `rules/parallel-worktree.md` を参照

@@ -26,14 +26,14 @@ REQUIRED_FIELDS = ("name", "description", "developer_instructions")
 VALID_SANDBOX = {"read-only", "workspace-write"}
 VALID_REASONING_EFFORTS = {"low", "medium", "high", "max"}
 EXPECTED_PROFILES = {
-    "build-error-resolver": ("gpt-5.6-luna", "low"),
-    "code-architect": ("gpt-5.6-luna", "high"),
-    "code-explorer": ("gpt-5.6-luna", "medium"),
-    "code-simplifier": ("gpt-5.6-luna", "medium"),
-    "planner": ("gpt-5.6-sol", "high"),
-    "refactor-cleaner": ("gpt-5.6-luna", "high"),
-    "security-reviewer": ("gpt-5.6-terra", "high"),
-    "silent-failure-hunter": ("gpt-5.6-luna", "high"),
+    "build-error-resolver": ("gpt-6-luna", "low"),
+    "code-architect": ("gpt-6-sol", "high"),
+    "code-explorer": ("gpt-6-sol", "medium"),
+    "code-simplifier": ("gpt-6-luna", "medium"),
+    "planner": ("gpt-6-sol", "high"),
+    "refactor-cleaner": ("gpt-6-luna", "high"),
+    "security-reviewer": ("gpt-6-sol", "high"),
+    "silent-failure-hunter": ("gpt-6-luna", "high"),
 }
 EXPECTED_SECURITY_BOUNDARIES = {
     "authentication",
@@ -142,12 +142,12 @@ class TestPermissionMapping(unittest.TestCase):
             with self.subTest(agent=meta["name"]):
                 self.assertEqual(data["sandbox_mode"], "read-only")
 
-    def test_security_reviewer_uses_official_semantic_review_profile(self):
+    def test_security_reviewer_uses_required_semantic_review_profile(self):
         path = codex_agents.OUTPUT_DIR / "security-reviewer.toml"
         data = tomllib.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(
             (data["model"], data["model_reasoning_effort"]),
-            ("gpt-5.6-terra", "high"),
+            ("gpt-6-sol", "high"),
         )
         self.assertEqual(data["sandbox_mode"], "read-only")
 

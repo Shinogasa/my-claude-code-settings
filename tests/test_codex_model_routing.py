@@ -14,7 +14,7 @@ class CodexModelRoutingTests(unittest.TestCase):
         cls.text = ROUTING.read_text(encoding="utf-8")
 
     def test_default_is_explicit_luna_medium_pair(self):
-        self.assertIn('gpt-5.6-luna', self.text)
+        self.assertIn('gpt-6-luna', self.text)
         self.assertIn('medium', self.text)
         self.assertRegex(
             self.text,
@@ -28,7 +28,7 @@ class CodexModelRoutingTests(unittest.TestCase):
         for effort in ('low', 'medium', 'high', 'max'):
             with self.subTest(effort=effort):
                 self.assertIn(effort, self.text)
-        for model in ('gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol'):
+        for model in ('gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra'):
             with self.subTest(model=model):
                 self.assertIn(model, self.text)
 
@@ -61,7 +61,7 @@ class CodexModelRoutingTests(unittest.TestCase):
         self.assertIn('通常の意味的セキュリティレビュー', self.text)
         self.assertRegex(
             self.text,
-            r"通常の意味的セキュリティレビュー[^\n]*`gpt-5\.6-terra`[^\n]*`high`",
+            r"通常の意味的セキュリティレビュー[^\n]*`gpt-6-sol`[^\n]*`high`",
         )
         self.assertIn('Critical', self.text)
         self.assertIn('Confidence: insufficient', self.text)

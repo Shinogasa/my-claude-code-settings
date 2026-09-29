@@ -23,50 +23,54 @@ SKILL_MANIFEST = json.loads(
 )
 
 
-class TestCodeParticipationContract(unittest.TestCase):
-    """コード参加が既存Predictの境界を壊さないことを固定する。"""
+class TestLearningBoundaryContract(unittest.TestCase):
+    """設計Predictと独立したコード学習の境界を固定する。"""
 
-    def test_is_a_bounded_alternative_to_predict(self):
-        for marker in ("コード参加", "Predictの代替", "合計で最大2回", "1回を消費"):
-            with self.subTest(marker=marker):
-                self.assertIn(marker, RULE)
+    def test_old_code_participation_protocol_is_removed(self):
+        self.assertNotIn("## コード参加（Predictの代替イベント）", RULE)
+        self.assertNotIn("Predict とコード参加", RULE)
+        self.assertNotIn("意味のある5〜10行", RULE)
 
-    def test_prepares_a_meaningful_implementation_slot_before_asking(self):
+    def test_code_learning_is_delegated_to_its_skill(self):
+        self.assertIn("skills/code-learning/SKILL.md", RULE)
+        self.assertIn("同じ箇所で二重に", RULE)
+        self.assertIn("合計最大2イベント", RULE)
+
+    def test_predict_layer_gate_does_not_exclude_code_practice(self):
+        self.assertIn("L2", RULE)
+        self.assertIn("コード学習には適用しない", RULE)
+        self.assertEqual(RULE.count("- **上限:"), 1)
+
+    def test_common_policy_is_single_owner_for_routing_disclosure_and_storage(self):
+        code_rule = (ROOT / "rules" / "code-learning.md").read_text(encoding="utf-8")
+        code_skill = (ROOT / "skills" / "code-learning" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("## 両学習モードの共通方針", RULE)
         for marker in (
-            "意味のある5〜10行",
-            "対象ファイル",
-            "周辺コード",
-            "関数シグネチャ",
-            "目的コメント",
-            "TODO",
+            "同じ能力・同じ解法",
+            "合計最大2イベント",
+            "理由まで回答する前",
+            "status",
+            "未保存",
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, RULE)
+        for consumer in (code_rule, code_skill):
+            with self.subTest(consumer=consumer[:30]):
+                self.assertIn("rules/learning-mode.md", consumer)
+                self.assertIn("共通方針", consumer)
 
-    def test_supports_skip_and_keeps_the_learning_feedback_loop(self):
-        for marker in ("スキップ", "理由", "検証", "★ Delta"):
-            with self.subTest(marker=marker):
-                self.assertIn(marker, RULE)
-        self.assertIn("コード参加では `★ Insight` を追加しない", RULE)
+    def test_multiple_options_do_not_force_predict_and_hit_rate_is_not_mastery(self):
+        self.assertIn("複数案", RULE)
+        self.assertIn("強制発火", RULE)
+        self.assertNotIn("必ず発火する場面: こちらが複数案", RULE)
+        self.assertNotIn("外した予測ほど後の定着に効く", RULE)
+        self.assertIn("結論の一致", RULE)
+        self.assertIn("習得の証拠", RULE)
 
-    def test_code_participation_orders_prepare_reason_verify_and_delta(self):
-        section = RULE.split("## コード参加（Predictの代替イベント）", 1)[1]
-        section = section.split("\n## ", 1)[0]
-        markers = (
-            "### 依頼前にエージェントが準備するもの",
-            "ユーザーがコードを書いた直後",
-            "理由だけ",
-            "実行可能な検査によって検証",
-            "★ Delta を返す",
-        )
-        positions = [section.index(marker) for marker in markers]
-        self.assertEqual(positions, sorted(positions))
-        self.assertEqual(RULE.count("- **上限:"), 1)
-
-    def test_excludes_low_value_code_participation(self):
-        for marker in ("設定", "ボイラープレート", "明白な実装", "単純CRUD"):
-            with self.subTest(marker=marker):
-                self.assertIn(marker, RULE)
+    def test_retention_candidate_requires_related_work_after_seven_days(self):
+        self.assertIn("7日以上", RULE)
+        self.assertIn("関連実作業", RULE)
+        self.assertIn("保持は未確認", RULE)
 
 
 class TestLearningPluginPolicy(unittest.TestCase):

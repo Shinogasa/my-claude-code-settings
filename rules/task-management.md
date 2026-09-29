@@ -10,7 +10,7 @@ alwaysApply: true
 4. **変更を説明する**: 各ステップで高レベルのサマリーを提供する
 5. **結果をドキュメント化する**: `tasks/todo.md` にレビューセクションを追加する
 6. **学びを記録する**: 修正を受けた後に `tasks/lessons.md` を更新する（AI側の修正パターン記録）
-7. **理解を言語化する**: ★ Predict の予測と ★ Delta の差分を `learning/entries/` に記録する（ユーザー側の学びの言語化）
+7. **理解を言語化する**: ★ Predict / ★ Delta / ★ Code Delta の実証記録をbinding済みの専用学習storeへ保存する（ユーザー側の学びの言語化）
 
 ## `tasks/` の使い分け
 
@@ -20,8 +20,8 @@ alwaysApply: true
 | `backlog.md` | 管理する | **まだ着手していない課題**。永続 |
 | `lessons.md` | 管理する | AI側の修正パターン |
 
-★ Predict / ★ Delta の記録は `tasks/` ではなく **`learning/`** に置く。
-後日の集計と学び直しのため、1エントリ1ファイル + frontmatter の形式にしてある
+学習記録は `tasks/` や作業repoへ保存せず、専用学習storeのCLIを使う。
+このリポジトリの `learning/` は読み取り専用の旧履歴と運用文書である
 （運用は `learning/README.md`）。
 
 ### `todo.md` の運用

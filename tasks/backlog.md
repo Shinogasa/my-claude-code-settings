@@ -161,6 +161,10 @@ setup自体は成功しているので語が実態とずれており、本物の
 
 ### P1: コード参加を自前学習モードへ統合する
 
+**履歴（2026-09-17に置換）**: 当時の「Predictの代替イベント」は
+`docs/adr/0012-code-learning-mode.md` による独立した `code-learning` skillへ置き換えた。
+以下は旧判断の記録であり、現在の運用仕様ではない。
+
 `learning-output-style`のSessionStart注入は動くが、人間にコードを書かせる発火はモデル判断で、
 回数上限・OFF条件・記録がない。既存`learning-mode.md`はこれらを持つため、pluginを二重で
 動かさず、意味のある5〜10行の実装参加だけを共有ruleへ取り込む。
@@ -229,14 +233,14 @@ SessionStart helperがClaude pathなしで起動する。
 
 ### P2: `codex/agents/*.toml`のモデル・推論ペアを公式基準で再評価する
 
-現行8 roleの固定ペアは、個別roleを同じ深さで比較して決めたものではない。
-`security-reviewer`はOpenAI公式のcorrectness/security reviewer例に合わせて
-`gpt-5.6-terra` + `high`へ先行是正したが、他roleは暫定値として残っている。
+現行8 roleのGPT-6固定ペアは、公式のモデル位置づけと公開単価を基に移行した暫定値であり、
+個別roleの品質・所要時間・実際の総コストを代表タスクで比較して決めたものではない。
+`security-reviewer`のGPT-6 Sol + highと旧GPT-5.6 Terra + highも実測で比較する。
 
 **調べること**:
 
 - OpenAI公式のモデル選択・推論強度・custom agent例と各roleの責務を照合する
-- Luna / Terra / Solの品質、待ち時間、コストを代表タスクで比較する
+- GPT-6 Luna / Sol / Astraと旧GPT-5.6 Terraの品質、待ち時間、総コストを代表タスクで比較する
 - 固定roleが必要な範囲と、動的ルーターへ委ねる範囲を分ける
 - `sandbox_mode`とdeveloper instructionsも、モデル変更と独立に再監査する
 
@@ -252,6 +256,14 @@ SessionStart helperがClaude pathなしで起動する。
 - 生成元、生成済みTOML、テスト、モデルルーティング文書、ADRが一致する
 - read-only / workspace-writeの権限がモデル選択の都合で広がっていない
 - runtime smoke testで実際のmodel、reasoning effort、sandboxを確認する
+
+### P2 TODO: 新しいモデル世代へのルーティング更新を容易にする
+
+今回のGPT-6移行では生成元、既定値、validator、方針、テストを個別に更新した。
+次の世代交代前に、基準ペアの正本を一つに寄せ、生成物・validator許可ペア・setup既定値・
+文書とテストの整合性を検査する方法を設計する。履歴用handoff、ADR、runtime fixtureは
+一括置換しない。公式のmodel/effort対応、ローカルCLIの提供状況、代表タスクの品質・
+所要時間・総コストを確認してから新世代へ切り替える。今回の変更では共通化を実装しない。
 
 ### pilot待ち: 親工程ルーティングの実タスク検証
 
@@ -439,14 +451,15 @@ rules 3件、contexts 3件を含む34ファイルを導入した。自前`code-r
 | Claude Code | Codex | 扱い |
 |---|---|---|
 | `tools: [Read, Write, ...]` | `sandbox_mode`（2値のみ） | 書き込み系ツールの有無で read-only / workspace-write に粗く写す |
-| `model: sonnet / opus` | 世代名のみ（別名が無い） | `gpt-5.6-luna` / `gpt-5.6-sol` に固定。**新世代が出たら表を更新する** |
+| `model: sonnet / opus` | 世代名のみ（別名が無い） | 現在は`gpt-6-luna` / `gpt-6-sol`に固定。**新世代が出たら表を更新する** |
 | `effort` | `model_reasoning_effort` | そのまま |
 | `color` | 無し | 捨てる |
 
 **モデル別名が無いことは実測済み**（`codex debug models` の `alias` が全件 null）。
 Claude 側は `sonnet` / `opus` が別名なので世代交代で壊れないが、
 **Codex 側だけ世代交代のたびに書き換えが要る**。更新箇所は
-`bin/generate-codex-agents.py` の `MODEL_MAP` 1箇所。
+`bin/generate-codex-agents.py` の `CODEX_AGENT_PROFILES` を含む複数箇所。
+更新箇所の集約は上記TODOで扱う。
 
 **未検証**: 実機で spawn して定義が実際に適用されるか。
 `~/.codex/agents/*.toml` が適用されない不具合（openai/codex#26868）は
@@ -544,6 +557,10 @@ Codex を主ホストとして使う頻度が上がったとき。
 **再検討するなら新しい ADR を書くこと。** ここには積み直さない。
 
 ### レビュー訓練モードの導入 → 決めること（検証待ち）
+
+**履歴（2026-09-17に統合）**: 以下は2026-08-14時点の保留案。
+レビュー訓練は `docs/adr/0012-code-learning-mode.md` の `Review` 形式として
+独立した `code-learning` skillへ統合した。旧着手条件・日付は現在の導入ゲートではない。
 
 AI が書いたコードを判断できるようになるための訓練形式。
 2026-08-14 のセッションで設計まで固めたが、**導入は保留**した。
