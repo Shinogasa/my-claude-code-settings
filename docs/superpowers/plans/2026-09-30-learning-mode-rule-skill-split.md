@@ -14,11 +14,11 @@ Co-Authored-By: Codex <noreply@openai.com>
 
 ## Task 0: 受領と事前確認
 
-- [ ] handoffを validator で `validate` し、同じ `INPUT_DIGEST` で handoff・設計書・本計画を `read` で全行読む
-- [ ] `bin/detect-parallel-sessions` が空配列であることを確認する（空でなければ停止して親へ報告）
-- [ ] `git status --short` で、親所有の未コミット差分（handoffの「Git状態」に列挙）以外が無いことを確認する
-- [ ] 現行 `rules/learning-mode.md` の見出しと行番号を記録する（Task 5 の欠落照合に使う）
-- [ ] 全テストのベースラインを取る: `python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_*.py'`
+- [x] handoffを validator で `validate` し、同じ `INPUT_DIGEST` で handoff・設計書・本計画を `read` で全行読む
+- [x] `bin/detect-parallel-sessions` が空配列であることを確認する（空でなければ停止して親へ報告）
+- [x] `git status --short` で、親所有の未コミット差分（handoffの「Git状態」に列挙）以外が無いことを確認する
+- [x] 現行 `rules/learning-mode.md` の見出しと行番号を記録する（Task 5 の欠落照合に使う）
+- [x] 全テストのベースラインを取る: `python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_*.py'`
 
 ## Task 1: 分割後の契約テストを先に書く（RED）
 
