@@ -37,6 +37,15 @@ LEARNING_STORE="$HOME/.codex/bin/learning-store.py"
 bindingは `$XDG_CONFIG_HOME/agent-learning/config.json`、`XDG_CONFIG_HOME` 未指定時は
 `~/.config/agent-learning/config.json` に置かれる。共有ruleや作業repoへマシン固有pathを書かない。
 
+Codexを`workspace-write`で使う場合は、専用storeをそのsessionの書込可能なrootへ
+追加する。たとえば起動時に`--add-dir`を指定するか、マシン固有のCodex設定で
+書込可能rootを追加する。`init`と`bind`ではbinding先にも書込権限が必要で、
+`record`ではbindingを読み取れる必要がある。
+Codexは書込可能root内でも`.git`を保護するため、排他lockはstore直下の
+`.learning-store.lock`に置き、`.gitignore`でGit管理から除外する。
+`status`の`writable`はOS権限の予備確認であり、sandbox内の保存成功を保証しない。
+実際の保存可否は`record`の結果で確認する。
+
 ## 初回作成と旧記録の取込
 
 `init` の対象は、利用者が明示した正規化済み絶対pathの空ディレクトリだけにする。

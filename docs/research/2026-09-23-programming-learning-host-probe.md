@@ -31,10 +31,10 @@
 | CLI helpと両ホスト入口 | 確認済み | version、exec/resume/stream-jsonのoption、同じsourceへのpath解決 |
 | 保存CLI・Python 3.9実動 | 関連49件成功 | `/usr/bin/python3`、ResourceWarningをerrorにして再検証 |
 | 両ホスト入口から同じstoreへの保存・冪等再送 | 成功 | 親がPython3.9.6で6コマンド実行、全て終了0。下記の保存結果を照合 |
-| 実Codex対話 | Investigateの継続修正とReviewの開示順を各1例で確認 | GPT-6 Sol/highの模擬誤答でAIが完成修正を引き取る失敗を再現。入口rule修正後のInvestigate fresh 3ターンとReview fresh 4ターンでは本人の担当を維持し、製品コードは無変更 |
+| 実Codex対話 | 複数scenarioを一部確認 | Investigateの継続とReviewの開示順、Predict競合、skip・未設定、中断再開を確認。初回は答え漏れや保存失敗も再現して修正。既定ON、上限・後日候補、転移は未確認 |
 | 実Claude Code対話 | 追加実施しない | 9月28日の学習OFFは修正・検証を完了。ユーザーの運用はCodex中心で、Claude Codeは契約対象外のため、以降の対話検証を停止 |
 | CLI securityレビュー | 再レビュー済み | 初回Terra/highのMedium 3件・Low 1件を修正済み。資料不足判定後にコード全文・差分・検査結果をvalidatorへ固定し、GPT-6 Sol/highがConfidence sufficient・新規所見なしと報告 |
-| 最終統合レビュー | 未実施 | security所見対応と学習ルール実装後に独立担当が実施 |
+| 最終統合レビュー | 未実施 | sandbox修正と学習ルール変更後に独立担当が実施 |
 | 旧記録の公開監査 | 全件読了・3件を抽象化 | 原文99件のhash照合。Terraが1〜60、親が61〜99の本文を全文確認。ユーザー承認後に3件を更新 |
 | 専用repoへの旧記録移管 | 未実施 | CLI検証・レビュー後、更新済み原文のhashを取り直して実施 |
 | 実ユーザー5〜10件pilot | 未観測 | 模擬対話では代替しない |
@@ -199,6 +199,41 @@ operationsは0件。入力はすべて模擬利用者の回答であり、record
 Reviewの中断・再開、同一能力の競合、保存不能、上限・後日候補も未検証のまま残る。
 4ターンの合計はinput 1,357,546 tokens（cache済みを含む）、output 11,192 tokens。
 これは1つの模擬scenarioの観測値であり、一般的な運用コストの推定には使わない。
+
+## 9月29日の追加Codex対話とsandbox修正
+
+通常providerのCodex 0.158.0、GPT-6 Sol/high、使い捨てGit repoとstore、
+隔離`XDG_CONFIG_HOME`で各scenarioをfresh sessionから実行した。子Codexの
+app-server初期化は外側sandboxで失敗したため、承認済み権限昇格で再実行した。
+入力、JSONL、最終message、終了code、前後のGit statusは一時ログへ保存した。
+
+- store未設定のsessionは`status`の`NOT_CONFIGURED`を確認し、一度通知して課題を提示した。
+  続く模擬「skip」では理由や転移を強制せず、通常の修正と2件のテスト成功まで進んだ。
+  このfixtureには学習recordは作られていない。
+- 同一箇所の設計Predictとコード読解が競合するsessionでは、初回の問いが原因箇所を
+  先に開示した。共通ruleに開示境界を追加した後のfresh sessionでは、失敗の外部観測と
+  A/B選択だけを提示し、選択後の理由を別turnで求めた。二重出題はなく、
+  使い捨てstoreにdecision recordが1件保存された。初回の失敗は消さない。
+- 中断・再開の初回sessionでは、ruleがoperation保存を明示しておらず、
+  学習担当を維持したもののoperationsは0件だった。共通ruleに同一event IDの
+  `started`、`interrupted_by_user`、`resumed_by_user`保存を追加した。
+- 追加後の最初のfresh sessionは、保存CLIが`.git`内のlockを開けず
+  `WRITE_FAILED`となった。Codexの`workspace-write`は追加した書込可能rootの
+  `.git`も保護する。lockをstore直下へ移し、通常file・単一link・owner・modeを
+  検査する実装と`.gitignore`を追加した。isolated Codex sandbox内からの
+  operation保存は`created:true`になった。`status`の`writable:true`だけでは
+  この失敗を検出できなかった。
+- 最終fresh sessionのthread `01a0eb82-c1d5-7cc3-9904-ded91e040e49`は、
+  明示的な学習ON依頼で原因を区別する観測を本人へ尋ねた。初回・中断・再開の
+  3ターンはいずれも終了0・`turn.completed`。storeには同じevent ID
+  `5f6b0d5e-5a6f-44a4-9bfb-ec107f477c9c`のoperationが3件あり、
+  `wait_count`は0→1→1。再開後も原因や完成修正を開示せず、同じ調査行動を
+  本人に選ばせた。tracked製品diffと能力recordは0件。
+
+明示的に学習ONと指定しないfresh sessionで、skillとactive storeを読んだ後も
+演習を始めずAIが修正した例がある。既定ONの安定した発火は未証明。
+模擬回答・模擬中断は実ユーザーの成長証拠ではない。上限、後日候補、
+転移の自動提示は実ホストで未確認。Claude Codeの追加対話は実施しない。
 
 ## 両ホストの保存入口の実測
 

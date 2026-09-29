@@ -565,6 +565,38 @@ class LearningStoreCliTests(unittest.TestCase):
         self.assertEqual(sorted(item["created"] for item in results), [False, True])
         self.assertEqual(len(tuple((self.store / "records").rglob("*.md"))), 1)
 
+    def test_record_lock_is_outside_protected_git_metadata_and_ignored(self):
+        self.make_active_store()
+        result = self.cli_with_json(self.operation_payload())
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        lock = self.store / ".learning-store.lock"
+        self.assertTrue(lock.is_file())
+        ignored = subprocess.run(
+            ["git", "-C", str(self.store), "check-ignore", "-q", str(lock)],
+            capture_output=True, check=False, env=self.env,
+        )
+        self.assertEqual(ignored.returncode, 0)
+
+    def test_record_rejects_symlinked_or_hardlinked_lock(self):
+        self.make_active_store()
+        for link_type in ("symlink", "hardlink"):
+            with self.subTest(link_type=link_type):
+                outside = self.base / f"outside-{link_type}"
+                outside.write_text("keep", encoding="utf-8")
+                lock = self.store / ".learning-store.lock"
+                lock.unlink(missing_ok=True)
+                if link_type == "symlink":
+                    lock.symlink_to(outside)
+                else:
+                    os.link(outside, lock)
+                try:
+                    result = self.cli_with_json(self.operation_payload())
+                    self.assertEqual(self.error_code(result), "UNSAFE_PATH")
+                    self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+                finally:
+                    lock.unlink()
+
     def test_save_record_rechecks_the_store_binding_not_process_environment(self):
         self.make_active_store()
         sys.path.insert(0, str(ROOT / "bin"))

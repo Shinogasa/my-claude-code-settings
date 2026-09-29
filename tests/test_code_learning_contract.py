@@ -114,6 +114,18 @@ class CodeLearningSkillContract(unittest.TestCase):
         self.assertIn("AIが完成させたテスト", text)
         self.assertIn("本人が検証方法を設計した証拠", text)
 
+    def test_predict_does_not_leak_the_overlap_code_answer(self):
+        common = (ROOT / "rules" / "learning-mode.md").read_text(encoding="utf-8")
+        self.assertIn("設計Predictとコード学習が同じ箇所で競合", common)
+        self.assertIn("本人が見つけるべき原因箇所や因果の解釈", common)
+        self.assertIn("選択と理由の前に示さない", common)
+
+    def test_common_rule_links_interruption_operations_to_one_event(self):
+        common = (ROOT / "rules" / "learning-mode.md").read_text(encoding="utf-8")
+        self.assertIn("発火・skip・中断・再開", common)
+        self.assertIn("同じevent_id", common)
+        self.assertIn("operation", common)
+
     def test_capability_growth_requires_scope_and_comparable_contexts(self):
         common = (ROOT / "rules" / "learning-mode.md").read_text(encoding="utf-8")
         for marker in (
