@@ -127,7 +127,11 @@ def _validate_binding(value: Dict[str, object]) -> Dict[str, object]:
 def _validate_marker(value: Dict[str, object]) -> Dict[str, object]:
     if set(value) != {"schema_version", "store_id", "state"}:
         raise StoreError("INVALID_MARKER", "markerのキーが不正です")
-    if value["schema_version"] != 2 or value["state"] not in {"prepared", "active"}:
+    if (
+        value["schema_version"] != 2
+        or not isinstance(value["state"], str)
+        or value["state"] not in {"prepared", "active"}
+    ):
         raise StoreError("INVALID_MARKER", "markerのschemaまたはstateが不正です")
     _uuid(value["store_id"], "INVALID_MARKER")
     return value
@@ -380,6 +384,7 @@ def scan_records(store: Store):
             raise StoreError("INVALID_RECORD", "record pathと内容が一致しません")
         records.append(record)
 
+    operations = []
     for path in _safe_files(store.root, "operations", ".json"):
         try:
             raw = _read_limited(path, MAX_JSON_BYTES, "INVALID_OPERATION", "operation")
@@ -392,14 +397,15 @@ def scan_records(store: Store):
         expected = Path("operations") / observed[:4] / f"{observed[:10]}-{operation['id']}.json"
         if relative != expected:
             raise StoreError("INVALID_OPERATION", "operation pathと内容が一致しません")
-    return tuple(records)
+        operations.append(operation)
+    return tuple(records), tuple(operations)
 
 
 def list_records(env: Mapping[str, str], capability: Optional[str]) -> Dict[str, object]:
     from learning_store.schema import analyze_history, conflicting_events
 
     store = load_store(env)
-    records = scan_records(store)
+    records, _operations = scan_records(store)
     history = analyze_history(records)
     conflicts = conflicting_events(history)
     if conflicts:
@@ -572,8 +578,16 @@ def save_record(store: Store, value: Dict[str, object], resolve_conflict: bool =
         current = _load_store_from_binding(store.binding)
         if current.root != store.root or current.store_id != store.store_id or current.state != "active":
             raise StoreError("STORE_CHANGED", "操作中にbindingまたはmarkerが変わりました")
-        records = scan_records(current)
+        records, operations = scan_records(current)
         history = analyze_history(records)
+        stored_values = operations if normalized["kind"] == "operation" else records
+        for stored in stored_values:
+            if stored["kind"] == normalized["kind"] and stored["id"] == normalized["id"]:
+                existing = _idempotent_existing(current, _target_for(stored), payload)
+                if existing is None:
+                    raise StoreError("STORE_CHANGED", "既存recordが操作中に消えました")
+                existing["event_id"] = normalized["event_id"]
+                return existing
         existing = _idempotent_existing(current, relative, payload)
         if existing is not None:
             existing["event_id"] = normalized["event_id"]
@@ -773,7 +787,7 @@ def _manifest_files(store: Store):
             source_path = item["source_path"]
             legacy_path = item["legacy_path"]
             digest = item["sha256"]
-            if kind not in {"decision", "code"}:
+            if not isinstance(kind, str) or kind not in {"decision", "code"}:
                 raise StoreError("IMPORT_CONFLICT", "manifest kindが不正です")
             if not all(isinstance(value, str) for value in (source_path, legacy_path, digest)):
                 raise StoreError("IMPORT_CONFLICT", "manifest file entryの型が不正です")
@@ -885,6 +899,7 @@ def import_legacy(store: Store, source: Path) -> Dict[str, object]:
             import_id = str(manifest["import_id"])
             manifest_path = existing_path.relative_to(current.root)
 
+        _verify_active_import(current)
         marker = {"schema_version": 2, "store_id": current.store_id, "state": "active"}
         _atomic_json(current.root / ".learning-store.json", marker)
         return {

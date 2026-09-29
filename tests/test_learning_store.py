@@ -469,6 +469,57 @@ class LearningStoreCliTests(unittest.TestCase):
         self.assertEqual(self.error_code(conflict), "RECORD_ID_CONFLICT")
         self.assertEqual(len(tuple((self.store / "records").rglob("*.md"))), 1)
 
+    def test_record_id_cannot_be_reused_with_another_date_or_event(self):
+        self.make_active_store()
+        first = self.record_payload()
+        self.assertEqual(self.cli_with_json(first).returncode, 0)
+        reused = dict(first, event_id=str(uuid.uuid4()), observed_at="2026-09-24T00:00:00+00:00")
+
+        self.assertEqual(self.error_code(self.cli_with_json(reused)), "RECORD_ID_CONFLICT")
+        self.assertEqual(len(tuple((self.store / "records").rglob("*.md"))), 1)
+        self.assertEqual(self.cli("list").returncode, 0)
+
+    def test_unhashable_record_fields_return_structured_error(self):
+        self.make_active_store()
+        for field in ("kind", "mode", "initial_result", "retry_result", "transfer_result"):
+            with self.subTest(field=field):
+                malformed = self.record_payload()
+                malformed[field] = []
+                result = self.cli_with_json(malformed)
+                self.assertEqual(self.error_code(result), "INVALID_RECORD")
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_list_returns_structured_error_for_unhashable_record_field(self):
+        self.make_active_store()
+        value = self.record_payload()
+        target = self.write_record_fixture(value)
+        target.write_text(target.read_text(encoding="utf-8").replace(
+            'kind: "code"', 'kind: []', 1
+        ), encoding="utf-8")
+
+        result = self.cli("list")
+        self.assertEqual(self.error_code(result), "INVALID_RECORD")
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_status_returns_structured_error_for_unhashable_marker_state(self):
+        self.make_active_store()
+        marker = self.marker()
+        marker["state"] = []
+        (self.store / ".learning-store.json").write_text(json.dumps(marker), encoding="utf-8")
+
+        self.assertEqual(self.error_code(self.cli("status")), "INVALID_MARKER")
+
+    def test_status_returns_structured_error_for_unhashable_manifest_kind(self):
+        self.make_prepared_store()
+        source = self.make_legacy_source()
+        self.assertEqual(self.cli("import", "--source", str(source)).returncode, 0)
+        path = next((self.store / "imports").glob("*.json"))
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["files"][0]["kind"] = []
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        self.assertEqual(self.error_code(self.cli("status")), "IMPORT_CONFLICT")
+
     def test_record_rejects_prepared_store_and_duplicate_initial_event(self):
         self.make_prepared_store()
         self.assertEqual(self.error_code(self.cli_with_json(self.record_payload())), "STORE_NOT_ACTIVE")
@@ -546,6 +597,15 @@ class LearningStoreCliTests(unittest.TestCase):
         self.assertFalse(json.loads(repeated.stdout)["created"])
         listed = self.cli("list")
         self.assertEqual(json.loads(listed.stdout)["count"], 0)
+        self.assertEqual(len(tuple((self.store / "operations").rglob("*.json"))), 1)
+
+    def test_operation_id_cannot_be_reused_with_another_date(self):
+        self.make_active_store()
+        first = self.operation_payload()
+        self.assertEqual(self.cli_with_json(first).returncode, 0)
+        reused = dict(first, observed_at="2026-09-24T00:00:00+00:00")
+
+        self.assertEqual(self.error_code(self.cli_with_json(reused)), "RECORD_ID_CONFLICT")
         self.assertEqual(len(tuple((self.store / "operations").rglob("*.json"))), 1)
 
     def test_two_processes_publish_one_record(self):
@@ -779,6 +839,22 @@ class LearningStoreCliTests(unittest.TestCase):
         status = self.cli("status")
         self.assertEqual(status.returncode, 0, status.stderr)
         self.assertTrue(json.loads(status.stdout)["writable"])
+
+    def test_import_does_not_activate_with_unlisted_legacy_file(self):
+        self.make_prepared_store()
+        source = self.make_legacy_source(with_records=False)
+        extra = self.store / "legacy/decision/extra.md"
+        extra.parent.mkdir(parents=True)
+        extra.write_bytes(b"not imported\n")
+
+        result = self.cli("import", "--source", str(source))
+
+        self.assertEqual(self.error_code(result), "INCOMPLETE_IMPORT")
+        self.assertEqual(self.marker()["state"], "prepared")
+        extra.unlink()
+        resumed = self.cli("import", "--source", str(source))
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertEqual(self.marker()["state"], "active")
 
     def test_import_rejects_symlink_source_and_uncommitted_target_changes(self):
         self.make_prepared_store()

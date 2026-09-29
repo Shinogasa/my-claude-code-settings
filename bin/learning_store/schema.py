@@ -70,14 +70,19 @@ def validate_input(value: dict) -> Record:
     result["observed_at"] = _observed_at(value["observed_at"])
     kind = value["kind"]
     mode = value["mode"]
-    if kind not in MODES or mode not in MODES[kind]:
+    if not isinstance(kind, str) or not isinstance(mode, str) or kind not in MODES or mode not in MODES[kind]:
         raise StoreError("INVALID_RECORD", "kindまたはmodeが不正です")
     for field in ("capability_id", "scope", "body"):
         if not isinstance(value[field], str) or not value[field].strip():
             raise StoreError("INVALID_RECORD", f"{field}は空でない文字列である必要があります")
-    if value["initial_result"] not in RESULTS:
+    if not isinstance(value["initial_result"], str) or value["initial_result"] not in RESULTS:
         raise StoreError("INVALID_RECORD", "initial_resultが不正です")
-    if value["retry_result"] not in LATER_RESULTS or value["transfer_result"] not in LATER_RESULTS:
+    if (
+        not isinstance(value["retry_result"], str)
+        or not isinstance(value["transfer_result"], str)
+        or value["retry_result"] not in LATER_RESULTS
+        or value["transfer_result"] not in LATER_RESULTS
+    ):
         raise StoreError("INVALID_RECORD", "retry_resultまたはtransfer_resultが不正です")
     supersedes = value["supersedes"]
     if not isinstance(supersedes, list):
