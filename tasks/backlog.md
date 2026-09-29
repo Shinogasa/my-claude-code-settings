@@ -46,6 +46,26 @@ hook payloadの `cwd` に反映されない実行経路で、作業ブランチ�
 `docs/adr/0003-codex-native-first-activation-policy.md`、実装手順は
 `docs/superpowers/plans/2026-08-18-codex-compatibility-migration.md` を参照。
 
+### P1: base provider 検査を起動前に止める経路が無い
+
+`hooks/check-codex-base-provider.py` は SessionStart で `~/.codex/config.toml` の
+`model_provider` 欠落を警告する。ただし provider は起動時に確定するため、警告時点で
+そのセッションは既に既定の openai（`auth.json` の個人アカウント）で動いている。
+さらに Codex の hook は `/hooks` で承認されるまで黙ってスキップされ、未承認でも何も出ない。
+
+2026-09-21 に外部ツールの書き換えで `model_provider` が消え、9/28 まで素の `codex` が
+個人アカウントで動いていた（`state_5.sqlite` の threads で `llm_gateway` の最終利用は 9/20）。
+
+**対策の候補**:
+
+- 素の `codex` を包むラッパーで起動前に検査し、欠落時は exec しない
+- `setup.sh --codex` でも同じ検査を走らせ、`FAILURES` に積む
+
+**決めること**:
+
+- ラッパーを置く場合、`cxp` の「素の `codex` は会社設定のまま」という向きとどう両立させるか
+  （PATH 上の優先順位と、シェル統合が読み込まれないときの倒れ方）
+
 ### P0: `security-guidance` を Codex 側だけ無効化する
 
 `security-guidance@claude-plugins-official` 2.0.7 は SessionStart で最初に
