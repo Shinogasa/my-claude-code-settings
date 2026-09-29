@@ -39,7 +39,7 @@ markerのschemaが1以外なら拒否するため、旧CLIと新CLIが同じstor
 Git cleanで消せる排他fileがなくなり、marker versionで旧CLIが失敗する。
 既存のschema 1 storeは新CLIで失敗するため、移行を済ませるまで使えない。
 directory自体を権限外で差し替えられる同一userの動作や、OS間での
-directory `flock`対応は運用時に確認を続ける。
+directory `flock`対応は運用時に確認を続ける。移設時は全保存処理を停止する。
 
 ## 根拠
 

@@ -8,6 +8,10 @@
 
 **Tech Stack:** Python 3.9以上の標準ライブラリ、Git、Bash `setup.sh`、Markdown、`unittest`。
 
+**実機検証後の改訂:** Task 1–4の初期例にあるmarker version 1とGit metadata内lockは、
+Codex sandboxと排他競合の実測を受けて[ADR 0020](../../adr/0020-learning-store-directory-lock.md)で
+marker version 2とstore directory lockへ置き換えた。binding・record・manifestのschema version 1は維持する。
+
 **Spec:** `docs/superpowers/specs/2026-09-21-programming-learning-integration-design.md`（2026-09-22 accepted）。継続レビューは `docs/research/2026-09-22-code-learning-design-review.md`。決定記録は作成済みの `docs/adr/0017-programming-learning-integration.md` を前提とし、この計画から重複作成しない。
 
 ## Global Constraints

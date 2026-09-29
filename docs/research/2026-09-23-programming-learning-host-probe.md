@@ -33,7 +33,7 @@
 | 両ホスト入口から同じstoreへの保存・冪等再送 | 成功 | 親がPython3.9.6で6コマンド実行、全て終了0。下記の保存結果を照合 |
 | 実Codex対話 | 複数scenarioを一部確認 | Investigateの継続とReviewの開示順、Predict競合、skip・未設定、中断再開を確認。初回は答え漏れや保存失敗も再現して修正。既定ON、上限・後日候補、転移は未確認 |
 | 実Claude Code対話 | 追加実施しない | 9月28日の学習OFFは修正・検証を完了。ユーザーの運用はCodex中心で、Claude Codeは契約対象外のため、以降の対話検証を停止 |
-| CLI securityレビュー | 追加所見への修正を検証中 | 先の再レビューはConfidence sufficient・新規所見なし。9月29日のlock変更には別レビューでMedium 2件・Low 1件を確認し、directory lockとmarker versionで対応中 |
+| CLI securityレビュー | 再レビュー済み | 9月29日の追加レビューはMedium 2件・Low 1件。directory lockとmarker v2へ変更後、同じGPT-6 Sol/high担当が3件解消・Lowの移設時競合リスク1件・Confidence sufficientと報告 |
 | 最終統合レビュー | 未実施 | sandbox修正と学習ルール変更後に独立担当が実施 |
 | 旧記録の公開監査 | 全件読了・3件を抽象化 | 原文99件のhash照合。Terraが1〜60、親が61〜99の本文を全文確認。ユーザー承認後に3件を更新 |
 | 専用repoへの旧記録移管 | 未実施 | CLI検証・レビュー後、更新済み原文のhashを取り直して実施 |
@@ -239,7 +239,9 @@ app-server初期化は外側sandboxで失敗したため、承認済み権限昇
 (2)Git cleanが無視対象のlockを保存中に消せる、(3)既存storeにGit除外規則が無い、
 と報告した。macOSとCodex sandboxでdirectory自体の`flock`を実測し、
 lock fileを廃止した。markerをversion 2へ上げ、旧CLIが新storeを拒否する方式に変更した。
-これらの修正後のテストと再レビューは別途結果を確定する。
+Python 3.9のstoreテスト40件、契約・指示28件、補足の排他3件が成功した。
+同じsecurity担当は3所見の解消を確認し、移設中に同じuserがstore rootを差し替える
+場合のLowリスクを残した。移設時は全保存処理を止める運用へ明記した。
 
 公開用ローカルstoreを提案場所に作り、旧記録99件のbytesとmanifestの
 source commit・path・SHA-256を全件照合した。同一importの再実行は`created:false`。

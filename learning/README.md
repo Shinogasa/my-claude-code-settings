@@ -99,6 +99,7 @@ git clone <approved-remote> /absolute/path/to/learning-store
 "$LEARNING_STORE" status
 ```
 
+storeを移設する前に、そのstoreへ書き込む全CLI処理を終了する。移動と同時に保存を走らせない。
 最初のマシンと同じ `store_id` が返ることを確認する。既存bindingが別storeを指す場合は停止し、
 意図的な切替時だけ `bind --replace-binding --repo ...` を使う。storeを移設した場合も同じ手順で
 markerとGit rootを再検査してbindingだけを更新する。
