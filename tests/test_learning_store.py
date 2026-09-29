@@ -2,6 +2,7 @@
 """学習記録store CLIの境界を実Gitと一時HOMEで検証する。"""
 
 import hashlib
+import fcntl
 import json
 import os
 import subprocess
@@ -172,7 +173,7 @@ class LearningStoreCliTests(unittest.TestCase):
 
         marker = json.loads((repo / ".learning-store.json").read_text(encoding="utf-8"))
         binding = json.loads(self.binding_path().read_text(encoding="utf-8"))
-        self.assertEqual(marker["schema_version"], 1)
+        self.assertEqual(marker["schema_version"], 2)
         self.assertEqual(marker["state"], "prepared")
         self.assertEqual(uuid.UUID(marker["store_id"]).version, 4)
         self.assertEqual(binding, {
@@ -269,7 +270,7 @@ class LearningStoreCliTests(unittest.TestCase):
         subprocess.run(["git", "init", "-b", "learning-records", str(second)], check=True, capture_output=True)
         second_id = str(uuid.uuid4())
         (second / ".learning-store.json").write_text(
-            json.dumps({"schema_version": 1, "state": "prepared", "store_id": second_id}) + "\n",
+            json.dumps({"schema_version": 2, "state": "prepared", "store_id": second_id}) + "\n",
             encoding="utf-8",
         )
         binding_hash = self.file_hash(self.binding_path())
@@ -290,7 +291,7 @@ class LearningStoreCliTests(unittest.TestCase):
         child = outer / "child"
         child.mkdir()
         (child / ".learning-store.json").write_text(
-            json.dumps({"schema_version": 1, "state": "prepared", "store_id": str(uuid.uuid4())}) + "\n",
+            json.dumps({"schema_version": 2, "state": "prepared", "store_id": str(uuid.uuid4())}) + "\n",
             encoding="utf-8",
         )
         self.assertEqual(self.error_code(self.cli("bind", "--repo", str(child))), "GIT_ROOT_MISMATCH")
@@ -565,37 +566,40 @@ class LearningStoreCliTests(unittest.TestCase):
         self.assertEqual(sorted(item["created"] for item in results), [False, True])
         self.assertEqual(len(tuple((self.store / "records").rglob("*.md"))), 1)
 
-    def test_record_lock_is_outside_protected_git_metadata_and_ignored(self):
+    def test_directory_lock_survives_git_clean(self):
         self.make_active_store()
-        result = self.cli_with_json(self.operation_payload())
-        self.assertEqual(result.returncode, 0, result.stderr)
+        input_path = self.base / "operation.json"
+        input_path.write_text(json.dumps(self.operation_payload()), encoding="utf-8")
+        descriptor = os.open(str(self.store), os.O_RDONLY)
+        process = None
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            subprocess.run(
+                ["git", "-C", str(self.store), "clean", "-fdX"],
+                capture_output=True, check=True, env=self.env,
+            )
+            process = subprocess.Popen(
+                [sys.executable, str(CLI), "record", "--input", str(input_path)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.env,
+            )
+            with self.assertRaises(subprocess.TimeoutExpired):
+                process.communicate(timeout=0.5)
+        finally:
+            os.close(descriptor)
+        self.assertIsNotNone(process)
+        stdout, stderr = process.communicate(timeout=15)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertTrue(json.loads(stdout)["created"])
 
-        lock = self.store / ".learning-store.lock"
-        self.assertTrue(lock.is_file())
-        ignored = subprocess.run(
-            ["git", "-C", str(self.store), "check-ignore", "-q", str(lock)],
-            capture_output=True, check=False, env=self.env,
+    def test_marker_identifies_directory_lock_protocol(self):
+        self.make_active_store()
+        marker = self.marker()
+        self.assertEqual(marker["schema_version"], 2)
+        marker["schema_version"] = 1
+        (self.store / ".learning-store.json").write_text(
+            json.dumps(marker) + "\n", encoding="utf-8"
         )
-        self.assertEqual(ignored.returncode, 0)
-
-    def test_record_rejects_symlinked_or_hardlinked_lock(self):
-        self.make_active_store()
-        for link_type in ("symlink", "hardlink"):
-            with self.subTest(link_type=link_type):
-                outside = self.base / f"outside-{link_type}"
-                outside.write_text("keep", encoding="utf-8")
-                lock = self.store / ".learning-store.lock"
-                lock.unlink(missing_ok=True)
-                if link_type == "symlink":
-                    lock.symlink_to(outside)
-                else:
-                    os.link(outside, lock)
-                try:
-                    result = self.cli_with_json(self.operation_payload())
-                    self.assertEqual(self.error_code(result), "UNSAFE_PATH")
-                    self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
-                finally:
-                    lock.unlink()
+        self.assertEqual(self.error_code(self.cli("status")), "INVALID_MARKER")
 
     def test_save_record_rechecks_the_store_binding_not_process_environment(self):
         self.make_active_store()

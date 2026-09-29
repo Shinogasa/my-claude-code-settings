@@ -41,8 +41,9 @@ Codexを`workspace-write`で使う場合は、専用storeをそのsessionの書�
 追加する。たとえば起動時に`--add-dir`を指定するか、マシン固有のCodex設定で
 書込可能rootを追加する。`init`と`bind`ではbinding先にも書込権限が必要で、
 `record`ではbindingを読み取れる必要がある。
-Codexは書込可能root内でも`.git`を保護するため、排他lockはstore直下の
-`.learning-store.lock`に置き、`.gitignore`でGit管理から除外する。
+Codexは書込可能root内でも`.git`を保護するため、排他にはstore directory自体の
+OS lockを使う。lock fileは作らない。markerの`schema_version: 2`はこの
+排他方式を識別し、旧CLIが同じstoreへ同時に書くことを防ぐ。
 `status`の`writable`はOS権限の予備確認であり、sandbox内の保存成功を保証しない。
 実際の保存可否は`record`の結果で確認する。
 
@@ -60,6 +61,8 @@ Codexは書込可能root内でも`.git`を保護するため、排他lockはstor
 `import` は旧 `learning/entries/` と `learning/code/entries/` を本文不変でlegacy領域へ複製し、
 source commit、相対path、SHA-256をmanifestへ残す。対象が0件でも空manifestを確定し、全件照合後だけ
 storeを `active` にする。中断後は同じ `import --source` を再実行し、同名異内容なら解決せず停止する。
+旧marker（`schema_version: 1`）のstoreは新CLIで読み書きできない。旧CLIの実行を止め、
+移行前後のmarkerとbindingを確認してから排他方式を移す。無検証でmarkerだけを書き換えない。
 
 ## 日常操作
 

@@ -1,7 +1,7 @@
 ---
 adr: 19
 date: 2026-09-29
-status: accepted
+status: superseded by 0020
 ---
 
 # 学習storeの排他lockをGit metadataの外に置く

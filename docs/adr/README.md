@@ -90,4 +90,5 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0016](0016-codex-parent-routing-pilot.md) | Codex親モデル切替の実運用pilotを限定的に行う | 2026-09-22 | accepted |
 | [0017](0017-programming-learning-integration.md) | 本人による実課題の完遂と専用リポジトリへの学習記録集約 | 2026-09-22 | accepted |
 | [0018](0018-codex-gpt6-routing-baseline.md) | Codexサブエージェントの基準ペアをGPT-6へ移す | 2026-09-28 | accepted |
-| [0019](0019-learning-store-lock-outside-git.md) | 学習storeの排他lockをGit metadataの外に置く | 2026-09-29 | accepted |
+| [0019](0019-learning-store-lock-outside-git.md) | 学習storeの排他lockをGit metadataの外に置く | 2026-09-29 | superseded by 0020 |
+| [0020](0020-learning-store-directory-lock.md) | 学習store directoryを排他し旧CLIと書込方式を分離する | 2026-09-29 | accepted |

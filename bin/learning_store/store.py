@@ -1,6 +1,7 @@
 """学習記録storeの識別、binding、状態検査を提供する。"""
 
 from dataclasses import dataclass
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
@@ -126,7 +127,7 @@ def _validate_binding(value: Dict[str, object]) -> Dict[str, object]:
 def _validate_marker(value: Dict[str, object]) -> Dict[str, object]:
     if set(value) != {"schema_version", "store_id", "state"}:
         raise StoreError("INVALID_MARKER", "markerのキーが不正です")
-    if value["schema_version"] != 1 or value["state"] not in {"prepared", "active"}:
+    if value["schema_version"] != 2 or value["state"] not in {"prepared", "active"}:
         raise StoreError("INVALID_MARKER", "markerのschemaまたはstateが不正です")
     _uuid(value["store_id"], "INVALID_MARKER")
     return value
@@ -314,15 +315,10 @@ def init_store(repo: Path, env: Mapping[str, str]) -> Dict[str, object]:
         )
     except (OSError, subprocess.CalledProcessError) as error:
         raise StoreError("GIT_INIT_FAILED", "Git repositoryを初期化できません") from error
-    try:
-        with (root / ".gitignore").open("x", encoding="utf-8") as ignore_file:
-            ignore_file.write("/.learning-store.lock\n")
-    except OSError as error:
-        raise StoreError("WRITE_FAILED", "storeのlock除外設定を作成できません") from error
     store_id = str(uuid.uuid4())
     _atomic_json(
         root / ".learning-store.json",
-        {"schema_version": 1, "state": "prepared", "store_id": store_id},
+        {"schema_version": 2, "state": "prepared", "store_id": store_id},
     )
     store = _store_at(root, env)
     _atomic_json(store.binding, _binding_value(store))
@@ -432,24 +428,37 @@ def list_records(env: Mapping[str, str], capability: Optional[str]) -> Dict[str,
     return {"ok": True, "capabilities": capabilities, "count": len(capabilities)}
 
 
-def _store_lock_file(root: Path):
+@contextmanager
+def _store_lock(root: Path):
     _assert_private_directory(root, "store root")
-    path = root / ".learning-store.lock"
-    if path.is_symlink():
-        raise StoreError("UNSAFE_PATH", "store lockにsymlinkは使えません")
     try:
-        descriptor = os.open(str(path), os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        descriptor = os.open(
+            str(root), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
     except OSError as error:
-        raise StoreError("WRITE_FAILED", "排他lockを開けません") from error
-    lock_file = os.fdopen(descriptor, "r+b")
-    metadata = os.fstat(descriptor)
-    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
-        lock_file.close()
-        raise StoreError("UNSAFE_PATH", "store lockは単一の通常fileである必要があります")
-    if metadata.st_uid != os.geteuid() or metadata.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
-        lock_file.close()
-        raise StoreError("UNSAFE_PERMISSIONS", "store lockのownerまたはmodeが不正です")
-    return lock_file
+        raise StoreError("WRITE_FAILED", "store directoryの排他lockを開けません") from error
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            raise StoreError("UNSAFE_PATH", "store directoryのownerまたは型が不正です")
+        if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise StoreError("UNSAFE_PERMISSIONS", "store directoryが他userから書込可能です")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        except OSError as error:
+            raise StoreError("WRITE_FAILED", "store directoryの排他lockを取得できません") from error
+        try:
+            current = root.lstat()
+        except OSError as error:
+            raise StoreError("UNSAFE_PATH", "store directoryを再確認できません") from error
+        if not stat.S_ISDIR(current.st_mode) or (
+            current.st_dev, current.st_ino
+        ) != (metadata.st_dev, metadata.st_ino):
+            raise StoreError("UNSAFE_PATH", "store directoryがlock取得中に差し替わりました")
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def _safe_parent(root: Path, relative: Path) -> Path:
@@ -558,8 +567,7 @@ def save_record(store: Store, value: Dict[str, object], resolve_conflict: bool =
     if len(payload) > payload_limit:
         raise StoreError("INVALID_INPUT", "serialize後のrecordがsize上限を超えています")
     relative = _target_for(normalized)
-    with _store_lock_file(store.root) as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+    with _store_lock(store.root):
         # lock取得後にbinding、marker、全履歴を再検査する。
         current = _load_store_from_binding(store.binding)
         if current.root != store.root or current.store_id != store.store_id or current.state != "active":
@@ -834,8 +842,7 @@ def import_legacy(store: Store, source: Path) -> Dict[str, object]:
     source = _canonical_source(source)
     commit, entries = _source_entries(source)
     core = _manifest_core(commit, entries)
-    with _store_lock_file(store.root) as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+    with _store_lock(store.root):
         current = _load_store_from_binding(store.binding)
         if current.root != store.root or current.store_id != store.store_id:
             raise StoreError("STORE_CHANGED", "操作中にbindingまたはmarkerが変わりました")
@@ -878,7 +885,7 @@ def import_legacy(store: Store, source: Path) -> Dict[str, object]:
             import_id = str(manifest["import_id"])
             manifest_path = existing_path.relative_to(current.root)
 
-        marker = {"schema_version": 1, "store_id": current.store_id, "state": "active"}
+        marker = {"schema_version": 2, "store_id": current.store_id, "state": "active"}
         _atomic_json(current.root / ".learning-store.json", marker)
         return {
             "ok": True,
