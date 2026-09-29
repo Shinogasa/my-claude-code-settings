@@ -10,6 +10,7 @@ from learning_store.store import StoreError
 
 
 Record = Dict[str, object]
+RecordKey = Tuple[str, str]
 FRONTMATTER_KEYS = (
     "schema_version", "id", "event_id", "observed_at", "kind", "mode",
     "capability_id", "scope", "initial_result", "retry_result",
@@ -31,7 +32,7 @@ OPERATION_KEYS = {
 @dataclass(frozen=True)
 class History:
     records: Tuple[Record, ...]
-    by_id: Mapping[str, Record]
+    by_id: Mapping[RecordKey, Record]
     heads_by_event: Mapping[str, Tuple[Record, ...]]
 
 
@@ -160,13 +161,20 @@ def serialize_operation(value: Mapping[str, object]) -> bytes:
 
 
 def analyze_history(records: Tuple[Record, ...]) -> History:
-    by_id = {str(item["id"]): item for item in records}
+    kind_by_event: Dict[str, str] = {}
+    for item in records:
+        event_id = str(item["event_id"])
+        kind = str(item["kind"])
+        prior = kind_by_event.setdefault(event_id, kind)
+        if prior != kind:
+            raise StoreError("INVALID_HISTORY", "同じeventに異なるrecord種別があります")
+    by_id = {(str(item["kind"]), str(item["id"])): item for item in records}
     if len(by_id) != len(records):
         raise StoreError("INVALID_HISTORY", "record IDが重複しています")
-    parents: Dict[str, Tuple[str, ...]] = {}
+    parents: Dict[RecordKey, Tuple[RecordKey, ...]] = {}
     replaced = set()
     for record_id, item in by_id.items():
-        parent_ids = tuple(str(parent) for parent in item["supersedes"])
+        parent_ids = tuple((str(item["kind"]), str(parent)) for parent in item["supersedes"])
         for parent_id in parent_ids:
             parent = by_id.get(parent_id)
             if parent is None or parent["event_id"] != item["event_id"]:
@@ -177,7 +185,7 @@ def analyze_history(records: Tuple[Record, ...]) -> History:
     visiting = set()
     visited = set()
 
-    def visit(record_id: str) -> None:
+    def visit(record_id: RecordKey) -> None:
         if record_id in visiting:
             raise StoreError("INVALID_HISTORY", "訂正履歴が循環しています")
         if record_id in visited:

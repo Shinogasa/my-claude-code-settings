@@ -385,6 +385,7 @@ def scan_records(store: Store):
         records.append(record)
 
     operations = []
+    operation_ids = set()
     for path in _safe_files(store.root, "operations", ".json"):
         try:
             raw = _read_limited(path, MAX_JSON_BYTES, "INVALID_OPERATION", "operation")
@@ -392,6 +393,9 @@ def scan_records(store: Store):
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise StoreError("INVALID_OPERATION", "operationを読み取れません") from error
         operation = validate_operation(value)
+        if operation["id"] in operation_ids:
+            raise StoreError("INVALID_OPERATION", "operation IDが重複しています")
+        operation_ids.add(operation["id"])
         relative = path.relative_to(store.root)
         observed = str(operation["observed_at"])
         expected = Path("operations") / observed[:4] / f"{observed[:10]}-{operation['id']}.json"
@@ -614,6 +618,7 @@ def save_record(store: Store, value: Dict[str, object], resolve_conflict: bool =
                 expected = head_ids if heads else set()
                 if len(heads) > 1 or supplied != expected or len(supplied) > 1:
                     raise StoreError("INVALID_SUPERSEDES", "現在の唯一の末尾を訂正元に指定してください")
+            analyze_history(records + (normalized,))
 
         parent = _safe_parent(current.root, relative.parent)
         publish_exclusive(parent, relative.name, payload)

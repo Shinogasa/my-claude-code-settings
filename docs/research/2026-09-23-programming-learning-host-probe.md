@@ -29,14 +29,14 @@
 | 検証 | 状態 | 判定の根拠 |
 |---|---|---|
 | CLI helpと両ホスト入口 | 確認済み | version、exec/resume/stream-jsonのoption、同じsourceへのpath解決 |
-| 保存CLI・Python 3.9実動 | 関連49件成功 | `/usr/bin/python3`、ResourceWarningをerrorにして再検証 |
+| 保存CLI・Python 3.9実動 | 最終修正後51件成功 | `/usr/bin/python3`、ResourceWarningをerrorにして全storeテストを再検証 |
 | 両ホスト入口から同じstoreへの保存・冪等再送 | 成功 | 親がPython3.9.6で6コマンド実行、全て終了0。下記の保存結果を照合 |
 | 実Codex対話 | 複数scenarioを一部確認 | Investigateの継続とReviewの開示順、Predict競合、skip・未設定、中断再開を確認。初回は答え漏れや保存失敗も再現して修正。既定ON、上限・後日候補、転移は未確認 |
 | 実Claude Code対話 | 追加実施しない | 9月28日の学習OFFは修正・検証を完了。ユーザーの運用はCodex中心で、Claude Codeは契約対象外のため、以降の対話検証を停止 |
 | CLI securityレビュー | 再レビュー済み | 9月29日の追加レビューはMedium 2件・Low 1件。directory lockとmarker v2へ変更後、同じGPT-6 Sol/high担当が3件解消・Lowの移設時競合リスク1件・Confidence sufficientと報告 |
-| 最終統合レビュー | 未実施 | sandbox修正と学習ルール変更後に独立担当が実施 |
+| 最終統合レビュー | 指摘を修正・再検証中 | 別のGPT-6 Sol/high担当が保存ID重複、壊れたJSON、取込前照合、種別をまたぐ履歴とoperation重複、同一eventの種別混在を報告。最後の修正を検証中 |
 | 旧記録の公開監査 | 全件読了・3件を抽象化 | 原文99件のhash照合。Terraが1〜60、親が61〜99の本文を全文確認。ユーザー承認後に3件を更新 |
-| 専用repoへの旧記録移管 | 未実施 | CLI検証・レビュー後、更新済み原文のhashを取り直して実施 |
+| 専用repoへの旧記録移管 | 公開repoへ反映済み | 抽象化済み原文99件を全bytes/SHA照合後、`Shinogasa/programming-learning` の`learning-records`へ初期commit `3a6bbf5`をpush。remote HEADも一致。再認証後のGitHub APIでPUBLICを確認 |
 | 実ユーザー5〜10件pilot | 未観測 | 模擬対話では代替しない |
 
 ## 事前に固定した対話観点
@@ -250,8 +250,61 @@ source commit・path・SHA-256を全件照合した。同一importの再実行�
 通常の`codex exec` fresh sessionでは、マシン固有の書込可能root設定だけで
 store内の一時file作成・削除が終了0となった。補助の`codex sandbox -P :workspace`は、
 別cwdからstoreへの書込を拒否し、storeをcwdにすると成功した。補助コマンドの
-失敗を通常execの書込失敗へ拡張しない。実storeへの学習record保存とGit remote反映は
-まだ行っていない。
+失敗を通常execの書込失敗へ拡張しない。実storeへの新形式の学習record保存は
+まだ行っていない。旧記録99件を含む初期commitは、ユーザーの明示確認後に
+Git remoteへpushした。remoteのHEADは`learning-records`の`3a6bbf5`と一致した。
+GitHubブラウザでの確認は、自動承認審査がGitHub origin全体への権限を
+広すぎるとして拒否したため実施しなかった。その後ユーザーがCLIを再認証し、
+対象repoだけを問い合わせるGitHub APIでPUBLICとdefault branchを確認した。
+
+## 最終統合レビューで見つかった保存境界
+
+別担当が固定snapshot `68383a8` の設計・コード・実ホスト証拠を全文で確認し、
+保存IDの重複、配列を含む不正JSONでの未処理例外、取込対象外のlegacy fileを
+残したままactiveにする3件を報告した。親はそれぞれ一時storeで再現し、
+失敗テストを先に追加した。同じIDと種別の既存記録を日付に依存せず検査し、
+JSON値の型を集合照合前に検査し、markerをactiveにする直前に
+manifestとlegacy file集合・hashを検証する修正を行った。
+修正後のPython 3.9保存CLI全47件、コード学習契約・指示28件は成功した。
+修正commit `841e417`を含むclean copyで全507件を実行し、503件成功、
+localhost待受をsandboxに拒否されたruntime 4件がエラーとなった。
+同じcopyのruntime 4件だけを権限付きで再実行し、全件成功した（14.884秒）。
+一括実行そのものの成功とは区別し、507件すべての成功結果を個別に確認した。
+shellcheck、`bash -n`、Python 3.9のcompile、差分の空白検査も成功した。
+修正後の再レビューでは前回3件の解消を確認したが、次の履歴整合性所見を発見した。
+
+再レビューでは、保存側の「種別＋ID」と履歴側の「IDのみ」の不一致、
+Git統合後のoperation ID重複の未検出を確認した。履歴索引と訂正参照を
+同じ種別とIDの組へ揃え、保存前に追加後の履歴を検証する方式に修正した。
+異なる種別の同じIDを独立して訂正できること、種別を変えた訂正を拒否すること、
+Git統合で重複したoperationを読取時に拒否することを回帰テストにした。
+この状態で全510件を隔離copy・権限付きで実行し成功した（517.435秒）。
+さらに固定snapshotの一般・security担当は、外部Git統合で同一eventへ
+異なるkindの初版が入ると競合解消が成功しても競合を残せると報告した。
+同じeventの能力記録はkindを一つに固定し、混在を`INVALID_HISTORY`へ倒した。
+外部統合の再現テストは修正前に失敗、修正後に成功した。
+この最後の修正を含むPython 3.9の保存CLI全51件が成功した（215.867秒）。
+全510件成功の一括実行は一つ前のsnapshotであり、最後の変更は保存CLI全件と
+指示グラフ13件、Python 3.9 compile、差分検査で検証した。
+最終差分の独立レビューはREADY、securityレビューはConfidence sufficientで、
+新しいHigh/Medium所見なしと判定した。両担当とも検証済みhandoffと要件・差分を
+validator経由で全文確認した。既知のLow所見と実ユーザーpilot未実施は残る。
+
+### 残すLow所見と運用上の制約
+
+- 保存済みfileのowner・group/other書込権限は読取FDで検査していない。
+  個人利用のstoreを他ユーザーが書き込めるmodeへ変更しない。共有端末での利用拡大前に
+  binding・marker・record・operation・manifest・legacyの検査を追加する。
+- 一部のdirectory作成・一時file作成のOSエラーは構造化JSONにならずtracebackとなる。
+  失敗を成功と扱わず、権限・空き容量を直してから再実行する。例外変換の統一は未対応。
+- 旧記録importは複数のGit呼出しで可変のHEADを参照する。
+  import中は取込元へのcommitと変更を停止する。最初にcommit IDを固定する修正は未対応。
+  今回の99件はimport前後に元bytesとmanifestのhashを全件照合した。
+- version 1の一部schemaはJSONの`true`を整数1として受理する。
+  生成する入力は整数versionを使う。boolを明示拒否する厳密化は未対応。
+
+これらのLow所見、既知の稼働中store移設競合、実ユーザーpilot未実施を
+「問題なし」や「能力向上を実証済み」に置き換えない。
 
 ## 両ホストの保存入口の実測
 

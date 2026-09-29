@@ -479,6 +479,53 @@ class LearningStoreCliTests(unittest.TestCase):
         self.assertEqual(len(tuple((self.store / "records").rglob("*.md"))), 1)
         self.assertEqual(self.cli("list").returncode, 0)
 
+    def test_same_id_in_different_kinds_has_independent_revision_history(self):
+        self.make_active_store()
+        code = self.record_payload(capability_id="code.skill")
+        decision = dict(self.record_payload(record_id=code["id"], event_id=str(uuid.uuid4()),
+                                            capability_id="decision.skill"),
+                        kind="decision", mode="predict")
+        for value in (code, decision):
+            result = self.cli_with_json(value)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.cli("list").returncode, 0)
+        for value in (code, decision):
+            revised = dict(value, id=str(uuid.uuid4()), supersedes=[value["id"]], body="訂正後")
+            result = self.cli_with_json(revised)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            listed = self.cli("list", "--capability", value["capability_id"])
+            self.assertEqual(listed.returncode, 0, listed.stderr)
+            self.assertEqual([item["id"] for item in json.loads(listed.stdout)["records"]],
+                             [revised["id"]])
+
+    def test_revision_cannot_change_record_kind_and_corrupt_history(self):
+        self.make_active_store()
+        first = self.record_payload()
+        self.assertEqual(self.cli_with_json(first).returncode, 0)
+        revised = dict(self.record_payload(supersedes=[first["id"]]),
+                       kind="decision", mode="predict")
+        self.assertEqual(self.error_code(self.cli_with_json(revised)), "INVALID_HISTORY")
+        self.assertEqual(self.cli("list").returncode, 0)
+        self.assertEqual(len(tuple((self.store / "records").rglob("*.md"))), 1)
+
+    def test_external_merge_cannot_mix_record_kinds_in_one_event(self):
+        self.make_active_store()
+        code = self.record_payload()
+        decision = dict(code, kind="decision", mode="predict")
+        self.write_record_fixture(code)
+        self.write_record_fixture(decision)
+
+        self.assertEqual(self.error_code(self.cli("list")), "INVALID_HISTORY")
+        resolved = self.record_payload(
+            event_id=code["event_id"], supersedes=[code["id"]],
+            body="## 統合理由\n二つの末尾を統合する",
+        )
+        self.assertEqual(
+            self.error_code(self.cli_with_json(resolved, "--resolve-conflict")),
+            "INVALID_HISTORY",
+        )
+        self.assertEqual(len(tuple((self.store / "records").rglob("*.md"))), 2)
+
     def test_unhashable_record_fields_return_structured_error(self):
         self.make_active_store()
         for field in ("kind", "mode", "initial_result", "retry_result", "transfer_result"):
@@ -607,6 +654,15 @@ class LearningStoreCliTests(unittest.TestCase):
 
         self.assertEqual(self.error_code(self.cli_with_json(reused)), "RECORD_ID_CONFLICT")
         self.assertEqual(len(tuple((self.store / "operations").rglob("*.json"))), 1)
+
+    def test_list_rejects_operation_id_duplicate_from_external_merge(self):
+        self.make_active_store()
+        first = self.operation_payload()
+        self.assertEqual(self.cli_with_json(first).returncode, 0)
+        duplicate = dict(first, observed_at="2026-09-24T00:00:00+00:00")
+        path = self.store / "operations/2026" / f"2026-09-24-{first['id']}.json"
+        path.write_text(json.dumps(duplicate), encoding="utf-8")
+        self.assertEqual(self.error_code(self.cli("list")), "INVALID_OPERATION")
 
     def test_two_processes_publish_one_record(self):
         self.make_active_store()
