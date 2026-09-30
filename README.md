@@ -564,6 +564,36 @@ paths:
 読み取り専用履歴である。新規記録を追加せず、旧hit/missやAI評価を新schemaの習得証拠へ変換しない。
 このリポジトリはPUBLICのため、旧履歴も業務固有情報を抽象化した状態を保つ。
 
+## テスト実行
+
+リポジトリのルートから実行する。通常のGit fixtureは一時HOMEと環境変数で個人設定を
+隔離し、署名とhookの実行を無効にする。実環境のGit設定や署名agentは変更しない。
+hookの判定テストには元の環境を渡し、リポジトリ内のhookファイルをそのまま検査する。
+
+全suiteの前に、runtimeテストが必要とするlocalhostの待受権限を短く検査する。
+
+```bash
+python3 -c 'from tests.test_codex_model_switch_runtime import check_localhost_permission; check_localhost_permission()'
+```
+
+拒否されたら、同じ環境で全suiteを繰り返さず、`127.0.0.1` の待受を許可した実行環境で
+事前検査を再実行する。コマンドの承認だけでOSのサンドボックス制約が解除されるとは限らない。
+権限確認後は、まず失敗したモジュールだけを検証する（以下はruntimeの例）。
+
+```bash
+python3 -W error::ResourceWarning -m unittest tests.test_codex_model_switch_runtime -v -f
+```
+
+`-f` は最初の失敗・エラーで停止するfailfast。ログを保存した場合は末尾だけでなく、
+全体の `FAIL`・`ERROR` とtracebackを確認する。失敗対象の修正と検証が済んだら、最後に全suiteを実行する。
+
+```bash
+python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+件数・終了コード・所要時間を記録する。localhost拒否はruntimeクラスの初期化エラー1件として
+表示し、skipにしない。その場合、runtimeの各テスト本体は未実行として扱う。
+
 ## 禁止パターン検査（pre-commit フック）
 
 抽象化ルールは規約なので、守り忘れれば素通りする。実際に2回すり抜けた（計画書・lessons への

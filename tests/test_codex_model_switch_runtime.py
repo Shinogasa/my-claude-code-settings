@@ -5,6 +5,7 @@ import os
 import queue
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -287,8 +288,29 @@ class AppServer:
             self.process.stderr.close()
 
 
+LOCALHOST_PERMISSION_ERROR = (
+    "localhost の待受が許可されていない実行環境です（127.0.0.1:0）。"
+    "待受を許可した実行環境で事前検査を再実行し、runtimeテストだけを検証してください。"
+    "手順は README.md の「テスト実行」を参照してください。"
+)
+
+
+def check_localhost_permission():
+    """短いbind検査で待受権限を確認し、拒否なら理由付きで失敗する。"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        try:
+            listener.bind(("127.0.0.1", 0))
+        except PermissionError:
+            raise RuntimeError(LOCALHOST_PERMISSION_ERROR) from None
+
+
 @unittest.skipUnless(CODEX, "codex CLI is unavailable")
 class CodexModelSwitchRuntimeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        """fixture作成前に一度検査し、同じ権限エラーを繰り返さない。"""
+        check_localhost_permission()
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

@@ -15,20 +15,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
+if __package__:
+    from tests.git_fixture import git
+else:
+    from git_fixture import git
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DETECT = REPO_ROOT / "bin" / "detect-parallel-sessions"
-
-
-def git(cwd, *args):
-    subprocess.run(["git", "-C", str(cwd), *args], check=True,
-                   capture_output=True, text=True)
 
 
 def make_repo(base, name):
     """コミットを1つ持つリポジトリを作って返す。"""
     repo = Path(base) / name
     repo.mkdir(parents=True)
-    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    git(repo, "init", "-q", "-b", "main")
     git(repo, "config", "user.email", "t@example.com")
     git(repo, "config", "user.name", "t")
     (repo / "f.txt").write_text("init\n")

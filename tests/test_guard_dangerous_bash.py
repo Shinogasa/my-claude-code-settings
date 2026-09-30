@@ -14,6 +14,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+if __package__:
+    from tests.git_fixture import git
+else:
+    from git_fixture import git
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GUARD = REPO_ROOT / "hooks" / "guard-dangerous-bash.py"
 
@@ -71,14 +76,10 @@ def make_repo(tmpdir, with_hooks, branch="work", with_commit=True):
     with_commit=False は「まだ1つもコミットが無いリポジトリ」(unborn branch) を作る。
     """
     repo = Path(tmpdir)
-    subprocess.run(["git", "init", "-q", "-b", branch, str(repo)], check=True)
+    git(repo, "init", "-q", "-b", branch)
     if with_commit:
-        subprocess.run(
-            ["git", "-C", str(repo),
-             "-c", "user.email=t@example.com", "-c", "user.name=t",
-             "commit", "-q", "--allow-empty", "-m", "init"],
-            check=True,
-        )
+        git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t",
+            "commit", "-q", "--allow-empty", "-m", "init")
     if with_hooks:
         hook = repo / ".git" / "hooks" / "pre-commit"
         hook.write_text("#!/bin/sh\nexit 0\n")
@@ -671,7 +672,7 @@ class TestProtectedBranchCommit(unittest.TestCase):
         # detached HEAD は名前付きブランチ上に無いため保護対象ではない
         with tempfile.TemporaryDirectory() as tmp:
             repo = make_repo(tmp, with_hooks=False, branch="main")
-            subprocess.run(["git", "-C", str(repo), "checkout", "-q", "--detach"], check=True)
+            git(repo, "checkout", "-q", "--detach")
             self.assertEqual(run_guard('git commit -m "x"', cwd=repo), ALLOW)
 
     def test_dash_c_target_repo_is_used_for_judgement(self):
