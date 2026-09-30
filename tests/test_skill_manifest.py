@@ -2,6 +2,7 @@
 """skillのホスト別配布境界とCodex routing skillを検証する。"""
 import json
 import re
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,6 +12,15 @@ MANIFEST = REPO_ROOT / "manifests" / "skills.json"
 SKILLS_DIR = REPO_ROOT / "skills"
 ROUTING_SKILL = SKILLS_DIR / "codex-cli-best-practice" / "SKILL.md"
 HOST_KEYS = ("shared", "claude", "codex")
+
+
+def managed_skill_directories(root):
+    """リポジトリが配布するskill directoryを収集する。"""
+    # syncedは外部同期が所有するコンテナであり、manifestの配布単位ではない。
+    return {
+        path.name for path in root.iterdir()
+        if path.is_dir() and path.name != "synced"
+    }
 
 
 def assert_complete_classification(classified, actual):
@@ -45,9 +55,7 @@ class TestSkillManifest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-        cls.skill_dirs = {
-            path.name for path in SKILLS_DIR.iterdir() if path.is_dir()
-        }
+        cls.skill_dirs = managed_skill_directories(SKILLS_DIR)
 
     def test_schema_version_is_one(self):
         self.assertEqual(self.manifest["schemaVersion"], 1)
@@ -79,13 +87,24 @@ class TestSkillManifest(unittest.TestCase):
                 classified, self.skill_dirs | {"unclassified-skill"}
             )
 
+    def test_external_sync_container_is_excluded_but_unclassified_skill_is_detected(self):
+        """外部同期コンテナを配布せず、通常skillの分類漏れは検出する。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("learning-mode", "synced", "unclassified-skill"):
+                (root / name).mkdir()
+            actual = managed_skill_directories(root)
+            self.assertEqual(actual, {"learning-mode", "unclassified-skill"})
+            with self.assertRaises(AssertionError):
+                assert_complete_classification({"learning-mode"}, actual)
+
     def test_host_specific_entries_are_fixed(self):
         self.assertEqual(self.manifest["claude"], ["claude-code-best-practice"])
         self.assertEqual(self.manifest["codex"], ["codex-cli-best-practice"])
 
-    def test_shared_entries_are_complete_and_sorted(self):
+    def test_shared_entries_are_sorted(self):
+        """件数が増えても、sharedの並び順を保つ。完全性は集合比較で検査する。"""
         shared = self.manifest["shared"]
-        self.assertEqual(len(shared), 20)
         self.assertEqual(shared, sorted(shared))
 
 
