@@ -15,6 +15,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_MODULE = ROOT / "bin" / "setup-state.py"
+REAL_GIT = shutil.which("git")
 
 
 def copy_repository(base: Path) -> Path:
@@ -28,6 +29,30 @@ def copy_repository(base: Path) -> Path:
     for relative in (".githooks", "agents", "bin", "codex", "commands", "hooks", "manifests", "output-styles", "rules", "skills"):
         shutil.copytree(ROOT / relative, repository / relative, symlinks=True)
     return repository
+
+
+def tracked_git(repository: Path, home: Path, *arguments: str):
+    """一時HOME内のGitだけを、利用者の設定・署名・hookから分離して使う。"""
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env.update(HOME=str(home), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    return subprocess.run(
+        [REAL_GIT, "-c", "user.name=t", "-c", "user.email=t@example.com",
+         "-c", "commit.gpgSign=false", "-c", "core.hooksPath=/dev/null",
+         "-C", str(repository), *arguments],
+        check=True, capture_output=True, text=True, env=env,
+    )
+
+
+def initialize_repository_tracking(repository: Path, home: Path):
+    """複製先の同期領域を除き、移行テストに必要な追跡状態を作る。"""
+    synced = repository / "skills" / "synced"
+    if synced.is_symlink() or synced.is_file():
+        synced.unlink()
+    elif synced.exists():
+        shutil.rmtree(synced)
+    tracked_git(repository, home, "init", "-q")
+    tracked_git(repository, home, "add", "skills")
+    tracked_git(repository, home, "commit", "-q", "-m", "移行テストの初期状態")
 
 
 def load_state_module():
@@ -49,6 +74,7 @@ def make_stub_commands(base: Path) -> Path:
     git.write_text(
         "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\n"
         "if [ \"${SETUP_GIT_EXIT:-0}\" != 0 ]; then exit \"$SETUP_GIT_EXIT\"; fi\n"
+        "if [ \"${SETUP_REAL_GIT:-}\" != '' ] && [ \"${3:-}\" = ls-files ]; then exec \"$SETUP_REAL_GIT\" \"$@\"; fi\n"
         "if [ \"$*\" = \"-C $SETUP_SUBMODULE_REPOSITORY submodule update --init --recursive\" ]; then mkdir -p \"$SETUP_SUBMODULE_ROOT/claude-code-best-practice\" \"$SETUP_SUBMODULE_ROOT/codex-cli-best-practice\"; fi\n"
         "exit 0\n",
         encoding="utf-8",
@@ -214,6 +240,20 @@ class SetupPreflightTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_migration_fixture_tracks_skills_but_excludes_synced(self):
+        """移行用の複製repoはskillを追跡し、同期領域を追跡に混ぜない。"""
+        synced = self.repository / "skills" / "synced"
+        synced.mkdir(exist_ok=True)
+        (synced / "fixture-marker").write_text("copied sync\n", encoding="utf-8")
+        initialize_repository_tracking(self.repository, self.home)
+        self.assertTrue((self.repository / ".git").is_dir())
+        self.assertFalse(synced.exists())
+        self.assertEqual(
+            tracked_git(self.repository, self.home, "ls-files", "--", "skills/api-design/SKILL.md").stdout,
+            "skills/api-design/SKILL.md\n",
+        )
+        self.assertEqual(tracked_git(self.repository, self.home, "status", "--porcelain").stdout.count("?? skills/"), 0)
 
     def test_conflict_reports_detail_and_keeps_selected_hosts_unchanged(self):
         conflict = self.home / ".claude" / "CLAUDE.md"

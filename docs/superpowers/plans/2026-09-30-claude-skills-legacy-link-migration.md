@@ -17,12 +17,12 @@
 
 ## Task 1: テストの土台を整える
 
-- [ ] `tests/test_setup_preflight.py` の `copy_repository` は git リポジトリを作らない（親が確認済み: `shutil.copytree` だけで `git init` が無い）。
+- [x] `tests/test_setup_preflight.py` の `copy_repository` は git リポジトリを作らない（親が確認済み: `shutil.copytree` だけで `git init` が無い）。
   複製後に `git init`・`git add skills`・commit を行うヘルパーを追加する（追跡外判定を実物で検査するため）
   - git の設定はテスト内で閉じる（`-c user.name=t -c user.email=t@example.com -c commit.gpgSign=false -c core.hooksPath=/dev/null`。`tests/test_detect_parallel_sessions_hook.py` の `git()` と同じ形）
   - **`copy_repository` は開発者の作業ツリーの `skills/` をそのまま複製するため、`skills/synced/` が紛れ込む。** ヘルパーは追跡させる前に複製先の `skills/synced` を削除し、テスト3が置く追跡外項目だけが追跡外になるようにする
   - 既存テストの振る舞いを変えないこと。ヘルパーは新規テストからだけ呼ぶ
-- [ ] commit: `test: setup移行テスト用に追跡状態を持つrepo複製を追加`
+- [x] commit: `test: setup移行テスト用に追跡状態を持つrepo複製を追加`
 
 ## Task 2: 移行テストを先に書く（RED）
 
