@@ -22,12 +22,12 @@ Co-Authored-By: Codex <noreply@openai.com>
 
 ## Task 1: 分割後の契約テストを先に書く（RED）
 
-- [ ] `tests/test_learning_mode_contract.py` に `TestLearningModeSplit` を追加し、設計書 6.2 の1〜12を実装する
+- [x] `tests/test_learning_mode_contract.py` に `TestLearningModeSplit` を追加し、設計書 6.2 の1〜12を実装する
   - skill・references のパスは定数にする（`SKILL = ROOT / "skills" / "learning-mode" / "SKILL.md"` など）
   - ファイルが無い場合も `assertTrue(path.is_file())` で意味のある失敗にする
-- [ ] 設計書 6.1 の否定assertを skill と references にも適用する
-- [ ] 実行して、新規テストだけが失敗し、既存テストは通ることを確認する（RED）
-- [ ] commit: `test: learning-modeのrule/skill分割契約を追加`
+- [x] 設計書 6.1 の否定assertを skill と references にも適用する
+- [x] 実行して、新規テストだけが失敗し、既存テストは通ることを確認する（RED）
+- [x] commit: `test: learning-modeのrule/skill分割契約を追加`
 
 ## Task 2: skill と references を作る
 
