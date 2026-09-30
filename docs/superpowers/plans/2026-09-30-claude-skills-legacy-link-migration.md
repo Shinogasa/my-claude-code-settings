@@ -10,10 +10,10 @@
 
 ## Task 0: 受領と事前確認
 
-- [ ] handoff を validator で `validate` し、同じ `INPUT_DIGEST` で handoff・設計書・本計画を `read` で全行読む
-- [ ] `bin/detect-parallel-sessions` が空配列であることを確認する
-- [ ] `git status --short` を確認する。`skills/synced/`（追跡外）以外に差分が無いこと
-- [ ] 関連テストのベースラインを取る: `python3 -m unittest tests.test_setup_preflight tests.test_setup_cli tests.test_skill_manifest`
+- [x] handoff を validator で `validate` し、同じ `INPUT_DIGEST` で handoff・設計書・本計画を `read` で全行読む
+- [x] `bin/detect-parallel-sessions` が空配列であることを確認する
+- [x] `git status --short` を確認する。`skills/synced/`（追跡外）以外に差分が無いこと
+- [x] 関連テストのベースラインを取る: `python3 -m unittest tests.test_setup_preflight tests.test_setup_cli tests.test_skill_manifest`
 
 ## Task 1: テストの土台を整える
 
