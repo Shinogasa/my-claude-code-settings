@@ -1,15 +1,92 @@
 #!/usr/bin/env python3
 """setup.sh が管理する生成物と退避先を判定する小さな状態管理モジュール。"""
+import argparse
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import stat
+import subprocess
+import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 
 DEFAULT_STATE = {"version": 1, "generated": {}}
+
+
+def migrate_legacy_skills_parent(parent, repo_skills, repo_root):
+    """このrepoを指す旧親リンクだけを移行し、移した項目名を返す。"""
+    parent = Path(parent).absolute()
+    repo_root = Path(repo_root).resolve(strict=True)
+    repo_skills = Path(repo_skills).resolve(strict=True)
+    leftovers = sorted(parent.parent.glob(f"{parent.name}.migrating.*"))
+    if leftovers:
+        raise RuntimeError("途中の移行状態が残っています: " + ", ".join(map(str, leftovers)))
+    if not parent.is_symlink():
+        return None
+    try:
+        resolved = parent.resolve(strict=True)
+        host_root = parent.parent.resolve(strict=True)
+    except (OSError, RuntimeError):
+        # 由来を確定できないリンクは外さず、既存preflightで拒否する。
+        return None
+    if resolved != repo_skills or host_root.is_relative_to(repo_root):
+        return None
+
+    untracked = []
+    for item in sorted(repo_skills.iterdir()):
+        tracked = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-files", "--", f"skills/{item.name}"],
+            check=True, capture_output=True,
+            # 項目名をpathspecのpatternへ展開せず、その名前の追跡だけを検査する。
+            env={**os.environ, "GIT_LITERAL_PATHSPECS": "1"},
+        )
+        if not tracked.stdout:
+            untracked.append(item)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    temporary = parent.with_name(f"{parent.name}.migrating.{timestamp}")
+    temporary.mkdir()
+    moved = []
+    try:
+        for item in untracked:
+            target = temporary / item.name
+            os.rename(item, target)
+            moved.append((item, target))
+        parent.unlink()
+    except OSError as error:
+        unrestored = []
+        for original, target in reversed(moved):
+            try:
+                if original.exists() or original.is_symlink():
+                    raise FileExistsError(f"巻き戻し先が既に存在します: {original}")
+                os.rename(target, original)
+            except OSError as rollback_error:
+                unrestored.append(f"{target} → {original}: {rollback_error}")
+        if not unrestored:
+            try:
+                temporary.rmdir()
+            except OSError as cleanup_error:
+                unrestored.append(f"{temporary}: {cleanup_error}")
+        details = "\n戻せなかった項目: " + "; ".join(unrestored) if unrestored else ""
+        raise RuntimeError(f"旧形式skillsの移行に失敗しました: {error}{details}") from error
+
+    # unlink後はデータを戻す先が親リンク経由で見えないため、完成側へ再試行する。
+    try:
+        os.rename(temporary, parent)
+    except OSError:
+        try:
+            os.rename(temporary, parent)
+        except OSError as error:
+            recovery = f"mv {shlex.quote(str(temporary))} {shlex.quote(str(parent))}"
+            raise RuntimeError(
+                f"親リンク差し替えに失敗しました: {error}\n"
+                f"移行データの保存先: {temporary}\n手で戻す手順: {recovery}"
+            ) from error
+    return [item.name for item in untracked]
 
 
 def sha256_file(path):
@@ -239,3 +316,27 @@ def save_state(path, state):
         json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     temporary.replace(state_path)
+
+
+def main():
+    """setup.sh用の移行サブコマンドを受け付ける。"""
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    migration = commands.add_parser("migrate-legacy-skills-parent")
+    migration.add_argument("parent")
+    migration.add_argument("repo_skills")
+    migration.add_argument("repo_root")
+    args = parser.parse_args()
+    try:
+        names = migrate_legacy_skills_parent(args.parent, args.repo_skills, args.repo_root)
+    except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
+        print(f"エラー: {error}", file=sys.stderr)
+        return 1
+    if names is not None:
+        items = ", ".join(names) if names else "なし"
+        print(f"{args.parent} を旧形式のsymlinkから実ディレクトリへ移行しました。移した追跡外項目: {items}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

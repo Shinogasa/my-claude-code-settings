@@ -87,6 +87,18 @@ host_root() {
 }
 state_path() { printf '%s/.my-claude-code-settings/ownership.json' "$(host_root "$1")"; }
 
+migrate_legacy_skill_parents() {
+  local parent report
+  local -a parents=()
+  if selected_claude; then parents+=("$CLAUDE_DIR/skills"); fi
+  if selected_codex; then parents+=("$AGENTS_DIR/skills"); fi
+  for parent in "${parents[@]}"; do
+    report="$(python3 "$STATE_TOOL" migrate-legacy-skills-parent \
+      "$parent" "$SCRIPT_DIR/skills" "$SCRIPT_DIR")" || return 1
+    [ -z "$report" ] || yellow "$report"
+  done
+}
+
 validate_host_directories() {
   local failed=false
   if selected_claude && [ ! -d "$CLAUDE_DIR" ]; then
@@ -422,6 +434,13 @@ from pathlib import Path
 import sys
 
 source, destination = (Path(value) for value in sys.argv[1:])
+# 残るskills親symlinkは、旧形式と確定できず移行しなかったもの。
+if destination.parent.name == "skills" and destination.parent.is_symlink():
+    print(
+        f"skills parent symlink はrepo以外を指すか由来を確定できないため自動移行しない: {destination.parent}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 try:
     source_resolved = source.resolve(strict=False)
     destination_parent = destination.parent.resolve(strict=False)
@@ -845,6 +864,7 @@ setup_codex_agent_defaults() {
 validate_host_directories || exit 1
 build_targets
 validate_sources true || exit 1
+migrate_legacy_skill_parents || exit 1
 
 preflight || exit $?
 if [ "${#CONFLICT_DESTINATIONS[@]}" -gt 0 ]; then

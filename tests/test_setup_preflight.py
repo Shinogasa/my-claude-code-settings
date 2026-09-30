@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """setup の衝突検出と ownership state を実ファイルで検証する。"""
 import hashlib
+import errno
 import importlib.util
 import json
 import os
@@ -15,6 +16,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_MODULE = ROOT / "bin" / "setup-state.py"
+REAL_GIT = shutil.which("git")
 
 
 def copy_repository(base: Path) -> Path:
@@ -30,8 +32,32 @@ def copy_repository(base: Path) -> Path:
     return repository
 
 
-def load_state_module():
-    spec = importlib.util.spec_from_file_location("setup_state", STATE_MODULE)
+def tracked_git(repository: Path, home: Path, *arguments: str):
+    """一時HOME内のGitだけを、利用者の設定・署名・hookから分離して使う。"""
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env.update(HOME=str(home), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    return subprocess.run(
+        [REAL_GIT, "-c", "user.name=t", "-c", "user.email=t@example.com",
+         "-c", "commit.gpgSign=false", "-c", "core.hooksPath=/dev/null",
+         "-C", str(repository), *arguments],
+        check=True, capture_output=True, text=True, env=env,
+    )
+
+
+def initialize_repository_tracking(repository: Path, home: Path):
+    """複製先の同期領域を除き、移行テストに必要な追跡状態を作る。"""
+    synced = repository / "skills" / "synced"
+    if synced.is_symlink() or synced.is_file():
+        synced.unlink()
+    elif synced.exists():
+        shutil.rmtree(synced)
+    tracked_git(repository, home, "init", "-q")
+    tracked_git(repository, home, "add", "skills")
+    tracked_git(repository, home, "commit", "-q", "-m", "移行テストの初期状態")
+
+
+def load_state_module(path=STATE_MODULE):
+    spec = importlib.util.spec_from_file_location("setup_state", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -49,6 +75,7 @@ def make_stub_commands(base: Path) -> Path:
     git.write_text(
         "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\n"
         "if [ \"${SETUP_GIT_EXIT:-0}\" != 0 ]; then exit \"$SETUP_GIT_EXIT\"; fi\n"
+        "if [ \"${SETUP_REAL_GIT:-}\" != '' ] && [ \"${3:-}\" = ls-files ]; then exec \"$SETUP_REAL_GIT\" \"$@\"; fi\n"
         "if [ \"$*\" = \"-C $SETUP_SUBMODULE_REPOSITORY submodule update --init --recursive\" ]; then mkdir -p \"$SETUP_SUBMODULE_ROOT/claude-code-best-practice\" \"$SETUP_SUBMODULE_ROOT/codex-cli-best-practice\"; fi\n"
         "exit 0\n",
         encoding="utf-8",
@@ -214,6 +241,20 @@ class SetupPreflightTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_migration_fixture_tracks_skills_but_excludes_synced(self):
+        """移行用の複製repoはskillを追跡し、同期領域を追跡に混ぜない。"""
+        synced = self.repository / "skills" / "synced"
+        synced.mkdir(exist_ok=True)
+        (synced / "fixture-marker").write_text("copied sync\n", encoding="utf-8")
+        initialize_repository_tracking(self.repository, self.home)
+        self.assertTrue((self.repository / ".git").is_dir())
+        self.assertFalse(synced.exists())
+        self.assertEqual(
+            tracked_git(self.repository, self.home, "ls-files", "--", "skills/api-design/SKILL.md").stdout,
+            "skills/api-design/SKILL.md\n",
+        )
+        self.assertEqual(tracked_git(self.repository, self.home, "status", "--porcelain").stdout.count("?? skills/"), 0)
 
     def test_conflict_reports_detail_and_keeps_selected_hosts_unchanged(self):
         conflict = self.home / ".claude" / "CLAUDE.md"
@@ -517,30 +558,311 @@ class SetupPreflightTests(unittest.TestCase):
         self.assertEqual(backups[0].read_text(encoding="utf-8"), "unowned\n")
         self.assertTrue(agent_skill.is_symlink())
 
-    def test_codex_rejects_agent_skills_parent_symlink_to_repository(self):
-        agent_skills = self.home / ".agents" / "skills"
-        agent_skills.parent.mkdir()
-        agent_skills.symlink_to(self.repository / "skills", target_is_directory=True)
+    def legacy_parent(self, host=".claude"):
+        """このrepoだけを指す旧形式リンクを一時HOMEに用意する。"""
+        initialize_repository_tracking(self.repository, self.home)
+        parent = self.home / host / "skills"
+        parent.parent.mkdir(exist_ok=True)
+        parent.symlink_to(self.repository / "skills", target_is_directory=True)
+        return parent
 
-        result = run_setup(
-            self.repository,
-            self.home,
-            "--codex",
-            "--replace-conflicts",
-        )
+    def run_tracked_setup(self, *arguments, extra_env=None):
+        """移行の追跡判定だけを実Gitで検査し、他の外部操作はstubに留める。"""
+        env = {"SETUP_REAL_GIT": REAL_GIT, "GIT_CONFIG_GLOBAL": os.devnull,
+               "GIT_CONFIG_NOSYSTEM": "1"}
+        if extra_env:
+            env.update(extra_env)
+        return run_setup(self.repository, self.home, *arguments, extra_env=env)
 
+    def assert_manifest_links(self, parent, host):
+        """親は実ディレクトリ、選択ホストのskillだけはrepoへの個別リンクになる。"""
+        self.assertTrue(parent.is_dir())
+        self.assertFalse(parent.is_symlink())
+        manifest = json.loads((self.repository / "manifests/skills.json").read_text())
+        for name in manifest["shared"] + manifest[host]:
+            with self.subTest(skill=name):
+                source = self.repository / "skills" / name
+                self.assertTrue((parent / name).is_symlink())
+                self.assertEqual((parent / name).resolve(), source.resolve())
+                self.assertTrue((source / "SKILL.md").is_file())
+
+    def migration_function(self):
+        """複製repoの実処理を読み、失敗注入はOS操作の境界だけに置く。"""
+        state = load_state_module(self.repository / "bin/setup-state.py")
+        migrate = getattr(state, "migrate_legacy_skills_parent", None)
+        self.assertTrue(callable(migrate), "旧形式親リンクの移行処理が未実装")
+        return state, migrate
+
+    def test_legacy_claude_parent_migrates_to_manifest_links(self):
+        """1: --claudeだけで旧形式を移行し、全skillのソースを残す。"""
+        parent = self.legacy_parent()
+        result = self.run_tracked_setup("--claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_manifest_links(parent, "claude")
+        self.assertIn("旧形式", result.stderr)
+        self.assertIn(str(parent), result.stderr)
+
+    def test_codex_migrates_agent_skills_parent_symlink_to_repository(self):
+        """2: 旧拒否契約を置換し、--codexだけで個別skillリンクへ移行する。"""
+        parent = self.legacy_parent(".agents")
+        result = self.run_tracked_setup("--codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_manifest_links(parent, "codex")
+        self.assertFalse((self.home / ".codex/backups").exists())
+
+    def test_legacy_parent_moves_synced_and_other_untracked_items(self):
+        """3: synced以外の追跡外項目も移し、元repoに置き去りにしない。"""
+        parent = self.legacy_parent()
+        synced = self.repository / "skills/synced/x/SKILL.md"
+        synced.parent.mkdir(parents=True)
+        synced.write_text("同期skill\n", encoding="utf-8")
+        personal = self.repository / "skills/personal-note"
+        personal.write_text("個人の追跡外項目\n", encoding="utf-8")
+        result = self.run_tracked_setup("--claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((parent / "synced/x/SKILL.md").read_text(), "同期skill\n")
+        self.assertEqual((parent / "personal-note").read_text(), "個人の追跡外項目\n")
+        self.assertFalse((self.repository / "skills/synced").exists())
+        self.assertFalse(personal.exists())
+        self.assertIn("synced", result.stderr)
+        self.assertIn("personal-note", result.stderr)
+
+    def test_legacy_parent_keeps_tracked_skill_content_and_inode(self):
+        """4: git追跡中のskillは内容・inodeとも変えずrepoに残す。"""
+        self.legacy_parent()
+        source = self.repository / "skills/api-design/SKILL.md"
+        before = (source.read_bytes(), source.stat().st_ino)
+        result = self.run_tracked_setup("--claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((source.read_bytes(), source.stat().st_ino), before)
+
+    def test_legacy_parent_rejects_other_repository_even_with_replace(self):
+        """5: 別の置き場への親symlinkは置換フラグ付きでも無変更で拒否する。"""
+        initialize_repository_tracking(self.repository, self.home)
+        elsewhere = self.base / "other-skills"
+        elsewhere.mkdir()
+        marker = elsewhere / "user-owned"
+        marker.write_text("維持\n", encoding="utf-8")
+        parent = self.home / ".claude/skills"
+        parent.symlink_to(elsewhere, target_is_directory=True)
+        before = (os.readlink(parent), parent.lstat().st_ino, marker.read_bytes())
+        result = self.run_tracked_setup("--claude", "--replace-conflicts")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn(str(agent_skills), result.stderr)
-        self.assertTrue(agent_skills.is_symlink())
-        self.assertEqual(
-            agent_skills.resolve(),
-            (self.repository / "skills").resolve(),
-        )
-        self.assertTrue(
-            (self.repository / "skills" / "api-design" / "SKILL.md").is_file()
-        )
-        self.assertFalse((self.home / ".codex" / "backups").exists())
-        self.assertFalse((self.home / ".codex" / "AGENTS.md").exists())
+        self.assertIn("自動移行しない", result.stderr)
+        self.assertIn(str(parent), result.stderr)
+        self.assertEqual((os.readlink(parent), parent.lstat().st_ino, marker.read_bytes()), before)
+        self.assertEqual(list(elsewhere.iterdir()), [marker])
+        self.assertFalse((self.home / ".claude/backups").exists())
+
+    def test_legacy_parent_rejects_broken_symlink_without_changes(self):
+        """6: 壊れた親リンクの由来を推測せず無変更で拒否する。"""
+        initialize_repository_tracking(self.repository, self.home)
+        parent = self.home / ".claude/skills"
+        parent.symlink_to(self.base / "missing-skills")
+        before = (os.readlink(parent), parent.lstat().st_ino)
+        result = self.run_tracked_setup("--claude", "--replace-conflicts")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((os.readlink(parent), parent.lstat().st_ino), before)
+        self.assertFalse((self.home / ".claude/backups").exists())
+
+    def test_legacy_parent_refuses_leftover_migration_directory(self):
+        """7: 途中状態を上書きせず、そのパスを表示して停止する。"""
+        parent = self.legacy_parent()
+        temporary = parent.with_name("skills.migrating.X")
+        temporary.mkdir()
+        marker = temporary / "preserved"
+        marker.write_text("復旧用\n", encoding="utf-8")
+        before = parent.lstat().st_ino
+        result = self.run_tracked_setup("--claude")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(str(temporary), result.stderr)
+        self.assertTrue(parent.is_symlink())
+        self.assertEqual(parent.lstat().st_ino, before)
+        self.assertEqual(marker.read_text(), "復旧用\n")
+
+    def test_legacy_parent_migration_is_idempotent(self):
+        """8: 再実行しても親・個別リンク・追跡外項目を作り直さない。"""
+        parent = self.legacy_parent()
+        note = self.repository / "skills/user-note"
+        note.write_text("維持\n", encoding="utf-8")
+        first = self.run_tracked_setup("--claude")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        before = {path.name: path.lstat().st_ino for path in parent.iterdir()}
+        parent_inode = parent.stat().st_ino
+        second = self.run_tracked_setup("--claude")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual({path.name: path.lstat().st_ino for path in parent.iterdir()}, before)
+        self.assertEqual(parent.stat().st_ino, parent_inode)
+        self.assertEqual((parent / "user-note").read_text(), "維持\n")
+        self.assertNotIn("旧形式", second.stderr)
+
+    def test_legacy_parent_does_not_migrate_unselected_host(self):
+        """9: --codexだけの実行ではClaudeの旧形式リンクへ触れない。"""
+        parent = self.legacy_parent()
+        before = (os.readlink(parent), parent.lstat().st_ino)
+        result = self.run_tracked_setup("--codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((os.readlink(parent), parent.lstat().st_ino), before)
+
+    def test_legacy_parent_rolls_back_after_second_untracked_move_fails(self):
+        """10: 2項目目のrenameにEACCESを注入し、1項目目を実際に戻す。"""
+        parent = self.legacy_parent()
+        items = [self.repository / "skills" / name for name in ("untracked-a", "untracked-b")]
+        for item in items:
+            item.write_text(item.name, encoding="utf-8")
+        before = {item: (item.read_bytes(), item.stat().st_ino) for item in items}
+        parent_inode = parent.lstat().st_ino
+        state, migrate = self.migration_function()
+        real_rename = os.rename
+        moved = []
+
+        def fail_second_move(source, destination):
+            if Path(source) == items[1]:
+                raise PermissionError(errno.EACCES, "テストで移動を拒否", str(source))
+            result = real_rename(source, destination)
+            moved.append((Path(source), Path(destination)))
+            return result
+
+        with mock.patch.object(state.os, "rename", side_effect=fail_second_move):
+            with self.assertRaisesRegex(RuntimeError, "テストで移動を拒否"):
+                migrate(parent, self.repository / "skills", self.repository)
+        self.assertTrue(parent.is_symlink())
+        self.assertEqual(parent.lstat().st_ino, parent_inode)
+        self.assertEqual({item: (item.read_bytes(), item.stat().st_ino) for item in items}, before)
+        self.assertEqual(len(moved), 2, "1項目目の移動と巻き戻しを実OS上で行う")
+        self.assertEqual(moved[1], (moved[0][1], items[0]))
+        self.assertEqual(list(parent.parent.glob("skills.migrating.*")), [])
+
+    def test_legacy_parent_inside_repository_is_not_migrated(self):
+        """判定条件3: ホストの親がrepo内へ解決される場合は移行しない。"""
+        initialize_repository_tracking(self.repository, self.home)
+        host = self.repository / "host"
+        host.mkdir()
+        claude = self.home / ".claude"
+        claude.rmdir()
+        claude.symlink_to(host, target_is_directory=True)
+        parent = host / "skills"
+        parent.symlink_to(self.repository / "skills", target_is_directory=True)
+        before = parent.lstat().st_ino
+        result = self.run_tracked_setup("--claude", "--replace-conflicts")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(parent.is_symlink())
+        self.assertEqual(parent.lstat().st_ino, before)
+        self.assertEqual(list(host.iterdir()), [parent])
+
+    def test_legacy_parent_relative_link_is_migrated(self):
+        """判定条件2: 相対リンクもPath.resolve同士の一致で旧形式と判定する。"""
+        parent = self.legacy_parent()
+        parent.unlink()
+        parent.symlink_to(os.path.relpath(self.repository / "skills", parent.parent))
+        result = self.run_tracked_setup("--claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_manifest_links(parent, "claude")
+
+    def test_legacy_parent_treats_untracked_names_as_literal_git_paths(self):
+        """追跡外の「*」という名前をGitのpatternと取り違えて置き去りにしない。"""
+        parent = self.legacy_parent()
+        item = self.repository / "skills" / "*"
+        item.write_text("追跡外の実ファイル\n", encoding="utf-8")
+        _, migrate = self.migration_function()
+        migrate(parent, self.repository / "skills", self.repository)
+        self.assertTrue((parent / "*").is_file(), "追跡外の名前はpatternではなく実項目として移す")
+        self.assertEqual((parent / "*").read_text(), "追跡外の実ファイル\n")
+        self.assertFalse(item.exists())
+
+    def test_legacy_parent_missing_with_leftover_stops_before_apply(self):
+        """unlink後に停止した状態では、再実行も途中領域を上書きしない。"""
+        parent = self.legacy_parent()
+        parent.unlink()
+        temporary = parent.with_name("skills.migrating.X")
+        temporary.mkdir()
+        result = self.run_tracked_setup("--claude")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(str(temporary), result.stderr)
+        self.assertFalse(parent.exists())
+        self.assertEqual(list(temporary.iterdir()), [])
+
+    def test_legacy_parent_git_failure_does_not_move_items(self):
+        """追跡状態の検査失敗を追跡外とみなさず、変更前にexit 1にする。"""
+        parent = self.legacy_parent()
+        note = self.repository / "skills/untracked-a"
+        note.write_text("維持\n", encoding="utf-8")
+        result = self.run_tracked_setup("--claude", extra_env={"SETUP_GIT_EXIT": "23"})
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(parent.is_symlink())
+        self.assertEqual(note.read_text(), "維持\n")
+        self.assertEqual(list(parent.parent.glob("skills.migrating.*")), [])
+
+    def test_legacy_parent_retries_final_rename_once(self):
+        """unlink後のrenameが一度失敗しても、直ちに再試行して完成させる。"""
+        parent = self.legacy_parent()
+        note = self.repository / "skills/untracked-a"
+        note.write_text("維持\n", encoding="utf-8")
+        state, migrate = self.migration_function()
+        real_rename = os.rename
+        failed = []
+
+        def fail_first_final_rename(source, destination):
+            if Path(destination) == parent and not failed:
+                failed.append(Path(source))
+                raise PermissionError(errno.EACCES, "一度だけ拒否", str(source))
+            return real_rename(source, destination)
+
+        with mock.patch.object(state.os, "rename", side_effect=fail_first_final_rename):
+            migrate(parent, self.repository / "skills", self.repository)
+        self.assertEqual(len(failed), 1)
+        self.assertFalse(parent.is_symlink())
+        self.assertEqual((parent / note.name).read_text(), "維持\n")
+        self.assertFalse(note.exists())
+        self.assertEqual(list(parent.parent.glob("skills.migrating.*")), [])
+
+    def test_legacy_parent_final_rename_failure_reports_manual_recovery(self):
+        """再試行も失敗したら項目を一時領域に保存し、mvでの復旧手順を示す。"""
+        parent = self.legacy_parent()
+        note = self.repository / "skills/untracked-a"
+        note.write_text("維持\n", encoding="utf-8")
+        state, migrate = self.migration_function()
+        real_rename = os.rename
+        failed = []
+
+        def fail_final_rename(source, destination):
+            if Path(destination) == parent:
+                failed.append(Path(source))
+                raise PermissionError(errno.EACCES, "最終rename拒否", str(source))
+            return real_rename(source, destination)
+
+        with mock.patch.object(state.os, "rename", side_effect=fail_final_rename):
+            with self.assertRaises(RuntimeError) as error:
+                migrate(parent, self.repository / "skills", self.repository)
+        self.assertEqual(len(failed), 2)
+        temporary, = parent.parent.glob("skills.migrating.*")
+        self.assertIn(str(temporary), str(error.exception))
+        self.assertIn(f"mv {temporary} {parent}", str(error.exception))
+        self.assertEqual((temporary / note.name).read_text(), "維持\n")
+        self.assertFalse(parent.exists())
+
+    def test_legacy_parent_rollback_failure_reports_preserved_paths(self):
+        """巻き戻しも失敗した項目は消さず、保存パスをエラーに列挙する。"""
+        parent = self.legacy_parent()
+        first, second = [self.repository / "skills" / name for name in ("untracked-a", "untracked-b")]
+        first.write_text("先に移した項目\n", encoding="utf-8")
+        second.write_text("移動失敗項目\n", encoding="utf-8")
+        state, migrate = self.migration_function()
+        real_rename = os.rename
+
+        def fail_move_and_rollback(source, destination):
+            if Path(source) == second or Path(destination) == first:
+                raise PermissionError(errno.EACCES, "移動と巻き戻しを拒否", str(source))
+            return real_rename(source, destination)
+
+        with mock.patch.object(state.os, "rename", side_effect=fail_move_and_rollback):
+            with self.assertRaises(RuntimeError) as error:
+                migrate(parent, self.repository / "skills", self.repository)
+        temporary, = parent.parent.glob("skills.migrating.*")
+        self.assertIn(str(temporary / first.name), str(error.exception))
+        self.assertEqual((temporary / first.name).read_text(), "先に移した項目\n")
+        self.assertEqual(second.read_text(), "移動失敗項目\n")
+        self.assertTrue(parent.is_symlink())
 
     def test_actual_setup_keeps_correct_link_and_rejects_wrong_link_without_plugins(self):
         first = run_setup(self.repository, self.home, "--claude")
