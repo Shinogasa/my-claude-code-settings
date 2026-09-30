@@ -53,10 +53,10 @@
 
 ## Task 5: 最終検査
 
-- [ ] `python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_*.py' -v`
-- [ ] `bash -n setup.sh`
-- [ ] `git diff --check`
-- [ ] **実環境では `setup.sh` を実行しない**（親が行う）
+- [x] `python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_*.py' -v`
+- [x] `bash -n setup.sh`
+- [x] `git diff --check`
+- [x] **実環境では `setup.sh` を実行しない**（親が行う）
 
 ## 親が担当すること（実装担当は行わない）
 
