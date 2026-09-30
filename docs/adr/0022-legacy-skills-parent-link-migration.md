@@ -1,7 +1,7 @@
 ---
 adr: 22
 date: 2026-09-30
-status: proposed
+status: accepted
 ---
 
 # 旧形式の skills 親symlinkを setup.sh が自動移行する
@@ -25,7 +25,8 @@ status: proposed
 
 ## 決定
 
-- 親パスが symlink で、解決先が**この repo の `skills/`** と一致するときだけ、旧形式と確定する
+- 選択したホストの親パスが symlink で、解決先が**この repo の `skills/`** と一致し、
+  親ディレクトリもsymlink解決後にrepoの外にあるときだけ、旧形式と確定する
 - 旧形式と確定したものは、フラグ無しで自動移行する。repo の `skills/` 直下で git に追跡されていない項目
   （`synced` など）を新しい実ディレクトリへ運び、親symlinkを実ディレクトリに差し替える
 - 確定できないもの（別の場所へのsymlink、壊れたsymlink）は、今までどおり拒否して何も変えない

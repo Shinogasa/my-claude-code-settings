@@ -47,9 +47,9 @@
 
 ## Task 4: ドキュメント
 
-- [ ] `README.md` に「旧形式からの移行」を1段落追記する（何を旧形式とみなすか、何を運ぶか、途中状態が残ったときの戻し方）
-- [ ] `docs/adr/0022-legacy-skills-parent-link-migration.md` を `status: accepted` にする
-- [ ] commit: `docs: skills親symlinkの移行を記録しADR 0022を採択`
+- [x] `README.md` に「旧形式からの移行」を1段落追記する（何を旧形式とみなすか、何を運ぶか、途中状態が残ったときの戻し方）
+- [x] `docs/adr/0022-legacy-skills-parent-link-migration.md` を `status: accepted` にする
+- [x] commit: `docs: skills親symlinkの移行を記録しADR 0022を採択`
 
 ## Task 5: 最終検査
 
