@@ -160,6 +160,10 @@ class TestLearningModeSplit(unittest.TestCase):
         self.assertIn("層ゲート", rationalizations)
         self.assertIn("下限", rationalizations)
 
+    def test_supplement_reference_returns_to_skill_from_its_directory(self):
+        """補助資料から判断原則の説明へ相対パスで戻れるようにする。"""
+        self.assertIn("`../SKILL.md`「過去の判断原則を接続する」", self.reference_text(DELTA_SUPPLEMENTS))
+
     def test_common_policy_has_only_one_owner(self):
         """上限と共通方針の正本がrule以外に複製されないようにする。"""
         for text in (self.skill_text(), self.reference_text(DELTA_SUPPLEMENTS),

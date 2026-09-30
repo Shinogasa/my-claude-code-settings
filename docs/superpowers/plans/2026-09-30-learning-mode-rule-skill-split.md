@@ -47,7 +47,7 @@ Co-Authored-By: Codex <noreply@openai.com>
   - `## 設計Predict固有の発火規則` で削るのは例示の文と「L1を捨てるわけではない」段落の短縮だけ
   - `## 開示前の禁止事項` に現行の停止手段の表と上書き宣言2件をそのまま移す
   - `## 詳細手順の読み込み` を `rules/code-learning.md` の入口と同じ構造で書く
-- [ ] 全テストを実行して GREEN を確認する
+- [x] 全テストを実行して GREEN を確認する
 - [x] ruleの文字数を出力し、6,000文字以下であることを確認する
 - [x] commit: `refactor: learning-modeの常時ruleを判定と開示順に絞る`
 
@@ -58,17 +58,17 @@ Co-Authored-By: Codex <noreply@openai.com>
 - [x] `output-styles/review-and-design.md` の110行目に skill を併記する
   - `tests/test_learning_mode_contract.py` の `test_review_style_does_not_delegate_to_disabled_plugin`（`rules/learning-mode.md` を含む）を満たし続けること
 - [x] `README.md` のディレクトリ構成を更新する
-- [ ] 全テストを実行する
+- [x] 全テストを実行する
 - [x] commit: `docs: learning-modeのskill分割に合わせて参照を更新`
 
 ## Task 5: 移動の欠落照合と最終検査
 
-- [ ] 現行ruleの各 `###` 見出し配下の段落が、新rule・skill・referencesのいずれかに存在することをスクリプトで照合する
+- [x] 現行ruleの各 `###` 見出し配下の段落が、新rule・skill・referencesのいずれかに存在することをスクリプトで照合する
   - 例: 現行の各段落（空行区切り）の先頭40文字を、新3ファイルを連結した本文で検索し、見つからないものを列挙する
   - 見つからない段落は、意図的に削った例示か、移し忘れかを判別してledgerに記録する。移し忘れなら戻す
-- [ ] 設計書 6.3 の検査を全部実行し、出力を保存する
-- [ ] `docs/adr/0021-learning-mode-rule-skill-split.md` を `status: accepted` にし、「結果」に実測のrule文字数・skill文字数・行数を追記する
-- [ ] commit: `docs: ADR 0021を採択し分割後のサイズを記録`
+- [x] 設計書 6.3 の検査を全部実行し、出力を保存する
+- [x] `docs/adr/0021-learning-mode-rule-skill-split.md` を `status: accepted` にし、「結果」に実測のrule文字数・skill文字数・行数を追記する
+- [x] commit: `docs: ADR 0021を採択し分割後のサイズを記録`
 
 ## 親が担当すること（実装担当は行わない）
 
