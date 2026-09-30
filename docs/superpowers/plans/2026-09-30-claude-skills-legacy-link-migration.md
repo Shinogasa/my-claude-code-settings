@@ -26,10 +26,10 @@
 
 ## Task 2: 移行テストを先に書く（RED）
 
-- [ ] 設計書 4 章のテスト1〜10を追加する
-- [ ] 既存の `test_codex_rejects_agent_skills_parent_symlink_to_repository` を、設計書 2.4 どおりに「移行する」テストへ置き換える。拒否の契約はテスト5（別の場所を指すsymlink）へ移す
-- [ ] 実行して、新規テストが RED になることを確認する。既存の他のテストは通ること
-- [ ] commit: `test: 旧形式skills親symlinkの自動移行契約を追加`
+- [x] 設計書 4 章のテスト1〜10を追加する
+- [x] 既存の `test_codex_rejects_agent_skills_parent_symlink_to_repository` を、設計書 2.4 どおりに「移行する」テストへ置き換える。拒否の契約はテスト5（別の場所を指すsymlink）へ移す
+- [x] 実行して、新規テストが RED になることを確認する。既存の他のテストは通ること
+- [x] commit: `test: 旧形式skills親symlinkの自動移行契約を追加`
 
 ## Task 3: 移行処理を実装する（GREEN）
 
