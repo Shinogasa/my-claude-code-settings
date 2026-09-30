@@ -97,7 +97,7 @@ skills の発火方式がホストで異なる。
 - 予測は応答を待つ対話ツールで求める（Claude Code では `AskUserQuestion`）。散文で「停止する」と書かない
 - 「全部やって」「任せる」「急ぎ」「予測なしで」→ **OFF**（そのタスク中のみ）
 - 1タスク完了後は自動的にONに戻る
-- 詳細仕様は `rules/learning-mode.md`、設計の経緯は `docs/adr/0001-learning-mode-prediction-format.md` を参照
+- 判定は `rules/learning-mode.md`、手順と書式は `skills/learning-mode/SKILL.md`、設計の経緯は `docs/adr/0001-learning-mode-prediction-format.md` を参照
 
 コード学習は別レイヤー。実装・修正・レビューで真正かつ検証可能な能力を見つけたら、
 本質部分を確定する前に `rules/code-learning.md` に従ってskillを読む。
@@ -132,7 +132,7 @@ pilot中は両モードを合わせて最大2回（コード学習は最大1回�
 - **検証**: 動作証明できるまでタスク完了とマークしない。「スタッフエンジニアはこれを承認するか？」と自問
 - **エレガントさ**: 重要な変更前に「もっとエレガントな方法は？」と立ち止まる。シンプルな修正はスキップ
 - **バグ修正**: バグレポートを受けたらログ・テストから自律的に修正する
-- **学習アウトプット**: ★ Delta / ★ Code Delta の実証記録はbinding済みの専用学習storeへ保存する（運用は `learning/README.md`）。このリポジトリ内の旧記録は読み取り専用。保存前に業務固有情報を抽象化する（`rules/learning-mode.md` の抽象化ルール参照）
+- **学習アウトプット**: ★ Delta / ★ Code Delta の実証記録はbinding済みの専用学習storeへ保存する（運用は `learning/README.md`）。このリポジトリ内の旧記録は読み取り専用。保存前に業務固有情報を抽象化する（`skills/learning-mode/SKILL.md` の抽象化ルール参照）
 - **並列作業**: 複数エージェントが同一リポジトリで動くときは worktree で分離する。
   サブエージェント起動時は `isolation: "worktree"` を既定とする。ただし本リポジトリ
   自身は対象外（理由は同ファイル参照）。詳細は `rules/parallel-worktree.md` を参照

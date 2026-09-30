@@ -9,11 +9,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RULE = (ROOT / "rules" / "learning-mode.md").read_text(encoding="utf-8")
+SKILL = ROOT / "skills" / "learning-mode" / "SKILL.md"
+DELTA_SUPPLEMENTS = ROOT / "skills" / "learning-mode" / "references" / "delta-supplements.md"
+RATIONALIZATIONS = ROOT / "skills" / "learning-mode" / "references" / "rationalizations.md"
 SETTINGS = json.loads((ROOT / "settings.json.template").read_text(encoding="utf-8"))
 PLUGIN_POLICY = json.loads(
     (ROOT / "codex" / "plugin-policy.json").read_text(encoding="utf-8")
 )
 README = (ROOT / "README.md").read_text(encoding="utf-8")
+CLAUDE = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
 SETUP = (ROOT / "setup.sh").read_text(encoding="utf-8")
 REVIEW_STYLE = (ROOT / "output-styles" / "review-and-design.md").read_text(
     encoding="utf-8"
@@ -71,6 +75,139 @@ class TestLearningBoundaryContract(unittest.TestCase):
         self.assertIn("7日以上", RULE)
         self.assertIn("関連実作業", RULE)
         self.assertIn("保持は未確認", RULE)
+
+
+class TestLearningModeSplit(unittest.TestCase):
+    """常時ruleと発火後のskillの所在・開示順・配布契約を固定する。"""
+
+    def skill_text(self):
+        """skillが未作成なら、欠落したパスを示して失敗する。"""
+        self.assertTrue(SKILL.is_file(), f"skillが見つからない: {SKILL}")
+        return SKILL.read_text(encoding="utf-8")
+
+    def reference_text(self, path):
+        """補助資料が未作成なら、欠落したパスを示して失敗する。"""
+        self.assertTrue(path.is_file(), f"補助資料が見つからない: {path}")
+        return path.read_text(encoding="utf-8")
+
+    def test_always_on_rule_is_small_and_has_no_path_filter(self):
+        """判定ruleが常時読み込めるサイズとfrontmatterを保つ。"""
+        self.assertLess(len(RULE), 6000)
+        self.assertNotIn("paths:", RULE)
+
+    def test_always_on_rule_does_not_duplicate_procedures(self):
+        """詳細手順とDelta書式が常時ruleに残る退行を検出する。"""
+        for marker in (
+            "## ★ Delta の返し方", "## 概念名の供給", "## 定石の供給",
+            "## 次の問いの立て方", "## 合理化防止", "★ Delta ───",
+        ):
+            with self.subTest(marker=marker):
+                self.assertFalse(marker in RULE, f"常時ruleに手順が残っている: {marker}")
+
+    def test_always_on_rule_names_skill_entry_and_recovery(self):
+        """発火時とcompact後に詳細手順へ到達できるようにする。"""
+        for marker in (
+            "skills/learning-mode/SKILL.md",
+            "~/.claude/skills/learning-mode/SKILL.md",
+            "~/.agents/skills/learning-mode/SKILL.md",
+            "skillを再読", "導入未完了",
+        ):
+            with self.subTest(marker=marker):
+                self.assertTrue(marker in RULE, f"常時ruleの入口が欠けている: {marker}")
+
+    def test_always_on_rule_keeps_pre_disclosure_guards(self):
+        """予測前に答えを漏らさないためのホスト別停止手段と禁止を保つ。"""
+        for marker in ("AskUserQuestion", "（推奨）", "理由を聞く前", "上書き宣言"):
+            with self.subTest(marker=marker):
+                self.assertTrue(marker in RULE, f"開示前の禁止事項が欠けている: {marker}")
+
+    def test_skill_frontmatter_describes_post_gate_use(self):
+        """skill一覧から発火後の用途を判別できるようにする。"""
+        skill = self.skill_text()
+        self.assertTrue(skill.startswith("---\nname: learning-mode\n"))
+        self.assertIn("description: Use when", skill)
+
+    def test_skill_steps_follow_learning_event_order(self):
+        """予測と理由の後に答えと記録が来る順序を固定する。"""
+        skill = self.skill_text()
+        headings = ("## ループ", "## 予測フェーズ", "## 理由フェーズ", "## ★ Delta", "## 記録")
+        for heading in headings:
+            self.assertIn(heading, skill)
+        positions = [skill.index(heading) for heading in headings]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_skill_contains_feedback_storage_and_reference_entries(self):
+        """Deltaの評価軸、抽象化、補助資料への入口を保つ。"""
+        skill = self.skill_text()
+        for marker in (
+            "★ Delta ───", "トレードオフ", "失敗モード", "前提の検証",
+            "全軸充足", 'kind: "decision"', "PUBLIC",
+            "references/delta-supplements.md", "references/rationalizations.md",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, skill)
+
+    def test_skill_fits_disclosure_limits(self):
+        """compact後の再読に使える短いskillを保つ。"""
+        skill = self.skill_text()
+        self.assertLess(skill.count("\n"), 500)
+        self.assertLessEqual(len(skill), 8000)
+
+    def test_references_keep_record_lookup_key_and_gate_terms(self):
+        """過去記録の検索キーと合理化防止の判定語を保つ。"""
+        self.assertIn("次に同種の判断で確認する問い", self.reference_text(DELTA_SUPPLEMENTS))
+        rationalizations = self.reference_text(RATIONALIZATIONS)
+        self.assertIn("層ゲート", rationalizations)
+        self.assertIn("下限", rationalizations)
+
+    def test_supplement_reference_returns_to_skill_from_its_directory(self):
+        """補助資料から判断原則の説明へ相対パスで戻れるようにする。"""
+        self.assertIn("`../SKILL.md`「過去の判断原則を接続する」", self.reference_text(DELTA_SUPPLEMENTS))
+
+    def test_common_policy_has_only_one_owner(self):
+        """上限と共通方針の正本がrule以外に複製されないようにする。"""
+        for text in (self.skill_text(), self.reference_text(DELTA_SUPPLEMENTS),
+                     self.reference_text(RATIONALIZATIONS)):
+            for marker in ("## 両学習モードの共通方針", "- **上限:"):
+                with self.subTest(marker=marker):
+                    self.assertNotIn(marker, text)
+
+    def test_manifest_distributes_skill_to_both_hosts(self):
+        """新skillがshared分類から配布されることを固定する。"""
+        self.assertIn("learning-mode", SKILL_MANIFEST["shared"])
+
+    def test_shared_skill_files_do_not_depend_on_host_name(self):
+        """sharedのskillと補助資料にホスト固有の実行契約を置かない。"""
+        for text in (self.skill_text(), self.reference_text(DELTA_SUPPLEMENTS),
+                     self.reference_text(RATIONALIZATIONS)):
+            self.assertIsNone(re.search(r"\bClaude Code\b", text))
+
+    def test_removed_legacy_protocol_stays_out_of_skill_and_references(self):
+        """旧コード参加プロトコルなどが移動先へ復活しないようにする。"""
+        forbidden = (
+            "## コード参加（Predictの代替イベント）", "Predict とコード参加",
+            "意味のある5〜10行", "必ず発火する場面: こちらが複数案",
+            "外した予測ほど後の定着に効く",
+        )
+        for text in (self.skill_text(), self.reference_text(DELTA_SUPPLEMENTS),
+                     self.reference_text(RATIONALIZATIONS)):
+            for marker in forbidden:
+                with self.subTest(marker=marker):
+                    self.assertNotIn(marker, text)
+
+    def test_claude_guidance_points_to_rule_and_skill_owners(self):
+        """学習モードの判定と手順を別の正本へ案内する。"""
+        self.assertTrue("判定は `rules/learning-mode.md`、手順と書式は `skills/learning-mode/SKILL.md`" in CLAUDE)
+        self.assertTrue("`skills/learning-mode/SKILL.md` の抽象化ルール参照" in CLAUDE)
+
+    def test_review_style_points_to_rule_and_skill(self):
+        """レビュー表示が新しい手順の所在を案内する。"""
+        self.assertTrue("★ Predict・★ Delta は `rules/learning-mode.md` と `skills/learning-mode/SKILL.md`" in REVIEW_STYLE)
+
+    def test_readme_directory_tree_names_split_responsibilities(self):
+        """ディレクトリ一覧から新skillと軽量ruleを見つけられる。"""
+        self.assertTrue("├── learning-mode/" in README)
+        self.assertTrue("学習モードの判定と共通方針" in README)
 
 
 class TestLearningPluginPolicy(unittest.TestCase):
