@@ -31,14 +31,14 @@ Co-Authored-By: Codex <noreply@openai.com>
 
 ## Task 2: skill と references を作る
 
-- [ ] `skills/learning-mode/SKILL.md` を設計書 3.2 の順序で作る。本文は現行ruleからの**移動**。書き換えるのは次だけ
+- [x] `skills/learning-mode/SKILL.md` を設計書 3.2 の順序で作る。本文は現行ruleからの**移動**。書き換えるのは次だけ
   - 相互参照のリンク先（「→『定石の供給』」→「→ `references/delta-supplements.md`」など）
   - 予測フェーズの停止手段は「常時ruleの停止手段で問う」とし、ホスト名を書かない（設計書 6.2.1）
-- [ ] `skills/learning-mode/references/delta-supplements.md` を作る（現行「概念名の供給」「定石の供給」「次の問いの立て方」）
-- [ ] `skills/learning-mode/references/rationalizations.md` を作る（現行「合理化防止」の3表）
-- [ ] `manifests/skills.json` の `shared` に `learning-mode` を追加する（アルファベット順）
-- [ ] この時点ではruleを変更しない。skill関連テストが通り、ruleのサイズ・手順残存テストだけが失敗することを確認する
-- [ ] commit: `feat: learning-modeの手順と書式をskillへ切り出す`
+- [x] `skills/learning-mode/references/delta-supplements.md` を作る（現行「概念名の供給」「定石の供給」「次の問いの立て方」）
+- [x] `skills/learning-mode/references/rationalizations.md` を作る（現行「合理化防止」の3表）
+- [x] `manifests/skills.json` の `shared` に `learning-mode` を追加する（アルファベット順）
+- [x] この時点ではruleを変更しない。skill関連テストが通り、ruleのサイズ・手順残存テストだけが失敗することを確認する
+- [x] commit: `feat: learning-modeの手順と書式をskillへ切り出す`
 
 ## Task 3: 常時ruleを判定と開示順だけにする（GREEN）
 
