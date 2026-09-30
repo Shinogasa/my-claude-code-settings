@@ -17,6 +17,7 @@ PLUGIN_POLICY = json.loads(
     (ROOT / "codex" / "plugin-policy.json").read_text(encoding="utf-8")
 )
 README = (ROOT / "README.md").read_text(encoding="utf-8")
+CLAUDE = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
 SETUP = (ROOT / "setup.sh").read_text(encoding="utf-8")
 REVIEW_STYLE = (ROOT / "output-styles" / "review-and-design.md").read_text(
     encoding="utf-8"
@@ -189,6 +190,20 @@ class TestLearningModeSplit(unittest.TestCase):
             for marker in forbidden:
                 with self.subTest(marker=marker):
                     self.assertNotIn(marker, text)
+
+    def test_claude_guidance_points_to_rule_and_skill_owners(self):
+        """学習モードの判定と手順を別の正本へ案内する。"""
+        self.assertTrue("判定は `rules/learning-mode.md`、手順と書式は `skills/learning-mode/SKILL.md`" in CLAUDE)
+        self.assertTrue("`skills/learning-mode/SKILL.md` の抽象化ルール参照" in CLAUDE)
+
+    def test_review_style_points_to_rule_and_skill(self):
+        """レビュー表示が新しい手順の所在を案内する。"""
+        self.assertTrue("★ Predict・★ Delta は `rules/learning-mode.md` と `skills/learning-mode/SKILL.md`" in REVIEW_STYLE)
+
+    def test_readme_directory_tree_names_split_responsibilities(self):
+        """ディレクトリ一覧から新skillと軽量ruleを見つけられる。"""
+        self.assertTrue("├── learning-mode/" in README)
+        self.assertTrue("学習モードの判定と共通方針" in README)
 
 
 class TestLearningPluginPolicy(unittest.TestCase):

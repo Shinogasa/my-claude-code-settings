@@ -422,6 +422,7 @@ provider は起動時に確定するため、警告は次の起動前に直す�
 │   ├── database-migrations/     #   DBマイグレーション
 │   ├── deployment-patterns/     #   デプロイパターン
 │   ├── hexagonal-architecture/  #   ヘキサゴナルアーキテクチャ
+│   ├── learning-mode/           #   学習モードの手順と書式
 │   ├── security-review/         #   セキュリティレビュー
 │   ├── tdd-workflow/            #   TDD（Iron Law付き）
 │   └── verification-loop/       #   検証ループ（Iron Law付き）
@@ -452,7 +453,7 @@ provider は起動時に確定するため、警告は次の起動前に直す�
 │   ├── agents/                  #   agents/*.mdから生成したTOML
 │   └── hooks.json               #   Codex向けhookイベント定義
 ├── rules/                       # 常時適用ルール
-│   ├── learning-mode.md         #   学習モード詳細仕様
+│   ├── learning-mode.md         #   学習モードの判定と共通方針
 │   ├── code-learning.md         #   コード学習の常時発火入口
 │   ├── proving-absence.md       #   「無い」と主張するときの形式
 │   ├── output-formatting.md     #   URL表示フォーマット

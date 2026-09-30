@@ -53,13 +53,13 @@ Co-Authored-By: Codex <noreply@openai.com>
 
 ## Task 4: 参照元を更新する
 
-- [ ] `CLAUDE.md` の学習モード節と「学習アウトプット」行の参照先を設計書 4章どおりに更新する
+- [x] `CLAUDE.md` の学習モード節と「学習アウトプット」行の参照先を設計書 4章どおりに更新する
   - `tests/test_instruction_graph.py` が固定している文字列（`rules/learning-mode.md` の列挙、`## 学習モード` 見出し、「セッション開始時に以下をすべて全文読む」）は変えない
-- [ ] `output-styles/review-and-design.md` の110行目に skill を併記する
+- [x] `output-styles/review-and-design.md` の110行目に skill を併記する
   - `tests/test_learning_mode_contract.py` の `test_review_style_does_not_delegate_to_disabled_plugin`（`rules/learning-mode.md` を含む）を満たし続けること
-- [ ] `README.md` のディレクトリ構成を更新する
+- [x] `README.md` のディレクトリ構成を更新する
 - [ ] 全テストを実行する
-- [ ] commit: `docs: learning-modeのskill分割に合わせて参照を更新`
+- [x] commit: `docs: learning-modeのskill分割に合わせて参照を更新`
 
 ## Task 5: 移動の欠落照合と最終検査
 
