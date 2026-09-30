@@ -759,6 +759,17 @@ class SetupPreflightTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assert_manifest_links(parent, "claude")
 
+    def test_legacy_parent_treats_untracked_names_as_literal_git_paths(self):
+        """追跡外の「*」という名前をGitのpatternと取り違えて置き去りにしない。"""
+        parent = self.legacy_parent()
+        item = self.repository / "skills" / "*"
+        item.write_text("追跡外の実ファイル\n", encoding="utf-8")
+        _, migrate = self.migration_function()
+        migrate(parent, self.repository / "skills", self.repository)
+        self.assertTrue((parent / "*").is_file(), "追跡外の名前はpatternではなく実項目として移す")
+        self.assertEqual((parent / "*").read_text(), "追跡外の実ファイル\n")
+        self.assertFalse(item.exists())
+
     def test_legacy_parent_missing_with_leftover_stops_before_apply(self):
         """unlink後に停止した状態では、再実行も途中領域を上書きしない。"""
         parent = self.legacy_parent()

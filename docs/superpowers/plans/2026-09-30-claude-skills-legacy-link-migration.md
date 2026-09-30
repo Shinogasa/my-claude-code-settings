@@ -33,17 +33,17 @@
 
 ## Task 3: 移行処理を実装する（GREEN）
 
-- [ ] `bin/setup-state.py` に `migrate-legacy-skills-parent` サブコマンドを追加する（設計書 2.1〜2.3）
+- [x] `bin/setup-state.py` に `migrate-legacy-skills-parent` サブコマンドを追加する（設計書 2.1〜2.3）
   - 判定: symlink であること、解決先が repo の `skills/` と一致すること、親が repo の外にあること
   - 途中状態 `*.migrating.*` の検出
   - 追跡外項目の列挙は `git -C <repo_root> ls-files -- skills/<name>` を使う
   - 失敗時の巻き戻し（設計書 2.3 の表）
-- [ ] `setup.sh` に `migrate_legacy_skill_parents` を追加し、`validate_sources true` と `preflight` の間で呼ぶ
+- [x] `setup.sh` に `migrate_legacy_skill_parents` を追加し、`validate_sources true` と `preflight` の間で呼ぶ
   - 選ばれているホストだけを対象にする
   - 移行したら `yellow` で1行報告する
-- [ ] `validate_link_target_topology` の拒否メッセージに、repo 以外を指すため自動移行しない旨を足す（別の場所へのsymlinkのとき）
-- [ ] 全テストを実行して GREEN を確認する
-- [ ] commit: `fix: 旧形式のskills親symlinkをsetup.shで自動移行する`
+- [x] `validate_link_target_topology` の拒否メッセージに、repo 以外を指すため自動移行しない旨を足す（別の場所へのsymlinkのとき）
+- [x] 全テストを実行して GREEN を確認する
+- [x] commit: `fix: 旧形式のskills親symlinkをsetup.shで自動移行する`
 
 ## Task 4: ドキュメント
 
