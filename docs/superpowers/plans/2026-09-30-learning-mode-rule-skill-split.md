@@ -42,14 +42,14 @@ Co-Authored-By: Codex <noreply@openai.com>
 
 ## Task 3: 常時ruleを判定と開示順だけにする（GREEN）
 
-- [ ] `rules/learning-mode.md` を設計書 3.1 の見出し順に書き直す
+- [x] `rules/learning-mode.md` を設計書 3.1 の見出し順に書き直す
   - `## 両学習モードの共通方針` は**1文字も変えない**
   - `## 設計Predict固有の発火規則` で削るのは例示の文と「L1を捨てるわけではない」段落の短縮だけ
   - `## 開示前の禁止事項` に現行の停止手段の表と上書き宣言2件をそのまま移す
   - `## 詳細手順の読み込み` を `rules/code-learning.md` の入口と同じ構造で書く
 - [ ] 全テストを実行して GREEN を確認する
-- [ ] ruleの文字数を出力し、6,000文字以下であることを確認する
-- [ ] commit: `refactor: learning-modeの常時ruleを判定と開示順に絞る`
+- [x] ruleの文字数を出力し、6,000文字以下であることを確認する
+- [x] commit: `refactor: learning-modeの常時ruleを判定と開示順に絞る`
 
 ## Task 4: 参照元を更新する
 
