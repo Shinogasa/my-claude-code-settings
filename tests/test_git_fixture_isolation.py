@@ -50,6 +50,34 @@ class GitFixtureIsolationTests(unittest.TestCase):
                         )
                         self.assertEqual(commits.stdout.strip(), "2")
 
+    def test_inherited_repository_location_does_not_redirect_fixture(self):
+        """呼び出し元のGIT_DIR等が残っていても、fixture外のリポジトリへ書き込まない。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            outside = base / "outside"
+            outside.mkdir()
+            detection.git(outside, "init", "-q", "-b", "main")
+            detection.git(
+                outside, "-c", "user.email=t@example.com", "-c", "user.name=t",
+                "commit", "-q", "--allow-empty", "-m", "outside",
+            )
+            inherited = {
+                "GIT_DIR": str(outside / ".git"),
+                "GIT_WORK_TREE": str(outside),
+                "GIT_INDEX_FILE": str(outside / ".git" / "index"),
+            }
+            fixture = base / "fixture"
+            fixture.mkdir()
+            with patch.dict(os.environ, inherited):
+                repo = guard.make_repo(fixture, with_hooks=False)
+            self.assertTrue((repo / ".git").is_dir())
+            for path, expected in ((outside, "outside"), (repo, "init")):
+                subjects = subprocess.run(
+                    ["git", "-C", str(path), "log", "--format=%s"],
+                    check=True, text=True, capture_output=True,
+                )
+                self.assertEqual(subjects.stdout.split(), [expected])
+
 
 if __name__ == "__main__":
     unittest.main()

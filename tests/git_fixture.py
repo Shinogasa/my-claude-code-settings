@@ -11,9 +11,10 @@ def git(cwd, *arguments):
     リポジトリ内の設定やhookファイルも書き換えない。
     """
     with tempfile.TemporaryDirectory(prefix="git-fixture-home-") as home:
+        # GIT_DIR等が残ると-Cより優先され、fixture外のリポジトリを操作する。
         environment = {
             key: value for key, value in os.environ.items()
-            if not key.startswith("GIT_CONFIG")
+            if not key.startswith("GIT_")
         }
         environment.update({
             "HOME": home,
