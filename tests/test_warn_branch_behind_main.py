@@ -15,13 +15,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+if __package__:
+    from tests.git_fixture import git
+else:
+    from git_fixture import git
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOK = REPO_ROOT / "hooks" / "warn-branch-behind-main.sh"
-
-
-def git(cwd, *args):
-    subprocess.run(["git", "-C", str(cwd), *args], check=True,
-                   capture_output=True, text=True)
 
 
 def run_hook(command, cwd):
@@ -53,12 +53,11 @@ def make_repo(tmpdir, behind, branch="feat/x"):
     """
     base = Path(tmpdir)
     origin = base / "origin.git"
-    subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(origin)], check=True)
+    git(base, "init", "--bare", "-q", "-b", "main", str(origin))
 
     work = base / "work"
     # 空のベアリポジトリの clone は警告を出すが、この時点では正常な状態
-    subprocess.run(["git", "clone", "-q", str(origin), str(work)],
-                   check=True, capture_output=True, text=True)
+    git(base, "clone", "-q", str(origin), str(work))
     git(work, "config", "user.email", "t@example.com")
     git(work, "config", "user.name", "t")
 
@@ -71,8 +70,7 @@ def make_repo(tmpdir, behind, branch="feat/x"):
     if behind:
         # 別クローンから origin/main だけを進めることで work を遅らせる
         other = base / "other"
-        subprocess.run(["git", "clone", "-q", str(origin), str(other)],
-                       check=True, capture_output=True, text=True)
+        git(base, "clone", "-q", str(origin), str(other))
         git(other, "config", "user.email", "t@example.com")
         git(other, "config", "user.name", "t")
         for i in range(behind):
