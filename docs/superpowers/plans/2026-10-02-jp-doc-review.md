@@ -2048,10 +2048,15 @@ Expected: 2つのリンクがリポジトリの `skills/yomiyasu` を指す。`h
 
 - [ ] **Step 4: 新しいセッションで、日本語の文書のレビューが起動することを確かめる**
 
+Bashから `claude -p` を直接起動すると、`~/.claude/settings.json` の会社の接続情報で動いてしまう
+（`docs/research/2026-10-02-claude-code-hook-payloads.md`）。個人用の設定を渡す `bin/ccp` を使う。
+`--allowedTools` は値を複数受け取るので、プロンプトはその前に置く。
+
+
 ```bash
 SPIKE=$(mktemp -d) && git -C "$SPIKE" init -q
-cd "$SPIKE" && claude -p --allowedTools "Write,Edit,Agent,Read,Bash" \
-  "README.md に、このディレクトリの目的を日本語で5文書いて。書き終えたら作業を終えて。"
+cd "$SPIKE" && ~/.claude/bin/ccp -p "README.md に、このディレクトリの目的を日本語で5文書いて。書き終えたら作業を終えて。" \
+  --allowedTools "Write,Edit,Agent,Read,Bash"
 ls ~/.claude/state/jp-doc-review/
 ```
 
@@ -2065,8 +2070,8 @@ ls ~/.claude/state/jp-doc-review/
 - [ ] **Step 5: 読み漏れの確認が止めることを確かめる**
 
 ```bash
-cd "$SPIKE" && claude -p --allowedTools "Skill,Read,Write" \
-  "yomiyasuスキルを呼んで、references は読まずに、note.md に日本語で1文だけ書いて終えて。"
+cd "$SPIKE" && ~/.claude/bin/ccp -p "yomiyasuスキルを呼んで、references は読まずに、note.md に日本語で1文だけ書いて終えて。" \
+  --allowedTools "Skill,Read,Write"
 ```
 
 Expected: 作業を終える前に、`references/gemini-syntax.md` などを読むよう差し戻される。
