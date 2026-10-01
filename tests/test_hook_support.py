@@ -50,6 +50,10 @@ class TranscriptTests(unittest.TestCase):
         self.write(prompt("a"), raw_lines=["{broken"])
         self.assertEqual(hook_support.read_entries(str(self.path)), [prompt("a")])
 
+    def test_line_separator_inside_json_does_not_split_the_line(self):
+        self.write(prompt("前 後"))
+        self.assertEqual(hook_support.read_entries(str(self.path)), [prompt("前 後")])
+
     def test_raises_when_no_line_can_be_read(self):
         self.write(raw_lines=["not json", "{also broken"])
         with self.assertRaises(hook_support.TranscriptError):

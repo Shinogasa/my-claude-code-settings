@@ -27,7 +27,7 @@ def read_entries(path: Optional[str], start_offset: int = 0) -> List[dict]:
     except OSError as error:
         raise TranscriptError(f"会話記録を開けない: {error}") from error
     entries = []
-    for line in raw.splitlines():
+    for line in raw.split("\n"):
         if not line.strip():
             continue
         try:
