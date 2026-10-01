@@ -770,8 +770,8 @@ class TestNestedRepositoryTarget(unittest.TestCase):
         self.assertIn("--no-verify", result.stderr)
 
 
-class TestDirectoryTrackingFailsClosed(unittest.TestCase):
-    """cd を信じすぎて、実際のコミット先ではない場所で判定しないこと（レビュー指摘）。"""
+class TrackingFixture(unittest.TestCase):
+    """main のリポジトリ・その中の作業ブランチの子・作業ブランチの別リポジトリを用意する。"""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -791,6 +791,10 @@ class TestDirectoryTrackingFailsClosed(unittest.TestCase):
     def assert_blocked(self, command, cwd):
         result = run_guard_in(command, cwd, cwd)
         self.assertEqual(result.returncode, BLOCK, f"{command}: {result.stderr}")
+
+
+class TestDirectoryTrackingFailsClosed(TrackingFixture):
+    """cd を信じすぎて、実際のコミット先ではない場所で判定しないこと（レビュー指摘）。"""
 
     def test_failed_cd_keeps_previous_directory(self):
         for command in ('cd nope; git commit -m "x"',
@@ -835,6 +839,56 @@ class TestDirectoryTrackingFailsClosed(unittest.TestCase):
     def test_cd_into_child_with_and_is_still_allowed(self):
         result = run_guard_in('cd child && git commit -m "x"', self.main_repo, self.main_repo)
         self.assertEqual(result.returncode, ALLOW, result.stderr)
+
+class TestPrefixesAndChains(TrackingFixture):
+    """再レビューの指摘: 前置き・リダイレクト・連鎖の切れ目で判定対象を見失わないこと。"""
+
+    def assert_allowed(self, command, cwd):
+        result = run_guard_in(command, cwd, cwd)
+        self.assertEqual(result.returncode, ALLOW, f"{command}: {result.stderr}")
+
+    def test_directory_created_in_same_command_is_unresolved(self):
+        for command in (f'ln -s {self.main_repo} m && cd m && git commit -m "x"',
+                        f'ln -s {self.main_repo} m && git -C m commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.feature)
+
+    def test_dash_c_forms_the_hook_cannot_expand_are_unresolved(self):
+        for command in (f'git -C {self.base}/main-rep? commit -m "x"',
+                        f'git -C {{x,{self.main_repo}}} commit -m "x"',
+                        'git -C ~- commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.feature)
+
+    def test_broken_and_chain_restores_earlier_directories(self):
+        for command in ('cd child && true; git commit -m "x"',
+                        'cd child && true || git commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.main_repo)
+
+    def test_prefixes_and_redirections_do_not_hide_commit(self):
+        for command in ('echo a;>/dev/null git commit -m "x"',
+                        '2>/dev/null git commit -m "x"',
+                        'time git commit -m "x"',
+                        'exec git commit -m "x"',
+                        'nohup git commit -m "x"',
+                        '! git commit -m "x"',
+                        'if git commit -m "x"; then :; fi',
+                        '{ git commit -m "x"; }',
+                        'command git commit -m "x"',
+                        'env X=1 git commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.main_repo)
+
+    def test_builtin_cd_is_tracked(self):
+        self.assert_blocked(f'builtin cd {self.main_repo} && git commit -m "x"', self.feature)
+
+    def test_intended_forms_are_not_over_blocked(self):
+        for command in ('git status && cd child && git commit -m "x"',
+                        'cd child 2>/dev/null && git commit -m "x"',
+                        f'cd "$X" && git -C {self.child} commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_allowed(command, self.main_repo)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

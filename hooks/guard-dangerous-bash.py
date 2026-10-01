@@ -41,17 +41,21 @@ cd は反映されないため、ここで追う。相対パスは hook プロ�
 
 cd を信じすぎると、実際のコミット先ではない場所で判定して素通しする。そのため判定対象は
 「シェルがいる可能性のあるディレクトリの集合」で持ち、どれか1つでも保護ブランチなら止める。
-- `cd X && ...` のように cd が成功したときだけ後続が走る形だけ、集合を X に置き換える
-- `;`、`||`、`|`、`&`、条件付き実行、サブシェルの cd は、移動前の候補も残す
-- 存在しない移動先へは移動しない（cd は失敗して元の場所に残る）
-- 移動先を文字列から確定できない cd（変数、glob、ブレース、`cd -`、`~-`、`-P` などの
-  オプション、CDPATH が効きうる相対パス、pushd / popd）の後に git commit / --no-verify が
-  ある場合は、推測で判定せず止めて `git -C <path>` を案内する。止めるのは commit /
-  --no-verify を含むときだけに絞る（範囲を広げると hook ごと外される）
+- cd の直後が `&&` なら、後続は cd が成功したときだけ走るため、集合を移動先に置き換える
+- それ以外の cd は効かない可能性があるため、移動前の候補も残す
+- `&&` の連鎖が切れたら（`;`、`||`、`|`、`&`、改行、括弧）、それまでに通りうる
+  ディレクトリすべてを候補に戻す（`cd x && false; git commit` で cd が失敗した場合など）
+- 移動先が今は存在しない場合は、同じコマンド内で作られうるため確定できないとみなす
+- 移動先を文字列から確定できない cd / `git -C`（変数、glob、ブレース、`cd -`、`~-`、
+  `-P` などのオプション、CDPATH が効きうる相対パス、pushd / popd）の後に git commit /
+  --no-verify がある場合は、推測で判定せず止めて `git -C <path>` を案内する。
+  止めるのは commit / --no-verify を含むときだけに絞る（範囲を広げると hook ごと外される）
 - `git -C` は文字列上で正規化せず git に解決させ、複数指定は累積する
+- 判定の前に、リダイレクト、先頭の `NAME=value`、前置き（time / exec / nohup / command /
+  builtin / env）、予約語（! / if / then / do / { など）を取り除く
 
-既知の限界: `builtin cd` / `command git` / `env git` / `bash -c '...'` のような前置きや
-入れ子のシェル、`GIT_DIR` などの環境変数による対象の差し替えは追わない。
+既知の限界: `bash -c '...'` や `"$(...)"` の中のような入れ子のシェル、`GIT_DIR` などの
+環境変数による対象の差し替え、引用符で名前を隠した CDPATH の設定は追わない。
 
 コマンド文字列全体への正規表現マッチではなく、シェルの引用規則を
 尊重してトークン化した上で、各サブコマンドの先頭トークン(コマンド名)
@@ -70,6 +74,12 @@ from pathlib import Path
 HEREDOC_RE = re.compile(r"<<[-~]?\s*['\"]?(\w+)['\"]?.*?\n.*?\n\1\b", re.DOTALL)
 CONTROL_TOKENS = {";", "&&", "||", "|", "&"}
 SEPARATOR_CHARS = set(";&|\n()")
+# リダイレクト演算子。直後のトークン（宛先）と、直前の fd 番号もコマンドから除く。
+REDIRECT_CHARS = set("<>")
+REDIRECT_OPS = {">", ">>", "<", "<<", "<<<", "&>", "&>>", ">&", "<&", ">|", "<>"}
+# 後ろに実際のコマンドが続く前置き・予約語。判定前に取り除く。
+PREFIX_WORDS = {"time", "exec", "nohup", "command", "builtin", "env", "!",
+                "if", "then", "elif", "else", "while", "until", "do", "{", "}"}
 ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 # --no-verify を受け付ける git サブコマンド
@@ -187,23 +197,68 @@ def is_separator(tok: str) -> bool:
     return bool(tok) and set(tok) <= SEPARATOR_CHARS
 
 
-def strip_assignments(tokens: list) -> list:
-    """先頭の `NAME=value` を除いた実際のコマンドを返す。"""
+def split_glued_operator(tok: str) -> list:
+    """`;>` のように区切りとリダイレクトが1トークンにまとまったものを分ける。"""
+    if tok in REDIRECT_OPS or not tok or not set(tok) <= SEPARATOR_CHARS | REDIRECT_CHARS:
+        return [tok]
+    if not set(tok) & REDIRECT_CHARS:
+        return [tok]
+    index = min(tok.index(c) for c in REDIRECT_CHARS if c in tok)
+    separator, redirect = tok[:index], tok[index:]
+    return [part for part in (separator, redirect) if part]
+
+
+def strip_redirections(tokens: list) -> list:
+    """リダイレクト演算子・宛先・fd 番号を除く。コマンド名の位置を正しく見るため。"""
+    result = []
+    skip_next = False
+    for tok in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok in REDIRECT_OPS or (tok and set(tok) <= REDIRECT_CHARS | {"&", "|"}
+                                   and set(tok) & REDIRECT_CHARS):
+            if result and result[-1].isdigit():
+                result.pop()
+            skip_next = True
+            continue
+        result.append(tok)
+    return result
+
+
+def strip_prefixes(tokens: list) -> list:
+    """先頭の `NAME=value`・前置き（time / env など）・予約語を除いた実際のコマンドを返す。"""
     index = 0
-    while index < len(tokens) and ASSIGNMENT_RE.match(tokens[index]):
-        index += 1
+    while index < len(tokens):
+        tok = tokens[index]
+        if ASSIGNMENT_RE.match(tok):
+            index += 1
+            continue
+        if tok in PREFIX_WORDS:
+            index += 1
+            # env / command / time のオプション（-i、-p など）も読み飛ばす
+            while tok in ("env", "command", "time") and index < len(tokens) \
+                    and tokens[index].startswith("-"):
+                index += 1
+            continue
+        break
     return tokens[index:]
+
+
+def normalize_command(tokens: list) -> list:
+    return strip_prefixes(strip_redirections(tokens))
 
 
 def split_with_operators(tokens: list) -> list:
     """単純コマンドごとに (直前の区切り, トークン列, 直後の区切り) を返す。"""
+    expanded = [part for tok in tokens for part in split_glued_operator(tok)]
     commands = []
     previous = ""
     current = []
-    for tok in tokens:
+    for tok in expanded:
         if is_separator(tok):
             if current:
-                commands.append([previous, strip_assignments(current), tok])
+                commands.append([previous, normalize_command(current), tok])
                 current = []
                 previous = tok
             else:
@@ -211,7 +266,7 @@ def split_with_operators(tokens: list) -> list:
         else:
             current.append(tok)
     if current:
-        commands.append([previous, strip_assignments(current), ""])
+        commands.append([previous, normalize_command(current), ""])
     return [tuple(command) for command in commands if command[1]]
 
 
@@ -336,24 +391,25 @@ def is_verification_bypass(tokens: list) -> bool:
     return subcommand == "commit" and "-n" in args
 
 
-def resolve_cd_target(base, path: str, cdpath_possible: bool):
-    """cd の移動先を返す。文字列から確定できなければ UNRESOLVED。
+def resolve_path(base, path: str, cdpath_possible: bool = False):
+    """base から path へ移動した先を返す。文字列から確定できなければ UNRESOLVED。
 
-    bash の既定（論理パス）に合わせて `..` は文字列上で畳む。`-P` などの
-    オプションは呼び出し側で UNRESOLVED にする。
+    絶対パスは base に依存しないため、base が UNRESOLVED でも解決する。
     """
-    if base is UNRESOLVED or path == "-" or any(c in path for c in UNEXPANDABLE_CHARS):
+    if path == "-" or any(c in path for c in UNEXPANDABLE_CHARS):
         return UNRESOLVED
     if path.startswith("~") and path != "~" and not path.startswith("~/"):
         return UNRESOLVED
     expanded = os.path.expanduser(path)
     if os.path.isabs(expanded):
-        return os.path.normpath(expanded)
+        return expanded
+    if base is UNRESOLVED:
+        return UNRESOLVED
     # CDPATH は ./ ../ で始まらない相対パスにだけ効く。値は hook から見えない。
     explicit = expanded in (".", "..") or expanded.startswith(("./", "../"))
     if cdpath_possible and not explicit:
         return UNRESOLVED
-    return os.path.normpath(os.path.join(base, expanded))
+    return os.path.join(base, expanded)
 
 
 def cd_target_paths(tokens: list):
@@ -370,13 +426,22 @@ def cd_target_paths(tokens: list):
     return arguments[0]
 
 
-def apply_directory_change(previous_op: str, tokens: list, next_op: str,
-                           candidates: set, cdpath_possible: bool) -> set:
+def operator_kind(op: str) -> str:
+    """区切りを START（先頭）/ AND（&&）/ BREAK（それ以外）に分類する。"""
+    if op == "":
+        return "START"
+    if op.strip("\n") == "&&":
+        return "AND"
+    return "BREAK"
+
+
+def apply_directory_change(tokens: list, next_op: str, candidates: set,
+                           cdpath_possible: bool) -> set:
     """単純コマンドを実行した後に、シェルがいる可能性のあるディレクトリの集合を返す。
 
-    cd が成功したときだけ後続が走る形（`cd X && ...`）なら移動先に置き換える。
-    それ以外（`;`、`||`、`|`、`&`、条件付き実行、サブシェル）は cd が効かない
-    可能性があるため、移動前の候補も残す。存在しない移動先へは移動しない。
+    cd の直後が `&&` なら、後続は cd が成功したときだけ走るため移動先に置き換える。
+    それ以外は cd が効かない可能性があるため、移動前の候補も残す。
+    移動先が今は存在しない（同じコマンド内で作られうる）場合は確定できないとみなす。
     """
     if not tokens or tokens[0] not in ("cd", "pushd", "popd"):
         return candidates
@@ -385,16 +450,15 @@ def apply_directory_change(previous_op: str, tokens: list, next_op: str,
     path = cd_target_paths(tokens)
     moved = set()
     for base in candidates:
-        target = UNRESOLVED if path is UNRESOLVED else resolve_cd_target(base, path, cdpath_possible)
-        if target is UNRESOLVED:
-            moved.add(UNRESOLVED)
-        elif os.path.isdir(target):
-            moved.add(target)
+        target = UNRESOLVED if path is UNRESOLVED else resolve_path(base, path, cdpath_possible)
+        if target is not UNRESOLVED:
+            # bash の既定（論理パス）に合わせて `..` は文字列上で畳む。-P は確定できない扱い。
+            target = os.path.normpath(target)
+        if target is UNRESOLVED or not os.path.isdir(target):
+            moved |= {base, UNRESOLVED}
         else:
-            moved.add(base)
-    runs_unconditionally = previous_op.strip("\n") in ("", ";")
-    only_on_success = next_op.strip("\n") == "&&"
-    if runs_unconditionally and only_on_success:
+            moved.add(target)
+    if operator_kind(next_op) == "AND":
         return moved
     return candidates | moved
 
@@ -429,10 +493,12 @@ def git_target_dirs(tokens: list, candidates: set) -> set:
     for base in candidates:
         current = base
         for path in git_dash_c_paths(tokens):
-            if current is UNRESOLVED or "$" in path or "`" in path:
-                current = UNRESOLVED
+            current = resolve_path(current, path)
+            if current is UNRESOLVED:
                 break
-            current = os.path.join(current, os.path.expanduser(path))
+        if current is not UNRESOLVED and not os.path.isdir(current):
+            # 同じコマンド内で作られた場所を指しうる。今の状態では判定できない。
+            current = UNRESOLVED
         targets.add(current)
     return targets
 
@@ -617,11 +683,15 @@ def main() -> int:
     bypass_dirs = set()
     commit_dirs = set()
     candidates = {os.path.abspath(cwd)}
+    # これまでに通りうるディレクトリすべて。&& の連鎖が切れたら、どこにいてもおかしくない。
+    seen = set(candidates)
     cdpath_possible = "CDPATH" in command or bool(os.environ.get("CDPATH"))
     tokens = tokenize_command(executable_part)
     for previous_op, simple_command, next_op in split_with_operators(tokens):
-        candidates = apply_directory_change(
-            previous_op, simple_command, next_op, candidates, cdpath_possible)
+        if operator_kind(previous_op) == "BREAK":
+            candidates = set(seen)
+        candidates = apply_directory_change(simple_command, next_op, candidates, cdpath_possible)
+        seen |= candidates
         if is_dangerous(simple_command):
             print(f"ブロック: 確定的に危険なコマンドを検出しました: {command}", file=sys.stderr)
             return 2

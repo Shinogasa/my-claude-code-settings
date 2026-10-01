@@ -927,23 +927,23 @@ fetch 直後でも競合しうる）。フックの層では原理的に見切�
 
 ---
 
-### コマンドの前置きと入れ子のシェルで判定対象を見失う
+### 入れ子のシェルと環境変数で判定対象を見失う
 
 2026-10-01 のセキュリティレビューの指摘（以前からある穴）。`guard-dangerous-bash` は
-単純コマンドの先頭が `git` / `cd` であることを前提にしているため、次の形では commit や cd を見失う。
+次の形では commit や移動先を見失う。前置き（time / exec / nohup / command / builtin / env）、
+予約語、リダイレクト、先頭の `NAME=value` は除去するようにした。
 
-- `builtin cd /x && git commit`、`command git commit`、`env X=1 git commit`
-- `bash -c 'git commit'`（文字列が1トークン）、`{ git commit; }`
+- `bash -c 'git commit'`、`x="$(git commit -m y)"`（文字列が1トークンで解析されない）
 - `GIT_DIR=` / `GIT_WORK_TREE=` / `git -c core.hooksPath=...` による対象・フックの差し替え
+- 引用符で名前を隠した CDPATH の設定（`export "CDP"ATH=...`）
 - `destructive_push` は今も payload の cwd で判定し、同じコマンド内の cd と `-C` を追わない
 
-先頭の `NAME=value` は除去するようにした（2026-10-01）。
+**決めること**: どこまで追うか。入れ子のシェルの解析はシェル意味論の再実装に近づく。
+追わない範囲は「確定できない」として止めるか、制約として受け入れるか。
+`destructive_push` の cwd は、commit と同じ候補集合を渡すだけで揃えられる。
 
-**決めること**: どこまで追うか。前置きの除去（`builtin` / `command` / `env`）は安いが、
-入れ子のシェルの解析はシェル意味論の再実装に近づく。追わない範囲は「確定できない」として
-止めるか、制約として受け入れるか。
-
-**着手条件**: 前置きの除去は即時着手できる。入れ子のシェルはこの経路での取りこぼしを観測したとき。
+**着手条件**: `destructive_push` の cwd は即時着手できる。入れ子のシェルはこの経路での
+取りこぼしを観測したとき。
 
 ---
 
