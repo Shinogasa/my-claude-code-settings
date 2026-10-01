@@ -31,6 +31,27 @@
 
 ---
 
+## Claude Codeのプロファイル切り替え
+
+### P1: Bashから起動する `claude -p` を、親のセッションと同じプロファイルで動かす
+
+`bin/ccp`（個人のアカウント）で起動したセッションの中で、Bashから `claude -p` を起動すると、
+子のプロセスは `~/.claude/settings.json` を読み直し、会社のLiteLLMの接続情報で動いてしまう。
+親が `--settings` で上書きした接続情報は、コマンドライン引数なので子に引き継がれない。
+2026-10-02に、日本語文書レビューの実機確認で実際に会社のLiteLLMを経由した
+（`docs/research/2026-10-02-claude-code-hook-payloads.md`）。
+
+実現の見込みは立っている。設定ファイルの `env` に書いた値はBashを通して子まで届き、
+子が読み直す `~/.claude/settings.json` に無い変数は上書きされずに残る（どちらも同日に確認）。
+
+- `settings.personal.json` の `env` に、プロファイルの目印（例: `CLAUDE_PROFILE=personal`）を足す
+- ヘッドレス起動用のスクリプトを `bin/` に足し、目印を見て `--settings` を付け分ける
+
+**決めること**: 目印の変数名と、目印が無いとき（会社のプロファイル）の振る舞い。
+サブエージェントやフックが `claude -p` を起動する経路まで、このスクリプトに寄せるかどうか。
+
+---
+
 ## 日本語文書レビュー（yomiyasu）の続き
 
 設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯はADR 0024。
