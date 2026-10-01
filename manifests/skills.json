@@ -20,7 +20,6 @@
         "source-command-pr-create",
         "source-command-refactor-clean",
         "source-command-test-coverage",
-        "tdd-workflow",
         "verification-loop"
     ],
     "claude": [

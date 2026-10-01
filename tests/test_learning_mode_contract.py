@@ -240,7 +240,7 @@ class TestDeprecatedCommandRouting(unittest.TestCase):
             "| `code-review` | Codex組み込み `/review` |",
             "| `quality-gate` | `verification-loop` |",
             "| `verify` | `verification-loop` |",
-            "| `tdd` | `tdd-workflow` |",
+            "| `tdd` | `superpowers:test-driven-development` |",
         ):
             with self.subTest(mapping=mapping):
                 self.assertIn(mapping, README)
@@ -249,7 +249,7 @@ class TestDeprecatedCommandRouting(unittest.TestCase):
         text = (ROOT / "skills" / "source-command-plan" / "SKILL.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("tdd-workflow", text)
+        self.assertIn("superpowers:test-driven-development", text)
         self.assertIn("verification-loop", text)
         self.assertIn("/review", text)
         self.assertNotIn("/tdd", text)
