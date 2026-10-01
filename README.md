@@ -84,7 +84,7 @@ Claude Codeでは既存commandを維持し、Codexでは次のnative機能また
 | `code-review` | Codex組み込み `/review` |
 | `quality-gate` | `verification-loop` |
 | `verify` | `verification-loop` |
-| `tdd` | `tdd-workflow` |
+| `tdd` | `superpowers:test-driven-development` |
 
 その他のcommandは `skills/source-command-*` として共有し、Codexのskill discoveryから利用する。
 
@@ -434,7 +434,6 @@ provider は起動時に確定するため、警告は次の起動前に直す�
 │   ├── hexagonal-architecture/  #   ヘキサゴナルアーキテクチャ
 │   ├── learning-mode/           #   学習モードの手順と書式
 │   ├── security-review/         #   セキュリティレビュー
-│   ├── tdd-workflow/            #   TDD（Iron Law付き）
 │   └── verification-loop/       #   検証ループ（Iron Law付き）
 ├── commands/                    # スラッシュコマンド
 │   ├── aside.md                 #   サイドクエスチョン
@@ -654,10 +653,9 @@ python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_*.py' -
 
 | 取り入れた要素 | 適用先 | 内容 |
 |---|---|---|
-| Rationalization Prevention Tables | tdd-workflow, verification-loop, planner | エージェントの自己正当化を事前にブロックする対応表 |
+| Rationalization Prevention Tables | verification-loop, planner | エージェントの自己正当化を事前にブロックする対応表 |
 | Bite-Sized Task Granularity | agents/planner.md | 2-5分粒度のタスク分解 + プレースホルダー禁止 |
 | Verification Iron Law | skills/verification-loop/ | 「証拠なしに完了を主張するな」の行動規範 |
-| TDD Iron Law | skills/tdd-workflow/ | 「テスト前にコード書いたら削除」の鉄則 |
 
 ## 参考
 

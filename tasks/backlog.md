@@ -157,6 +157,18 @@ codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**�
 同じレビューの指摘（Low）。`write_profile` は固定名の `<dest>.tmp` を使う。setup からは
 `mktemp` の宛先で呼ぶため実害は無いが、手動実行時の固定名は避けたい。
 
+### P2: manifest から外した skill のリンクが残る
+
+`setup.sh` は manifest にある skill のリンクを足すだけで、manifest から外した skill の
+リンクを片付けない。2026-10-01 に `tdd-workflow` を `superpowers:test-driven-development` へ
+畳んだとき、`~/.claude/skills/tdd-workflow` と `~/.agents/skills/tdd-workflow` が
+壊れたリンクとして残った。
+
+**決めること**: 所有の記録（ownership）にリンクも載せて、記録にあるのに manifest に無い
+リンクだけを消すか。リンク先の一致だけで判定すると、利用者が自分で張ったリンクまで消しうる。
+
+**完了条件**: manifest から外した skill のリンクを、利用者が張ったリンクには触れずに片付ける回帰テストがある。
+
 ### P2: `setup.sh` の failure と policy violation を別の出口にする
 
 `audit_codex_plugins()` は監査ツールのexit 1を `record_failure` に流すため、
@@ -1135,36 +1147,6 @@ Python や Markdown だけを触る作業中も常に効いている。
 
 なお `setup.sh` の「テンプレートに無いキーは温存する」マージ方式は、`/model` などが
 書き込んだ値を保護するための意図的な設計であり、**変更しない**。
-
-### 「Use PROACTIVELY」指定のスキルが一度も発火していない → 決めること
-
-2026-08-16 の `/doctor` 実測。`rules/ecc-testing.md` と
-`rules/ecc-development-workflow.md` は `tdd-workflow` と `security-review` を
-「**Use PROACTIVELY**」と指定しているが、**起動 4,249 回に対して累計使用は両方とも 0 回**。
-直近50セッション（8日間）でも 0 回。
-
-`skills/` 配下の12スキルのうち、実際に使用記録があるのは
-`claude-code-best-practice`（2回）と `architecture-decision-records`（1回）の2つだけ。
-
-これは `rules/proving-absence.md` が「順序の指示」について書いた問題と同型である。
-
-> 順序の指示は、守ったかどうかが成果物に痕跡を残さない。
-> 違反しても出力は正常に見えるため、書いた本人も読み手も気づけない。静かに死ぬルールだった。
-
-「Use PROACTIVELY」も同じで、発火しなくても出力は正常に見える。
-**4,249 回の起動を経て初めて、カウンタという別経路から死んでいたことが分かった。**
-
-**決めること**: 次のどれを採るか。
-
-1. スキルを消し、ルールから該当記述も消す（使っていないものを正直に畳む）
-2. ルールの記述を「発火条件が観測できる形」に変える。
-   例: 「テストを書く前に `tdd-workflow` を読んだか」を成果物に残す
-3. 発火を強制する仕組みを足す（hook 等）。ただし強制力ではなく
-   **検知可能性**を取るのが `proving-absence.md` の方針なので、
-   「発火しなかったことが分かる」形を優先する
-
-**着手条件**: 即時着手できる。1 を選ぶ場合は `cw-workspace-local` 側の
-スキル無効化項目と連動させること（順序は「ルール修正 → スキル無効化」）。
 
 ### コンテナ環境で PreToolUse フックが fail-open している → 決めること
 
