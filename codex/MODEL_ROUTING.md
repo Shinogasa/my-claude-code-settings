@@ -1,12 +1,12 @@
-# Codex サブエージェントのモデルルーティング
+# Codexサブエージェントのモデルルーティング
 
 サブエージェントを起動するたびに、タスクの現在の状態を分類し、`model` と
-`reasoning_effort` を必ず同時に指定する。片方だけを指定して実行時既定へ委ねない。
+`reasoning_effort` を必ず同時に指定する。片方だけを指定して、残りを実行時の既定値に任せない。
 
 ## 初期値
 
 分類できない通常作業は `gpt-6-luna` + `medium` を使う。
-`~/.codex/config.toml` の `[agents]` にも同じペアを設定し、指定漏れのバックストップにする。
+`~/.codex/config.toml` の `[agents]` にも同じペアを設定し、指定し忘れたときの備えにする。
 
 ## 基準ペア
 
@@ -36,7 +36,7 @@ OpenAI公式のモデル選択指針を踏まえ、必須の通常レビュー�
 
 重大・多層・曖昧でAstra highによる追加レビューが必要な場合、またはレビューがCritical findingか
 `Confidence: insufficient`を返した場合は、`rules/security-review-policy.md`に従って人間へ
-確認する。標準レビューから上位モデルへ黙って切り替えない。
+確認する。人間に確認しないまま、標準レビューから上位モデルへ切り替えない。
 
 ## 自律的な昇降
 
@@ -48,13 +48,14 @@ OpenAI公式のモデル選択指針を踏まえ、必須の通常レビュー�
 - 作業が明確・局所的・機械的になった: 後続agentをLuna mediumまたはlowへ降格する
 - 失敗した: 回数だけで昇格せず、証拠から深さ不足・範囲不足・権限／環境問題を分類する
 
-高いtierを親から子へ惰性で継承しない。各agentへ必要最小限の文脈だけを渡し、同じ結果を
-より低いペアで安全に得られる段階では降格する。
+親が高いtierだからという理由だけで、子に同じtierを引き継がない。各agentへ必要最小限の文脈だけを渡し、
+同じ結果をより低いペアで安全に得られる段階では降格する。
 
 ## 親セッションの工程境界
 
-親AIも新しい実質的taskの調査後、承認済み成果物から別工程へ移る時、現在ペアの能力不足が
-証拠から分かった時に、次工程のmodelとeffortをペアで再分類する。同じペアなら続行する。
+親AIも、次のいずれかに当たるときは、次工程のmodelとeffortをペアで再分類する。新しい実質的なtaskの
+調査を終えたとき、承認済みの成果物から別工程へ移るとき、現在のペアの能力不足が証拠から分かったとき。
+再分類の結果が同じペアなら、そのまま続行する。
 単発の読み取り、同じ受入条件内の局所debugやtest再実行だけでは切替を開始しない。
 降格は、検証済みhandoffだけで次工程へ着手できる安定した境界で行う。
 
@@ -108,8 +109,8 @@ resumeではhookが観測するmodel、申告ペア、Git鮮度、handoff digest
 handoffと参照文書を全行取得する。overrideは保存task・工程・session・digestに束縛し、cancelで
 失効する。新しいcheckpointは標準経路で開始する。
 
-hook未承認・無効・timeout・実行不能、hosted toolと特殊tool経路を完全には強制できない。
-`/hooks`の表示だけではguard稼働を確認済みと表示しない。manifestはrepoの
+hookが未承認・無効・timeout・実行不能な場合や、hosted toolと特殊なtool経路では、制御を完全には強制できない。
+`/hooks`の表示だけを根拠に、guardの稼働を確認済みと表示しない。manifestはrepoの
 `.superpowers/model-switch/`、registryは`CODEX_HOME/model-switch-registry/`、配送記録は
 `CODEX_HOME/model-switch-preflight/`へowner-onlyで保存する。pending中のrepo外cwdは拒否する。
 指定handoffの編集はsymlink・hardlinkを拒否し、相対patchはrepo rootのcwdからだけ許す。
@@ -125,10 +126,10 @@ Codex CLI 0.154.0のhook拒否は終了0・空turnになる場合があるため
 推論強度の昇格・降格・再レビューで実行主体を変える前に、必ずMarkdownのhandoffを作る。
 会話履歴だけを引き継ぎとみなさない。
 
-Superpowersのtask briefまたはreview packageがある場合は、そのファイルを要件・差分の正本として
+Superpowersのtask briefまたはreview packageがある場合は、そのファイルを要件・差分の基準として
 再利用し、handoffの`requirements_path` / `review_package_path`からSHA-256付きで参照する。内容を
 handoffへ複製しない。該当する成果物が無い場合は`none`にし、
-`.superpowers/handoffs/<task-id>.md`の本文を正本にする。
+`.superpowers/handoffs/<task-id>.md`の本文を基準にする。
 
 handoffにはschema 1のfrontmatterとして次を記録する。
 
@@ -182,4 +183,4 @@ validatorは受信前処理で外部Git helperを実行しない。作業途中�
 
 モデルルーティングは接続先を変える権限ではない。現在の `model_provider` を変更しない。
 tool引数が欠落する、選んだモデルをproviderが提供しない、設定ペアが拒否される場合は、
-別providerへ黙って切り替えずfail-closedで停止し、観測した事実と代替案をユーザーへ示す。
+ユーザーに知らせないまま別providerへ切り替えず、fail-closedで停止する。観測した事実と代替案をユーザーへ示す。
