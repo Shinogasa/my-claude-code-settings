@@ -890,5 +890,38 @@ class TestPrefixesAndChains(TrackingFixture):
             with self.subTest(command=command):
                 self.assert_allowed(command, self.main_repo)
 
+class TestFinalReviewFindings(TrackingFixture):
+    """最終確認の指摘: 実行されない cd、リダイレクト除去の副作用、引用符付きの演算子。"""
+
+    def test_cd_that_may_be_skipped_does_not_replace_candidates(self):
+        for command in ('true || cd child && git commit -m "x"',
+                        'echo | cd child && git commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.main_repo)
+
+    def test_cd_after_semicolon_still_replaces(self):
+        result = run_guard_in('git status; cd child && git commit -m "x"',
+                              self.main_repo, self.main_repo)
+        self.assertEqual(result.returncode, ALLOW, result.stderr)
+
+    def test_redirect_to_block_device_is_still_blocked(self):
+        for command in ("dd if=/dev/zero > /dev/sda", "echo x >/dev/sda"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command), BLOCK)
+
+    def test_quoted_operator_in_message_does_not_hide_flags(self):
+        # 作業ブランチ・検証フックありのリポジトリで、--no-verify だけが判定材料になる形にする
+        hooked_work = self.repo("hooked-work", "work", with_hooks=True)
+        for command in ('git commit -m ">" --no-verify',
+                        "git commit -m '>>' -n",
+                        'git commit -m "<" --no-verify',
+                        "git commit -m ';' --no-verify",
+                        'git commit -m "a && b" --no-verify',
+                        'git commit -m x\; --no-verify'):
+            with self.subTest(command=command):
+                result = run_guard_in(command, hooked_work, hooked_work)
+                self.assertEqual(result.returncode, BLOCK, f"{command}: {result.stderr}")
+                self.assertIn("--no-verify", result.stderr)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

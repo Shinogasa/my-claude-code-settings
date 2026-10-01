@@ -72,7 +72,15 @@ import sys
 from pathlib import Path
 
 HEREDOC_RE = re.compile(r"<<[-~]?\s*['\"]?(\w+)['\"]?.*?\n.*?\n\1\b", re.DOTALL)
-CONTROL_TOKENS = {";", "&&", "||", "|", "&"}
+OPERATOR_CHARS = "|&;()<>\n"
+# 引用符の中の演算子文字を、トークン化の間だけ私用領域の文字へ退避する対応表。
+MASK_TABLE = {ord(c): 0xE000 + i for i, c in enumerate(OPERATOR_CHARS)}
+UNMASK_TABLE = {value: key for key, value in MASK_TABLE.items()}
+OPERATOR_SET = set(OPERATOR_CHARS)
+
+
+class Operator(str):
+    """引用符の外にあった演算子トークン。引用符付きの `">"` などの引数と区別する。"""
 SEPARATOR_CHARS = set(";&|\n()")
 # リダイレクト演算子。直後のトークン（宛先）と、直前の fd 番号もコマンドから除く。
 REDIRECT_CHARS = set("<>")
@@ -179,13 +187,47 @@ def tokenize_command(command: str) -> list:
     で引用符が閉じないままパース不能になり、コマンド全体の検査が素通りしていた。
     """
     lexer = shlex.shlex(
-        strip_line_continuations(command), posix=True, punctuation_chars="|&;()<>\n")
+        mask_quoted_operators(strip_line_continuations(command)),
+        posix=True, punctuation_chars=OPERATOR_CHARS)
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     try:
-        return list(lexer)
+        # 退避後も演算子文字だけでできたトークンは、引用符の外にあった本物の演算子。
+        return [Operator(tok) if set(tok) <= OPERATOR_SET else tok.translate(UNMASK_TABLE)
+                for tok in lexer]
     except ValueError:
         return []
+
+
+def mask_quoted_operators(command: str) -> str:
+    """引用符・バックスラッシュの中にある演算子文字を私用領域の文字へ退避する。
+
+    posix モードの shlex は引用符を外したトークンを返すため、`-m ">"` の `>` と
+    リダイレクトの `>` を区別できない。shlex に渡す前に退避し、トークン化の後で戻す。
+    """
+    result = []
+    quote = ""
+    escaped = False
+    for char in command:
+        if escaped:
+            result.append(char.translate(MASK_TABLE))
+            escaped = False
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            result.append(char)
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+                result.append(char)
+            else:
+                result.append(char.translate(MASK_TABLE))
+            continue
+        if char in "'\"":
+            quote = char
+        result.append(char)
+    return "".join(result)
 
 
 def is_separator(tok: str) -> bool:
@@ -194,18 +236,16 @@ def is_separator(tok: str) -> bool:
     shlex は `&&\n` や `;(` のような記号の連続を1トークンにまとめるため、
     完全一致だけで判定すると後ろのコマンドが前のコマンドに飲み込まれる。
     """
-    return bool(tok) and set(tok) <= SEPARATOR_CHARS
+    return isinstance(tok, Operator) and bool(tok) and set(tok) <= SEPARATOR_CHARS
 
 
 def split_glued_operator(tok: str) -> list:
     """`;>` のように区切りとリダイレクトが1トークンにまとまったものを分ける。"""
-    if tok in REDIRECT_OPS or not tok or not set(tok) <= SEPARATOR_CHARS | REDIRECT_CHARS:
-        return [tok]
-    if not set(tok) & REDIRECT_CHARS:
+    if not isinstance(tok, Operator) or tok in REDIRECT_OPS or not set(tok) & REDIRECT_CHARS:
         return [tok]
     index = min(tok.index(c) for c in REDIRECT_CHARS if c in tok)
     separator, redirect = tok[:index], tok[index:]
-    return [part for part in (separator, redirect) if part]
+    return [Operator(part) for part in (separator, redirect) if part]
 
 
 def strip_redirections(tokens: list) -> list:
@@ -216,8 +256,7 @@ def strip_redirections(tokens: list) -> list:
         if skip_next:
             skip_next = False
             continue
-        if tok in REDIRECT_OPS or (tok and set(tok) <= REDIRECT_CHARS | {"&", "|"}
-                                   and set(tok) & REDIRECT_CHARS):
+        if isinstance(tok, Operator) and set(tok) & REDIRECT_CHARS:
             if result and result[-1].isdigit():
                 result.pop()
             skip_next = True
@@ -250,7 +289,10 @@ def normalize_command(tokens: list) -> list:
 
 
 def split_with_operators(tokens: list) -> list:
-    """単純コマンドごとに (直前の区切り, トークン列, 直後の区切り) を返す。"""
+    """単純コマンドごとに (直前の区切り, 前処理後のトークン列, 直後の区切り, 元のトークン列) を返す。
+
+    元のトークン列は、リダイレクト先を見る検査（ブロックデバイスへの書き込み）に使う。
+    """
     expanded = [part for tok in tokens for part in split_glued_operator(tok)]
     commands = []
     previous = ""
@@ -258,7 +300,7 @@ def split_with_operators(tokens: list) -> list:
     for tok in expanded:
         if is_separator(tok):
             if current:
-                commands.append([previous, normalize_command(current), tok])
+                commands.append([previous, normalize_command(current), tok, current])
                 current = []
                 previous = tok
             else:
@@ -266,13 +308,13 @@ def split_with_operators(tokens: list) -> list:
         else:
             current.append(tok)
     if current:
-        commands.append([previous, normalize_command(current), ""])
-    return [tuple(command) for command in commands if command[1]]
+        commands.append([previous, normalize_command(current), "", current])
+    return [tuple(command) for command in commands if command[1] or command[3]]
 
 
 def split_simple_commands(tokens: list) -> list:
     """制御演算子・改行・括弧でトークン列を単純コマンド列に分割する。"""
-    return [command for _, command, _ in split_with_operators(tokens)]
+    return [command for _, command, _, _ in split_with_operators(tokens) if command]
 
 
 def is_dangerous(tokens: list) -> bool:
@@ -427,20 +469,27 @@ def cd_target_paths(tokens: list):
 
 
 def operator_kind(op: str) -> str:
-    """区切りを START（先頭）/ AND（&&）/ BREAK（それ以外）に分類する。"""
+    """区切りを分類する。
+
+    START（先頭）/ AND（&&）/ SEQ（; と改行。前の結果によらず次が走る）/
+    BREAK（||、|、&、括弧。次が走らない、または別のシェルで走る）。
+    """
     if op == "":
         return "START"
     if op.strip("\n") == "&&":
         return "AND"
+    if set(op) <= {";", "\n"}:
+        return "SEQ"
     return "BREAK"
 
 
-def apply_directory_change(tokens: list, next_op: str, candidates: set,
+def apply_directory_change(previous_op: str, tokens: list, next_op: str, candidates: set,
                            cdpath_possible: bool) -> set:
     """単純コマンドを実行した後に、シェルがいる可能性のあるディレクトリの集合を返す。
 
-    cd の直後が `&&` なら、後続は cd が成功したときだけ走るため移動先に置き換える。
-    それ以外は cd が効かない可能性があるため、移動前の候補も残す。
+    cd 自体が必ず実行され（直前が先頭・&&・;）、直後が `&&` なら、後続は cd が成功したとき
+    だけ走るため移動先に置き換える。`||` の後やパイプの中の cd は実行されない、または
+    別のシェルで走るため、移動前の候補も残す。
     移動先が今は存在しない（同じコマンド内で作られうる）場合は確定できないとみなす。
     """
     if not tokens or tokens[0] not in ("cd", "pushd", "popd"):
@@ -458,7 +507,8 @@ def apply_directory_change(tokens: list, next_op: str, candidates: set,
             moved |= {base, UNRESOLVED}
         else:
             moved.add(target)
-    if operator_kind(next_op) == "AND":
+    runs_in_this_shell = operator_kind(previous_op) in ("START", "AND", "SEQ")
+    if runs_in_this_shell and operator_kind(next_op) == "AND":
         return moved
     return candidates | moved
 
@@ -687,12 +737,13 @@ def main() -> int:
     seen = set(candidates)
     cdpath_possible = "CDPATH" in command or bool(os.environ.get("CDPATH"))
     tokens = tokenize_command(executable_part)
-    for previous_op, simple_command, next_op in split_with_operators(tokens):
-        if operator_kind(previous_op) == "BREAK":
+    for previous_op, simple_command, next_op, raw_command in split_with_operators(tokens):
+        if operator_kind(previous_op) in ("SEQ", "BREAK"):
             candidates = set(seen)
-        candidates = apply_directory_change(simple_command, next_op, candidates, cdpath_possible)
+        candidates = apply_directory_change(
+            previous_op, simple_command, next_op, candidates, cdpath_possible)
         seen |= candidates
-        if is_dangerous(simple_command):
+        if is_dangerous(simple_command) or is_dangerous(raw_command):
             print(f"ブロック: 確定的に危険なコマンドを検出しました: {command}", file=sys.stderr)
             return 2
         state_write = terraform_state_write(simple_command)
