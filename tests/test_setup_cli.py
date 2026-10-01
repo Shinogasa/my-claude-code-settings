@@ -403,6 +403,41 @@ class SetupCliTests(unittest.TestCase):
             },
         )
 
+    def write_codex_config(self):
+        (self.home / ".codex").mkdir()
+        config = self.home / ".codex" / "config.toml"
+        config.write_text('[mcp_servers.local_stdio]\ncommand = "/bin/true"\n', encoding="utf-8")
+        config.chmod(0o600)
+        return self.home / ".codex" / "personal.config.toml"
+
+    def test_codex_rerun_keeps_settings_written_by_codex(self):
+        # Codex は起動中のプロファイルへ設定保存を書き込む。setup の所有外なので競合にしない。
+        profile = self.write_codex_config()
+        self.assertEqual(run_setup(self.repository, self.home, "--codex").returncode, 0)
+        with profile.open("a", encoding="utf-8") as handle:
+            handle.write('\n[projects."/work/repo"]\ntrust_level = "trusted"\n')
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with profile.open("rb") as handle:
+            document = tomllib.load(handle)
+        self.assertEqual(document["projects"], {"/work/repo": {"trust_level": "trusted"}})
+        self.assertEqual(document["model_provider"], "openai")
+
+    def test_codex_hand_edit_of_owned_keys_is_conflict(self):
+        # 所有部分の手編集は従来どおり確認を求める。黙って戻すと編集の意図が消える。
+        profile = self.write_codex_config()
+        self.assertEqual(run_setup(self.repository, self.home, "--codex").returncode, 0)
+        edited = profile.read_text(encoding="utf-8").replace("enabled = false", "enabled = true")
+        profile.write_text(edited, encoding="utf-8")
+
+        result = run_setup(self.repository, self.home, "--codex")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("personal.config.toml", result.stderr)
+        self.assertEqual(profile.read_text(encoding="utf-8"), edited)
+
     def test_all_requires_both_host_directories_before_any_mutation(self):
         (self.home / ".claude").mkdir()
         result = run_setup(self.repository, self.home, "--all")

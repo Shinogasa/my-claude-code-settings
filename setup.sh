@@ -349,15 +349,22 @@ classify_target() {
     recorded="$(recorded_checksum "${TARGET_HOSTS[$index]}" "$destination")"
   fi
   python3 - "$STATE_TOOL" "$source" "$destination" "$recorded" \
-    "${TARGET_GENERATED[$index]}" <<'PY'
+    "${TARGET_GENERATED[$index]}" "$SCRIPT_DIR/bin/generate-codex-personal-profile.py" <<'PY'
 import importlib.util
 import sys
 
-tool, source, destination, recorded, generated = sys.argv[1:]
+tool, source, destination, recorded, generated, generator_path = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("setup_state", tool)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-print(module.classify(source, destination, recorded or None, generated == "true"))
+owned_keys = None
+if recorded.startswith(module.OWNED_DIGEST_PREFIX):
+    # 所有キーだけの記録は Codex 個人プロファイルが使う。現在の定義と照合する。
+    generator_spec = importlib.util.spec_from_file_location("generate_profile", generator_path)
+    generator = importlib.util.module_from_spec(generator_spec)
+    generator_spec.loader.exec_module(generator)
+    owned_keys = generator.OWNED_KEYS
+print(module.classify(source, destination, recorded or None, generated == "true", owned_keys))
 PY
 }
 
@@ -697,24 +704,30 @@ prepare_codex_personal_profile() {
   CODEX_PERSONAL_STAGED="$(mktemp "$CODEX_DIR/.personal.config.toml.setup.XXXXXX")" || return 1
   chmod 600 "$CODEX_PERSONAL_STAGED" || return 1
   python3 "$SCRIPT_DIR/bin/generate-codex-personal-profile.py" \
-    "$CODEX_DIR/config.toml" "$SCRIPT_DIR/codex/personal-mcp-allowlist.txt" "$CODEX_PERSONAL_STAGED"
+    "$CODEX_DIR/config.toml" "$SCRIPT_DIR/codex/personal-mcp-allowlist.txt" "$CODEX_PERSONAL_STAGED" \
+    "$CODEX_DIR/personal.config.toml"
 }
 
 commit_codex_personal_profile() {
   local state_file="$1" snapshot="$2"
   python3 - "$CODEX_PERSONAL_STAGED" "$CODEX_DIR/personal.config.toml" \
-    "$STATE_TOOL" "$state_file" "$snapshot" <<'PY'
+    "$STATE_TOOL" "$state_file" "$snapshot" \
+    "$SCRIPT_DIR/bin/generate-codex-personal-profile.py" <<'PY'
 import importlib.util
 import json
 import sys
 
-staged, destination, tool, state_path, snapshot = sys.argv[1:]
+staged, destination, tool, state_path, snapshot, generator_path = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("setup_state", tool)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+generator_spec = importlib.util.spec_from_file_location("generate_profile", generator_path)
+generator = importlib.util.module_from_spec(generator_spec)
+generator_spec.loader.exec_module(generator)
 module.install_generated_file(staged, destination, json.loads(snapshot))
 state = module.load_state(state_path)
-state["generated"][destination] = module.sha256_file(destination)
+# Codex が書き足すキーは所有外。所有キーだけの digest を記録し、追記では競合にしない。
+state["generated"][destination] = module.owned_toml_digest(destination, generator.OWNED_KEYS)
 module.save_state(state_path, state)
 PY
   CODEX_PERSONAL_STAGED=""

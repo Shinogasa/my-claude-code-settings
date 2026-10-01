@@ -10,11 +10,15 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tomllib
 from datetime import datetime
 from pathlib import Path
 
 
 DEFAULT_STATE = {"version": 1, "generated": {}}
+# 生成物の一部だけを setup が所有する場合の記録形式。
+# 例: "owned-sha256:model_provider,mcp_servers:<hex>"。所有外のキーの変更は競合にしない。
+OWNED_DIGEST_PREFIX = "owned-sha256:"
 
 
 def migrate_legacy_skills_parent(parent, repo_skills, repo_root):
@@ -96,6 +100,33 @@ def sha256_file(path):
         for chunk in iter(lambda: source_file.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def owned_toml_digest(path, keys):
+    """TOML のうち setup が所有するキーだけの digest を、記録形式で返す。"""
+    with Path(path).open("rb") as source_file:
+        document = tomllib.load(source_file)
+    owned = {key: document[key] for key in keys if key in document}
+    canonical = json.dumps(owned, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return f"{OWNED_DIGEST_PREFIX}{','.join(keys)}:{digest}"
+
+
+def matches_recorded(path, recorded, owned_keys=None):
+    """destination が前回 setup の生成内容から、所有部分で変わっていないかを返す。
+
+    owned_keys は現在の所有キー。記録時と異なれば、増えたキーの手編集を見逃すため一致にしない。
+    """
+    if not recorded.startswith(OWNED_DIGEST_PREFIX):
+        return sha256_file(path) == recorded
+    keys = recorded[len(OWNED_DIGEST_PREFIX):].rsplit(":", 1)[0].split(",")
+    if owned_keys is None or list(owned_keys) != keys:
+        return False
+    try:
+        return owned_toml_digest(path, keys) == recorded
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError, TypeError, ValueError):
+        # 読めないなら所有部分が無事か判定できない。競合として人に確認させる。
+        return False
 
 
 def snapshot_path(path):
@@ -245,7 +276,7 @@ def backup_conflict(source, backup, expected_snapshot):
         )
 
 
-def classify(source, destination, recorded, generated=False):
+def classify(source, destination, recorded, generated=False, owned_keys=None):
     """destination の所有状態を missing/linked/managed-update/conflict に分類する。"""
     source_path = Path(source).resolve()
     destination_path = Path(destination)
@@ -266,7 +297,11 @@ def classify(source, destination, recorded, generated=False):
         except OSError:
             pass
         return "conflict"
-    if recorded and destination_path.is_file() and sha256_file(destination_path) == recorded:
+    if (
+        recorded
+        and destination_path.is_file()
+        and matches_recorded(destination_path, recorded, owned_keys)
+    ):
         return "managed-update"
     return "conflict"
 

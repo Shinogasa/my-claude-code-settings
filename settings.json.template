@@ -12,7 +12,8 @@
     "serena@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
     "asana@claude-plugins-official": true,
-    "superpowers@claude-plugins-official": true
+    "superpowers@claude-plugins-official": true,
+    "swift-lsp@claude-plugins-official": true
   },
   "env": {},
   "alwaysThinkingEnabled": true,

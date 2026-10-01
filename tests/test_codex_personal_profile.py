@@ -159,6 +159,110 @@ class TestGenerator(unittest.TestCase):
             self.assertEqual(tomllib.load(f)["model_provider"], "openai")
 
 
+class TestExistingProfileOwnership(unittest.TestCase):
+    """setup が所有するのは model_provider と mcp_servers だけ。
+
+    Codex は起動中のプロファイルへ設定保存を書き込むため、それ以外のキーを
+    再生成で消すと、モデル既定や信頼設定が setup のたびに失われる。
+    """
+
+    CODEX_WRITTEN = (
+        'model = "gpt-test"\n'
+        'model_reasoning_effort = "high"\n'
+        "\n"
+        "[tui]\n"
+        'status_line = ["model", "current-dir"]\n'
+        "status_line_use_colors = true\n"
+        "\n"
+        "[tui.model_availability_nux]\n"
+        '"gpt-test" = 4\n'
+        "\n"
+        '[projects."/work/odd path"]\n'
+        'trust_level = "trusted"\n'
+        "\n"
+        '[plugins."tool@market"]\n'
+        "enabled = false\n"
+        "\n"
+        "[hooks.state]\n"
+        "\n"
+        '[hooks.state."/flags/config.toml:pre_tool_use:0:0"]\n'
+        'trusted_hash = "sha256:abc"\n'
+    )
+
+    def setUp(self):
+        self.gen = load_generator()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        self.config = self.dir / "config.toml"
+        self.allowlist = self.dir / "allowlist.txt"
+        self.existing = self.dir / "personal.config.toml"
+        self.dest = self.dir / "staged.toml"
+        self.config.write_text(
+            '[mcp_servers.local_tool]\ncommand = "/bin/true"\n', encoding="utf-8"
+        )
+        self.allowlist.write_text("local_tool\n", encoding="utf-8")
+
+    def generate(self) -> int:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return self.gen.main(
+                [str(self.config), str(self.allowlist), str(self.dest), str(self.existing)]
+            )
+
+    def test_codex_written_settings_are_preserved(self):
+        self.existing.write_text(self.CODEX_WRITTEN, encoding="utf-8")
+        self.assertEqual(self.generate(), 0)
+        result = tomllib.loads(self.dest.read_text(encoding="utf-8"))
+        expected = tomllib.loads(self.CODEX_WRITTEN)
+        for key, value in expected.items():
+            with self.subTest(key=key):
+                self.assertEqual(result[key], value)
+        self.assertEqual(result["model_provider"], "openai")
+        self.assertEqual(
+            result["mcp_servers"], {"local_tool": {"command": "/bin/true", "enabled": True}}
+        )
+
+    def test_owned_keys_in_existing_profile_are_regenerated(self):
+        # 所有キーは引き継がない。手で有効にした会社サーバが残ると deny-by-default が崩れる。
+        self.existing.write_text(
+            'model_provider = "llm_gateway"\n'
+            "[mcp_servers.stale_company]\n"
+            'url = "https://example.invalid"\n'
+            "enabled = true\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(self.generate(), 0)
+        result = tomllib.loads(self.dest.read_text(encoding="utf-8"))
+        self.assertEqual(result["model_provider"], "openai")
+        self.assertEqual(list(result["mcp_servers"]), ["local_tool"])
+
+    def test_connection_redirecting_keys_stop_without_writing(self):
+        # 所有キーに触れずに接続先を変えられるキーを引き継ぐと、個人用 provider への切替が崩れうる。
+        for text in (
+            'openai_base_url = "https://gateway.invalid"\n',
+            'chatgpt_base_url = "https://gateway.invalid"\n',
+            '[model_providers.openai]\nbase_url = "https://gateway.invalid"\n',
+            '[profiles.other]\nmodel_provider = "gateway"\n',
+            'profile = "other"\n',
+        ):
+            with self.subTest(text=text):
+                self.existing.write_text(text, encoding="utf-8")
+                self.assertNotEqual(self.generate(), 0)
+                self.assertFalse(self.dest.exists())
+
+    def test_unparseable_existing_profile_stops_without_writing(self):
+        # 読めない既存ファイルを空とみなすと、Codex 側の設定を黙って捨てる。
+        self.existing.write_text("model = \n", encoding="utf-8")
+        self.assertNotEqual(self.generate(), 0)
+        self.assertFalse(self.dest.exists())
+
+    def test_unsupported_existing_value_stops_without_writing(self):
+        # 書き出せない型を落とすと、引き継いだつもりで値が消える。
+        self.existing.write_text("seen_at = 2026-10-01T00:00:00Z\n", encoding="utf-8")
+        self.assertNotEqual(self.generate(), 0)
+        self.assertFalse(self.dest.exists())
+
+
 class TestGeneratedFileHardening(unittest.TestCase):
     """生成物そのものの扱い。いずれも失敗しても静かなので、ここで固定する。"""
 
