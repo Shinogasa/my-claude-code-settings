@@ -517,11 +517,44 @@ validate_state_path() {
   fi
 }
 
+# 配布先の親がsymlinkでrepo内へ解決されると、退避のrenameがrepoのファイルを動かし、
+# ln -s がrepo内へリンクを作る。backup_path は字句的にしか検査しないため、ここで実体を見る。
+validate_destinations_outside_repository() {
+  local destination
+  local -a destinations=()
+  for destination in "${TARGET_DESTINATIONS[@]}"; do
+    # 移行予定の配下は今は旧親リンク経由でrepoへ解決される。移行後の再検査で実体を見る。
+    ! is_pending_skill_child "$destination" || continue
+    destinations+=("$destination")
+  done
+  python3 - "$SCRIPT_DIR" ${destinations[@]+"${destinations[@]}"} <<'PY'
+import sys
+from pathlib import Path
+
+repository = Path(sys.argv[1]).resolve()
+for value in sys.argv[2:]:
+    destination = Path(value)
+    try:
+        resolved_parent = destination.parent.resolve(strict=False)
+    except (OSError, RuntimeError) as error:
+        print(f"エラー: 配布先の親を解決できません: {destination}: {error}", file=sys.stderr)
+        raise SystemExit(1)
+    if resolved_parent == repository or resolved_parent.is_relative_to(repository):
+        print(
+            f"エラー: 配布先の実体がリポジトリ内にあります: {destination} -> "
+            f"{resolved_parent / destination.name}（リポジトリ内: {repository}）",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+PY
+}
+
 validate_apply_paths() {
   local index
   for index in "${!TARGET_DESTINATIONS[@]}"; do
     validate_directory_path "$(dirname "${TARGET_DESTINATIONS[$index]}")" || return 1
   done
+  validate_destinations_outside_repository || return 1
   validate_link_target_topology || return 1
   if selected_claude; then
     validate_state_path claude || return 1

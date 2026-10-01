@@ -257,24 +257,6 @@ codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**�
 - [ ] 未設定のマシンで `codex exec "..."` が成功する
       （設定前は12〜17秒で失敗することを再現できる。成功/失敗が判別できる検査であること）
 
-### P1: `setup.sh` の退避がリポジトリ実体を巻き込む
-
-`backup_conflict()` は `os.rename(destination, backup)` するが、`backup_path()` は
-destination が host_root 配下かを**字句的にしか検査しない**。配布先の親がリポジトリを指す
-symlink になっていると、`~/.claude/skills/<name>` の実体はリポジトリ内のディレクトリなので、
-`--replace-conflicts` がリポジトリのソースを `backups/` へ移してしまう。
-その後の `ln -s` は存在しないsourceでも成功するため、壊れたリンクだけが残る。
-
-2026-08-26 のskills個別リンク移行で実際に踏みかけた。親リンクを先に外したため回避したが、
-`~/.claude/commands` は現在もリポジトリ丸ごとリンクのため、**commandsを個別リンク化した
-時点で同じ条件が再現する**。移行時の一時的な事故ではない。
-
-**決めること**: 検査を `classify()` に置くか `backup_conflict()` に置くか。
-前者はpreflightで止められるが、純粋な分類関数がリポジトリの場所を知る必要が出る。
-後者は分類の純粋さを保てるが、停止がapply直前になる。
-
-**完了条件**: destinationのrealpathが `SCRIPT_DIR` 配下のとき、退避せず失敗する回帰テストがある。
-
 ### P2: `setup.sh` に dry-run を追加する
 
 現状は実行するまで何が起きるか分からない。特に `setup_claude_plugins()` は
