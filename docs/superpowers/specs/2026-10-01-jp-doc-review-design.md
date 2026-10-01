@@ -5,8 +5,8 @@
 Claude Codeが日本語のMarkdown・設定ファイルを書いたとき、またはConfluenceへ投稿するときに、
 yomiyasuの基準で文章をレビューし、自然な日本語に直す。
 
-普段のセッションで消費するコンテキストは増やさない。yomiyasu本体（SKILL.mdとreferenceで約40KB）は
-レビュー用のサブエージェントだけが読み、メインのエージェントには結果の要約だけを返す。
+普段のセッションで消費するコンテキストは増やさない。yomiyasu本体（SKILL.mdとreferenceで約40KB）を読むのは、
+レビュー用のサブエージェントだけにする。サブエージェントは、メインのエージェントに結果の要約だけを返す。
 
 判断の経緯と却下した案は `docs/adr/0024-jp-doc-review-hook.md` に記録する。
 
@@ -50,7 +50,7 @@ yomiyasuの基準で文章をレビューし、自然な日本語に直す。
 
 | 追加・変更するもの | 役割 |
 |---|---|
-| `skills/yomiyasu`（submodule） | commitを固定したyomiyasu本体。`manifests/skills.json` の `shared` に加え、既存の仕組みで両ホストにリンクする |
+| `skills/yomiyasu`（submodule） | commitを固定したyomiyasu本体。`manifests/skills.json` の `shared` に追加し、既存の仕組みで両ホストにリンクする |
 | `hooks/jp-doc-review.py` | 1本のスクリプトで、記録・集約・Confluenceの事前チェックを担う。第1引数でイベントを切り替える |
 | `agents/jp-doc-reviewer.md` | レビュー用サブエージェント。Codex用の定義も既存の生成スクリプトで作られるが、Codexには起動するフックが無い |
 | `settings.json.template` | 3つのフックを配線する |
@@ -61,7 +61,7 @@ yomiyasuの基準で文章をレビューし、自然な日本語に直す。
 
 | 名前 | 値 | 意味 |
 |---|---|---|
-| `MIN_JP_CHARS` | 100 | レビューを起動する、書き足した日本語の最小文字数。記録・集約・Confluenceで共通 |
+| `MIN_JP_CHARS` | 100 | レビューを起動する下限。書き足した日本語の文字数で数える。記録・集約・Confluenceで共通 |
 | `TARGET_SUFFIXES` | `.md` `.toml` `.yaml` `.yml` `.json` | 記録の対象にする拡張子 |
 | `STATE_RETENTION_DAYS` | 7 | 状態ファイルを残す日数。これを過ぎたものはStopのたびに消す |
 | `REVIEWER_AGENT` | `jp-doc-reviewer` | レビュワーのagent名。記録から除外する判定にも使う |
@@ -81,8 +81,8 @@ matcherは `Write|Edit|NotebookEdit` とする。
 
 標準出力には何も出さない。だから、この段階ではコンテキストを消費しない。
 
-submoduleの判定は次のとおり。ファイルのあるディレクトリから親へたどり、`.git` がディレクトリより先に
-ファイルとして見つかれば、submoduleの中とみなす（submoduleの作業ツリーには `.git` ファイルが置かれる）。
+submoduleの判定は次のとおり。ファイルのあるディレクトリから親へたどる途中で、`.git` ディレクトリより先に
+`.git` ファイルが見つかれば、submoduleの中とみなす（submoduleの作業ツリーには `.git` ファイルが置かれる）。
 
 入力のフィールド名は一次資料と実機の入力で確かめてから実装する。
 
@@ -98,7 +98,7 @@ submoduleの判定は次のとおり。ファイルのあるディレクトリ�
    - 中身にかなを含む
    - 合計が `MIN_JP_CHARS` 以上
 3. 該当が無ければ通す。記録は残し、次のターン以降の書き込みと合算する
-4. yomiyasu（`~/.claude/skills/yomiyasu/SKILL.md`）が見つからなければblockしない。`systemMessage` でレビューを省略したことを、セッションで1回だけ表示する
+4. yomiyasu（`~/.claude/skills/yomiyasu/SKILL.md`）が見つからなければblockしない。レビューを省略したことを、`systemMessage` でセッションに1回だけ表示する
 5. 該当があれば、依頼したパスを `<session_id>.dispatched.json` に書き、`{"decision": "block", "reason": ...}` を返す
 
 reasonには、対象のパスの一覧と、次の指示を書く。
@@ -149,7 +149,7 @@ MCPサーバー名が変わっても捕まえられるように、サーバー�
 
 ## 5. 失敗時の扱い
 
-検査できなかったことを、問題なしとして黙って通さない。必ず画面に表示する。
+検査できなかったことを、問題なしとして扱わない。必ず画面に表示する。
 
 | 状況 | 振る舞い |
 |---|---|
@@ -161,7 +161,7 @@ MCPサーバー名が変わっても捕まえられるように、サーバー�
 ## 6. 導入と移行
 
 **新しいPC**: `git clone --recurse-submodules` の後に `bash setup.sh` を実行するだけで使える。
-setup.shは既にsubmoduleを初期化している。
+setup.shには、submoduleを初期化する処理が既にある。
 
 **npx版から移る既存のPC**: 先に `npx skills remove -g yomiyasu` で外してから、`bash setup.sh` を実行する。
 npx版を残したままにすると、`npx skills update` がsubmoduleへのリンクを通して、submoduleの中身を上書きする恐れがある。
@@ -194,6 +194,6 @@ setup.shは既存のリンクを衝突として検出するので、確認して
 
 - Bash経由の書き込みはレビューされない
 - レビュワー以外のサブエージェントが書いた文書が、メインのセッションの記録に入るかは実機で確かめる
-- 2回目のStopの前にメインのエージェントが新しく書いたファイルは、依頼したファイルと一緒には消えず、次のターンに回る
+- 2回目のStopの前にメインのエージェントが新しく書いたファイルは、記録が依頼したファイルと一緒には消えず、次のターンのレビュー対象に回る
 - yomiyasuのリポジトリには同じスキルの複製（`skills/yomiyasu/`）が入っているため、スキル一覧に `yomiyasu:yomiyasu` が重複して出ることがある
 - レビューのたびにopusのサブエージェントが動くので、日本語の文書を書く作業は時間とトークンが増える
