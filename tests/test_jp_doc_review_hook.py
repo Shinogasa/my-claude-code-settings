@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""hooks/jp-doc-review.py の振る舞いを、合成した入力で検証する。
+
+合成した入力でのテストは、実機で動く証拠にならない。実機の入力は
+docs/research/2026-10-02-claude-code-hook-payloads.md に記録している。
+
+実行: python3 -m unittest tests.test_jp_doc_review_hook
+"""
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+HOOK = REPO_ROOT / "hooks" / "jp-doc-review.py"
+JP_LONG = "日本語の文書をレビューするためのテスト用の文です。" * 6
+JP_HALF = "日本語の文書を少しずつ書き足すためのテスト用の文です。" * 2
+
+
+def agent_call(subagent_type):
+    return {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Agent",
+         "input": {"subagent_type": subagent_type, "description": "d", "prompt": "p"}}]}}
+
+
+class HookCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name).resolve()
+        self.state = self.base / "state"
+        self.skill = self.base / "yomiyasu" / "SKILL.md"
+        self.skill.parent.mkdir(parents=True)
+        self.skill.write_text("---\nname: yomiyasu\n---\n", encoding="utf-8")
+        self.repo = self.base / "repo"
+        (self.repo / ".git").mkdir(parents=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_hook(self, event, payload, raw=None):
+        env = {**os.environ, "JP_DOC_REVIEW_STATE_DIR": str(self.state),
+               "JP_DOC_REVIEW_YOMIYASU_SKILL": str(self.skill)}
+        env.pop("FORCE_COLOR", None)
+        result = subprocess.run(
+            [sys.executable, str(HOOK), event],
+            input=raw if raw is not None else json.dumps(payload, ensure_ascii=False),
+            capture_output=True, text=True, env=env,
+        )
+        output = json.loads(result.stdout) if result.stdout.strip() else {}
+        return result.returncode, output, result.stderr
+
+    def write_file(self, relative, text, root=None):
+        path = (root or self.repo) / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def post(self, path, text, tool="Write", session="s1", **extra):
+        key = "content" if tool == "Write" else "new_string"
+        payload = {"session_id": session, "cwd": str(self.repo), "tool_name": tool,
+                   "tool_input": {"file_path": str(path), key: text}, **extra}
+        return self.run_hook("post-tool-use", payload)
+
+    def stop(self, active=False, transcript=None, session="s1"):
+        payload = {"session_id": session, "stop_hook_active": active}
+        if transcript is not None:
+            payload["transcript_path"] = str(transcript)
+        return self.run_hook("stop", payload)
+
+    def records(self, session="s1"):
+        path = self.state / f"{session}.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+class RecordTests(HookCase):
+    def test_records_japanese_markdown_without_output(self):
+        path = self.write_file("docs/a.md", JP_LONG)
+        code, output, _ = self.post(path, JP_LONG)
+        self.assertEqual((code, output), (0, {}))
+        # JP_LONG の日本語の文字数は144（句点「。」は数えない）
+        self.assertEqual(self.records(), [{"path": str(path), "jp_chars": 144}])
+
+    def test_counts_only_japanese_characters(self):
+        path = self.write_file("a.md", "x")
+        self.post(path, "abc 日本語です。 def")
+        self.assertEqual(self.records()[0]["jp_chars"], 5)
+
+    def test_text_without_kana_is_not_recorded(self):
+        path = self.write_file("a.md", "x")
+        self.post(path, "中文文档没有假名" * 20)
+        self.assertEqual(self.records(), [])
+
+    def test_ignores_non_target_suffix_and_lockfiles(self):
+        for relative in ("a.py", "package-lock.json", "pnpm-lock.yaml"):
+            self.post(self.write_file(relative, "x"), JP_LONG)
+        self.assertEqual(self.records(), [])
+
+    def test_ignores_excluded_directories_inside_repository(self):
+        for relative in ("node_modules/p/README.md", "vendor/a.md", "dist/a.md", "build/a.md"):
+            self.post(self.write_file(relative, "x"), JP_LONG)
+        self.assertEqual(self.records(), [])
+
+    def test_excluded_names_above_repository_root_do_not_matter(self):
+        repo = self.base / "build" / "project"
+        (repo / ".git").mkdir(parents=True)
+        path = self.write_file("a.md", "x", root=repo)
+        self.post(path, JP_LONG)
+        self.assertEqual(len(self.records()), 1)
+
+    def test_ignores_files_inside_submodule(self):
+        sub = self.repo / "skills" / "ext"
+        sub.mkdir(parents=True)
+        (sub / ".git").write_text("gitdir: ../../.git/modules/skills/ext\n", encoding="utf-8")
+        self.post(self.write_file("skills/ext/README.md", "x"), JP_LONG)
+        self.assertEqual(self.records(), [])
+
+    def test_records_files_inside_worktree(self):
+        worktree = self.base / "wt"
+        worktree.mkdir()
+        (worktree / ".git").write_text(f"gitdir: {self.repo}/.git/worktrees/wt\n", encoding="utf-8")
+        self.post(self.write_file("a.md", "x", root=worktree), JP_LONG)
+        self.assertEqual(len(self.records()), 1)
+
+    def test_ignores_reviewer_writes(self):
+        self.post(self.write_file("a.md", "x"), JP_LONG, agent_type="jp-doc-reviewer")
+        self.assertEqual(self.records(), [])
+
+    def test_ignores_drafts_directory(self):
+        draft = self.state / "drafts" / "s1-abc.md"
+        draft.parent.mkdir(parents=True)
+        draft.write_text("x", encoding="utf-8")
+        self.post(draft, JP_LONG)
+        self.assertEqual(self.records(), [])
+
+    def test_symlinked_path_is_recorded_as_real_path(self):
+        real = self.write_file("rules/a.md", "x")
+        alias_dir = self.base / "alias"
+        alias_dir.symlink_to(self.repo / "rules")
+        self.post(alias_dir / "a.md", JP_HALF)
+        self.post(real, JP_HALF, tool="Edit")
+        self.assertEqual({record["path"] for record in self.records()}, {str(real)})
+
+    def test_relative_path_is_resolved_against_cwd(self):
+        path = self.write_file("a.md", "x")
+        payload = {"session_id": "s1", "cwd": str(self.repo), "tool_name": "Write",
+                   "tool_input": {"file_path": "a.md", "content": JP_LONG}}
+        self.run_hook("post-tool-use", payload)
+        self.assertEqual(self.records()[0]["path"], str(path))
+
+    def test_unsafe_session_id_stays_inside_state_directory(self):
+        self.post(self.write_file("a.md", "x"), JP_LONG, session="../../escape")
+        written = list(self.state.rglob("*.jsonl"))
+        self.assertEqual(len(written), 1)
+        self.assertEqual(written[0].parent, self.state)
+
+
+class ErrorTests(HookCase):
+    def test_invalid_json_fails_loudly_without_blocking(self):
+        code, output, stderr = self.run_hook("post-tool-use", None, raw="{broken")
+        self.assertEqual((code, output), (1, {}))
+        self.assertIn("jp-doc-review post-tool-use", stderr)
+
+    def test_missing_session_id_fails_loudly(self):
+        path = self.write_file("a.md", "x")
+        code, _, stderr = self.run_hook("post-tool-use", {"tool_name": "Write", "tool_input": {"file_path": str(path), "content": JP_LONG}})
+        self.assertEqual(code, 1)
+        self.assertIn("session_id", stderr)
+
+    def test_unknown_event_fails(self):
+        code, _, stderr = self.run_hook("unknown", {})
+        self.assertEqual(code, 1)
+        self.assertIn("使い方", stderr)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
