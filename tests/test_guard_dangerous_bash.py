@@ -952,6 +952,24 @@ class TestCommentsAndParseFailures(TrackingFixture):
             with self.subTest(command=command):
                 self.assert_no_verify_blocked(command)
 
+    def test_hash_after_escaped_space_is_not_a_comment(self):
+        for command in ("git commit -m fix\\ #12 --no-verify",
+                        "echo a\\ #x; git commit --no-verify -m y"):
+            with self.subTest(command=command):
+                self.assert_no_verify_blocked(command)
+
+    def test_backslash_newline_does_not_continue_a_comment(self):
+        self.assert_no_verify_blocked("echo x # note \\\ngit commit --no-verify -m y")
+
+    def test_hash_after_closing_paren_is_not_a_comment(self):
+        self.assert_no_verify_blocked("echo $(pwd)#x; git commit --no-verify -m y")
+
+    def test_unparseable_command_with_git_or_device_fails_closed(self):
+        for command in ("echo $'\\''; git \"com\"mit -m x",
+                        "echo $'\\'' ; echo x >/dev/sda"):
+            with self.subTest(command=command):
+                self.assert_no_verify_blocked(command)
+
     def test_comment_only_and_unrelated_parse_failure_are_allowed(self):
         for command in ("# just a comment", 'echo "unterminated'):
             with self.subTest(command=command):

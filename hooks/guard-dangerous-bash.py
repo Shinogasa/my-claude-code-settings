@@ -77,6 +77,8 @@ OPERATOR_CHARS = "|&;()<>\n"
 MASK_TABLE = {ord(c): 0xE000 + i for i, c in enumerate(OPERATOR_CHARS)}
 UNMASK_TABLE = {value: key for key, value in MASK_TABLE.items()}
 OPERATOR_SET = set(OPERATOR_CHARS)
+# 直後の # がコメントの始まりになる文字。`)` は語の途中（$(...)#）でありうるため含めない。
+COMMENT_START_AFTER = set(" \t\r") | (OPERATOR_SET - {")"})
 
 
 class Operator(str):
@@ -135,7 +137,8 @@ TERRAFORM_SAFE_FLAGS = {
 TERRAFORM_GLOBAL_FLAGS = {"chdir", "help", "version"}
 GIT_TIMEOUT_SEC = 3
 # 解析できないコマンドのうち、止める対象になりうる語。含まなければ従来どおり通す。
-UNPARSEABLE_RISK_RE = re.compile(r"\b(commit|push|reset|rm|terraform|dd)\b|--no-verify|(^|[\s;&|(])-n\b")
+UNPARSEABLE_RISK_RE = re.compile(
+    r"\b(git|commit|push|reset|rm|terraform|dd)\b|--no-verify|/dev/|(^|[\s;&|(])-n\b")
 # cd の移動先を確定できないことを表す。空文字列（判定対象なし）とは区別する。
 UNRESOLVED = None
 # hook がシェルと同じ展開をできない文字。含む cd の移動先は確定できないとみなす。
@@ -191,7 +194,8 @@ def tokenize_command(command: str):
     で引用符が閉じないままパース不能になり、コマンド全体の検査が素通りしていた。
     """
     lexer = shlex.shlex(
-        mask_quoted_operators(strip_line_continuations(command)),
+        # コメントを先に取り除く。行継続を先に畳むと、コメント末尾の \ が次の行を飲み込む。
+        strip_line_continuations(mask_quoted_operators(command)),
         posix=True, punctuation_chars=OPERATOR_CHARS)
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
@@ -225,15 +229,19 @@ def mask_quoted_operators(command: str) -> str:
                 result.append(char)
                 previous = char
             continue
+        # `)` の直後は $(...)# のように語の途中でありうるため、コメントの始まりにしない。
         if not quote and not escaped and char == "#" and (
-                previous == "" or previous in " \t\r" or previous in OPERATOR_CHARS):
+                previous == "" or previous in COMMENT_START_AFTER):
             in_comment = True
             continue
-        previous = char
         if escaped:
-            result.append(char.translate(MASK_TABLE))
+            # 行継続の改行は後段で取り除くため、退避せずに残す
+            result.append(char if char == "\n" else char.translate(MASK_TABLE))
             escaped = False
+            # エスケープされた空白は語の一部。直後の # をコメントにしない。
+            previous = "\\"
             continue
+        previous = char
         if char == "\\" and quote != "'":
             escaped = True
             result.append(char)
