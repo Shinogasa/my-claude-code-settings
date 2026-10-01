@@ -134,6 +134,8 @@ TERRAFORM_SAFE_FLAGS = {
 # terraform 自体のグローバルオプション。サブコマンドのフラグと混同しない。
 TERRAFORM_GLOBAL_FLAGS = {"chdir", "help", "version"}
 GIT_TIMEOUT_SEC = 3
+# 解析できないコマンドのうち、止める対象になりうる語。含まなければ従来どおり通す。
+UNPARSEABLE_RISK_RE = re.compile(r"\b(commit|push|reset|rm|terraform|dd)\b|--no-verify|(^|[\s;&|(])-n\b")
 # cd の移動先を確定できないことを表す。空文字列（判定対象なし）とは区別する。
 UNRESOLVED = None
 # hook がシェルと同じ展開をできない文字。含む cd の移動先は確定できないとみなす。
@@ -177,8 +179,10 @@ def strip_line_continuations(command: str) -> str:
     return command.replace("\\\n", "")
 
 
-def tokenize_command(command: str) -> list:
-    """シェルの引用規則を尊重してコマンド全体をトークン化する。パース不能なら空リスト。
+def tokenize_command(command: str):
+    """シェルの引用規則を尊重してコマンド全体をトークン化する。パース不能なら None。
+
+    空リストに畳むと「検査するものが無い」と区別できず素通しになるため、None で返す。
 
     改行を whitespace から外して punctuation_chars に回すことで、裸の改行
     (クォート外・コマンド置換の外にあるもの) を独立トークンとして残す。
@@ -191,12 +195,15 @@ def tokenize_command(command: str) -> list:
         posix=True, punctuation_chars=OPERATOR_CHARS)
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
+    # コメントは退避の段階でシェルと同じ規則（語の先頭の # だけ）で取り除く。
+    # shlex の既定は語の途中の # もコメントとみなし、後ろのコマンドを落とす。
+    lexer.commenters = ""
     try:
         # 退避後も演算子文字だけでできたトークンは、引用符の外にあった本物の演算子。
         return [Operator(tok) if set(tok) <= OPERATOR_SET else tok.translate(UNMASK_TABLE)
                 for tok in lexer]
     except ValueError:
-        return []
+        return None
 
 
 def mask_quoted_operators(command: str) -> str:
@@ -208,7 +215,21 @@ def mask_quoted_operators(command: str) -> str:
     result = []
     quote = ""
     escaped = False
+    in_comment = False
+    previous = ""
     for char in command:
+        if in_comment:
+            # 引用符の追跡をずらさないよう、コメントの中身は捨てる
+            if char == "\n":
+                in_comment = False
+                result.append(char)
+                previous = char
+            continue
+        if not quote and not escaped and char == "#" and (
+                previous == "" or previous in " \t\r" or previous in OPERATOR_CHARS):
+            in_comment = True
+            continue
+        previous = char
         if escaped:
             result.append(char.translate(MASK_TABLE))
             escaped = False
@@ -737,6 +758,15 @@ def main() -> int:
     seen = set(candidates)
     cdpath_possible = "CDPATH" in command or bool(os.environ.get("CDPATH"))
     tokens = tokenize_command(executable_part)
+    if tokens is None:
+        # 解析できないなら判定もできない。対象になりうる語を含むときだけ止める。
+        if UNPARSEABLE_RISK_RE.search(executable_part):
+            print("ブロック: コマンドを解析できないため、安全か判定できません。", file=sys.stderr)
+            print("  引用符の組み合わせ（$'...' や \"$(...)\" の中の引用符など）を単純にして、",
+                  file=sys.stderr)
+            print("  コマンドを分けて実行し直してください。", file=sys.stderr)
+            return 2
+        return 0
     for previous_op, simple_command, next_op, raw_command in split_with_operators(tokens):
         if operator_kind(previous_op) in ("SEQ", "BREAK"):
             candidates = set(seen)

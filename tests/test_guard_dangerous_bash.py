@@ -923,5 +923,40 @@ class TestFinalReviewFindings(TrackingFixture):
                 self.assertEqual(result.returncode, BLOCK, f"{command}: {result.stderr}")
                 self.assertIn("--no-verify", result.stderr)
 
+class TestCommentsAndParseFailures(TrackingFixture):
+    """最終確認の指摘: コメント内の引用符、語の途中の #、パース失敗で素通ししないこと。"""
+
+    def setUp(self):
+        super().setUp()
+        self.hooked_work = self.repo("hooked-work", "work", with_hooks=True)
+
+    def assert_no_verify_blocked(self, command):
+        result = run_guard_in(command, self.hooked_work, self.hooked_work)
+        self.assertEqual(result.returncode, BLOCK, f"{command}: {result.stderr}")
+
+    def test_quote_inside_comment_does_not_desync_operators(self):
+        for command in ("# don't skip the hooks\ngit add . && git commit --no-verify -m x",
+                        '# say "hi\ngit add . ; git commit --no-verify -m x'):
+            with self.subTest(command=command):
+                self.assert_no_verify_blocked(command)
+
+    def test_hash_in_middle_of_word_is_not_a_comment(self):
+        self.assert_no_verify_blocked("curl http://h/p#frag; git commit --no-verify -m x")
+
+    def test_hash_inside_quotes_is_not_a_comment(self):
+        self.assert_no_verify_blocked('git commit -m "fix #12" --no-verify')
+
+    def test_unparseable_command_with_commit_fails_closed(self):
+        for command in ("echo $'\\''; git commit --no-verify -m x",
+                        'echo "$(printf \'"\')"; git commit --no-verify -m x'):
+            with self.subTest(command=command):
+                self.assert_no_verify_blocked(command)
+
+    def test_comment_only_and_unrelated_parse_failure_are_allowed(self):
+        for command in ("# just a comment", 'echo "unterminated'):
+            with self.subTest(command=command):
+                result = run_guard_in(command, self.main_repo, self.main_repo)
+                self.assertEqual(result.returncode, ALLOW, result.stderr)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
