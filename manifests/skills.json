@@ -20,7 +20,8 @@
         "source-command-pr-create",
         "source-command-refactor-clean",
         "source-command-test-coverage",
-        "verification-loop"
+        "verification-loop",
+        "yomiyasu"
     ],
     "claude": [
         "claude-code-best-practice"
