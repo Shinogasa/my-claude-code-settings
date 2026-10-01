@@ -284,23 +284,6 @@ symlink になっていると、`~/.claude/skills/<name>` の実体はリポジ�
 **完了条件**: 配布先の分類（missing / linked / managed-update / conflict）とplugin導入予定を、
 副作用なしで列挙できる。
 
-### P1: `setup.sh` が旧形式skillsの移行後に競合で止まり、skillsが空になる
-
-2026-10-01 に `bash setup.sh --all` を実行したところ、`~/.claude/skills` の旧形式symlinkを
-実ディレクトリへ移行した**後で**、生成ファイル2件（`~/.claude/settings.json`、
-`~/.codex/personal.config.toml`）の競合を検知して終了コード1で止まった。
-skill個別リンクの作成前だったため、`~/.claude/skills` には追跡外の `synced/` だけが残り、
-新しいClaude Codeセッションで自作skillが見えない状態になった。
-`bash setup.sh --claude --replace-conflicts` で復旧した（skillリンク22本）。
-Codex側は個人プロファイルの所有をキー単位に分けた後（ADR 0023）、
-`bash setup.sh --codex --replace-conflicts` で復旧した。
-
-**決めること**: 移行を競合検査の後へ動かすか、移行後に競合で止まった場合も
-skill個別リンクまでは張るか。前者は「事前検査で止まれば何も変えない」契約に揃う。
-
-**完了条件**: 旧形式の親symlinkと生成ファイルの競合が同時にある状態で実行しても、
-skillsが空の状態で終了しない回帰テストがある。
-
 ### P1: `cxp` で MCP の有効・無効を allowlist と照合する
 
 2026-10-01 のセキュリティレビュー（ADR 0023）の指摘。`cxp` は個人プロファイルの

@@ -665,6 +665,38 @@ class SetupPreflightTests(unittest.TestCase):
         self.assertIn("synced", result.stderr)
         self.assertIn("personal-note", result.stderr)
 
+    def test_legacy_parent_with_conflict_stops_before_migration(self):
+        """競合で止まるなら移行もしない。移行だけ済むとskillsが空のまま残る。"""
+        parent = self.legacy_parent()
+        synced = self.repository / "skills/synced/x/SKILL.md"
+        synced.parent.mkdir(parents=True)
+        synced.write_text("同期skill\n", encoding="utf-8")
+        settings = self.home / ".claude/settings.json"
+        settings.write_text('{"user": "owned"}\n', encoding="utf-8")
+
+        result = self.run_tracked_setup("--claude")
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("conflict:", result.stderr)
+        self.assertTrue(parent.is_symlink())
+        self.assertEqual(parent.resolve(), (self.repository / "skills").resolve())
+        self.assertEqual(synced.read_text(encoding="utf-8"), "同期skill\n")
+        self.assertEqual(list(parent.parent.glob("skills.migrating.*")), [])
+        self.assertEqual(settings.read_text(encoding="utf-8"), '{"user": "owned"}\n')
+
+    def test_legacy_parent_with_replaced_conflict_migrates_and_links(self):
+        """置換を指示した競合なら、移行・退避・リンク作成まで1回で完了する。"""
+        parent = self.legacy_parent()
+        settings = self.home / ".claude/settings.json"
+        settings.write_text('{"user": "owned"}\n', encoding="utf-8")
+
+        result = self.run_tracked_setup("--claude", "--replace-conflicts")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_manifest_links(parent, "claude")
+        backups = list((self.home / ".claude/backups").rglob("settings.json"))
+        self.assertEqual(len(backups), 1)
+
     def test_legacy_parent_keeps_tracked_skill_content_and_inode(self):
         """4: git追跡中のskillは内容・inodeとも変えずrepoに残す。"""
         self.legacy_parent()
