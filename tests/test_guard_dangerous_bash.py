@@ -689,5 +689,86 @@ class TestProtectedBranchCommit(unittest.TestCase):
         self.assertEqual(run_guard('echo "git commit -m x"', cwd=self.on_main), ALLOW)
 
 
+def run_guard_in(command, payload_cwd, process_cwd):
+    """payload の cwd と hook プロセスの cwd を別々に指定して実行する。"""
+    payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(payload_cwd)}
+    return subprocess.run(
+        [sys.executable, str(GUARD)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        cwd=str(process_cwd),
+    )
+
+
+class TestNestedRepositoryTarget(unittest.TestCase):
+    """コマンド内の cd と相対 -C を、payload の cwd 基準で解決して判定する。
+
+    payload の cwd は前回までの cd に追従するが、同じコマンド内の cd は反映されない。
+    親リポジトリの main を理由に、子リポジトリの作業ブランチのコミットを止めていた。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.parent_main = self.repo("parent-main", "main")
+        self.child_work = self.repo("parent-main/child", "work")
+        self.parent_work = self.repo("parent-work", "work")
+        self.child_main = self.repo("parent-work/child", "main")
+        self.elsewhere = self.base / "elsewhere"
+        self.elsewhere.mkdir()
+
+    def repo(self, relative, branch, with_hooks=False):
+        path = self.base / relative
+        path.mkdir(parents=True)
+        return make_repo(path, with_hooks=with_hooks, branch=branch)
+
+    def test_cd_into_child_on_work_branch_is_allowed(self):
+        result = run_guard_in('cd child && git commit -m "x"', self.parent_main, self.parent_main)
+        self.assertEqual(result.returncode, ALLOW, result.stderr)
+
+    def test_cd_into_child_on_main_is_blocked(self):
+        result = run_guard_in('cd child && git commit -m "x"', self.parent_work, self.parent_work)
+        self.assertEqual(result.returncode, BLOCK)
+        self.assertIn("保護ブランチ", result.stderr)
+
+    def test_relative_dash_c_is_resolved_from_payload_cwd(self):
+        # hook プロセスの cwd が別の場所でも、相対パスは payload の cwd を基準にする
+        allowed = run_guard_in('git -C child commit -m "x"', self.parent_main, self.elsewhere)
+        self.assertEqual(allowed.returncode, ALLOW, allowed.stderr)
+        blocked = run_guard_in('git -C child commit -m "x"', self.parent_work, self.elsewhere)
+        self.assertEqual(blocked.returncode, BLOCK)
+
+    def test_dash_c_after_cd_is_resolved_from_moved_directory(self):
+        result = run_guard_in('cd .. && git -C parent-main/child commit -m "x"',
+                              self.parent_work, self.parent_work)
+        self.assertEqual(result.returncode, ALLOW, result.stderr)
+
+    def test_unresolvable_cd_before_commit_is_blocked_with_guidance(self):
+        for command in ('cd "$DIR" && git commit -m "x"',
+                        'cd - && git commit -m "x"',
+                        'cd $(git rev-parse --show-toplevel) && git commit -m "x"',
+                        'pushd child && git commit -m "x"'):
+            with self.subTest(command=command):
+                result = run_guard_in(command, self.parent_work, self.parent_work)
+                self.assertEqual(result.returncode, BLOCK)
+                self.assertIn("特定できません", result.stderr)
+                self.assertIn("git -C", result.stderr)
+
+    def test_unresolvable_cd_without_commit_is_allowed(self):
+        # 止めるのは commit を含むときだけ。範囲を広げると hook ごと外される
+        result = run_guard_in('cd "$DIR" && ls', self.parent_main, self.parent_main)
+        self.assertEqual(result.returncode, ALLOW, result.stderr)
+
+    def test_no_verify_after_cd_checks_moved_repository(self):
+        # 検証フックの有無も、移動先のリポジトリで判定する
+        hooked = self.repo("elsewhere/hooked", "work", with_hooks=True)
+        result = run_guard_in(f'cd {hooked} && git commit --no-verify -m "x"',
+                              self.parent_work, self.parent_work)
+        self.assertEqual(result.returncode, BLOCK)
+        self.assertIn("--no-verify", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

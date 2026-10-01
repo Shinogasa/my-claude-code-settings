@@ -35,9 +35,14 @@ allowlist なら新しい読み取り操作が誤ってブロックされる。�
 初回コミット (unborn branch) と detached HEAD は、切るべき作業ブランチが
 存在しない・既に名前付きブランチ上にないため対象外。
 
-既知の限界: 判定には PreToolUse が渡す cwd と `git -C` の値を使う。
-`cd other-repo && git commit` のようにコマンド内でディレクトリを移動された場合、
-移動先を追跡しないため検出できない。--no-verify 判定も同じ制約を持つ。
+判定対象のリポジトリは、PreToolUse が渡す cwd を起点に、同じコマンド内の `cd` と
+`git -C` を順に適用して決める。cwd は前回までの cd に追従するが、同じコマンド内の
+cd は反映されないため、ここで追う。相対パスは hook プロセスの cwd ではなく、この起点から解決する。
+移動先を文字列から確定できない cd（変数、`cd -`、コマンド置換、pushd / popd）の後に
+git commit / --no-verify がある場合は、推測で判定せず止めて `git -C <path>` を案内する。
+止めるのは commit / --no-verify を含むときだけに絞る（範囲を広げると hook ごと外される）。
+
+既知の限界: サブシェル `( ... )` 内の cd は追わない。
 
 コマンド文字列全体への正規表現マッチではなく、シェルの引用規則を
 尊重してトークン化した上で、各サブコマンドの先頭トークン(コマンド名)
@@ -100,6 +105,8 @@ TERRAFORM_SAFE_FLAGS = {
 # terraform 自体のグローバルオプション。サブコマンドのフラグと混同しない。
 TERRAFORM_GLOBAL_FLAGS = {"chdir", "help", "version"}
 GIT_TIMEOUT_SEC = 3
+# cd の移動先を確定できないことを表す。空文字列（判定対象なし）とは区別する。
+UNRESOLVED = None
 
 RM_FLAG_RE = re.compile(r"^-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*$|^-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*$")
 RM_TARGET_RE = re.compile(r"^(/|~)$|^/\*$")
@@ -311,8 +318,45 @@ def git_dash_c_path(tokens: list) -> str:
     return ""
 
 
-def commit_target_dir(tokens: list, cwd: str) -> str:
-    """git commit ならブランチ判定に使うディレクトリを返す。commit でなければ空文字列。"""
+def resolve_dir(base, path: str):
+    """base から path へ移動した先を返す。確定できなければ UNRESOLVED。"""
+    if "$" in path or "`" in path:
+        return UNRESOLVED
+    expanded = os.path.expanduser(path)
+    if os.path.isabs(expanded):
+        return os.path.normpath(expanded)
+    if base is UNRESOLVED:
+        return UNRESOLVED
+    return os.path.normpath(os.path.join(base, expanded))
+
+
+def apply_directory_change(tokens: list, current):
+    """cd / pushd / popd なら移動後のディレクトリを返す。それ以外は current のまま。"""
+    if not tokens:
+        return current
+    if tokens[0] in ("pushd", "popd"):
+        return UNRESOLVED
+    if tokens[0] != "cd":
+        return current
+    paths = [token for token in tokens[1:] if token == "-" or not token.startswith("-")]
+    if not paths:
+        return resolve_dir(current, "~")
+    if len(paths) > 1 or paths[0] == "-":
+        return UNRESOLVED
+    return resolve_dir(current, paths[0])
+
+
+def git_target_dir(tokens: list, current):
+    """git コマンドが操作するディレクトリを返す。`-C` は current から解決する。"""
+    dash_c = git_dash_c_path(tokens)
+    return resolve_dir(current, dash_c) if dash_c else current
+
+
+def commit_target_dir(tokens: list, current):
+    """git commit ならブランチ判定に使うディレクトリを返す。commit でなければ空文字列。
+
+    移動先を確定できない場合は UNRESOLVED を返す。空文字列に畳むと素通しと区別できない。
+    """
     if not tokens or tokens[0] != "git":
         return ""
 
@@ -320,7 +364,7 @@ def commit_target_dir(tokens: list, cwd: str) -> str:
     if subcommand != "commit":
         return ""
 
-    return git_dash_c_path(tokens) or cwd
+    return git_target_dir(tokens, current)
 
 
 def run_git(cwd: str, *args: str) -> str:
@@ -493,10 +537,12 @@ def main() -> int:
     executable_part = strip_heredocs(command)
     cwd = payload.get("cwd") or os.getcwd()
 
-    has_bypass = False
+    bypass_dirs = []
     commit_dirs = []
+    current_dir = os.path.abspath(cwd)
     tokens = tokenize_command(executable_part)
     for simple_command in split_simple_commands(tokens):
+        current_dir = apply_directory_change(simple_command, current_dir)
         if is_dangerous(simple_command):
             print(f"ブロック: 確定的に危険なコマンドを検出しました: {command}", file=sys.stderr)
             return 2
@@ -548,14 +594,24 @@ def main() -> int:
                   "あなた自身が端末で実行してください。", file=sys.stderr)
             return 2
         if is_verification_bypass(simple_command):
-            has_bypass = True
-        target = commit_target_dir(simple_command, cwd)
-        if target:
+            bypass_dirs.append(git_target_dir(simple_command, current_dir))
+        target = commit_target_dir(simple_command, current_dir)
+        if target != "":
             commit_dirs.append(target)
+
+    if UNRESOLVED in bypass_dirs or UNRESOLVED in commit_dirs:
+        print("ブロック: git commit の対象リポジトリを特定できません。", file=sys.stderr)
+        print("  同じコマンド内の cd の移動先（変数、cd -、コマンド置換、pushd / popd）を",
+              file=sys.stderr)
+        print("  文字列から確定できないため、保護ブランチと検証フックを判定できません。",
+              file=sys.stderr)
+        print("  対象を明示して実行し直してください:", file=sys.stderr)
+        print("      git -C <リポジトリのパス> commit ...", file=sys.stderr)
+        return 2
 
     # git config の参照は毎回の Bash 呼び出しに載せたくないため、
     # 該当コマンドが実際にあったときだけリポジトリを調べる。
-    if has_bypass and verification_hooks_active(cwd):
+    if any(verification_hooks_active(target) for target in bypass_dirs):
         print("ブロック: git の検証フックをスキップしようとしています (--no-verify)。",
               file=sys.stderr)
         print("  このリポジトリには検証フックが設定されています。", file=sys.stderr)
