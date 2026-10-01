@@ -292,7 +292,8 @@ symlink になっていると、`~/.claude/skills/<name>` の実体はリポジ�
 skill個別リンクの作成前だったため、`~/.claude/skills` には追跡外の `synced/` だけが残り、
 新しいClaude Codeセッションで自作skillが見えない状態になった。
 `bash setup.sh --claude --replace-conflicts` で復旧した（skillリンク22本）。
-Codex側は下記の理由で競合を残しており、`~/.agents/skills/learning-mode` のリンクが未作成。
+Codex側は個人プロファイルの所有をキー単位に分けた後（ADR 0023）、
+`bash setup.sh --codex --replace-conflicts` で復旧した。
 
 **決めること**: 移行を競合検査の後へ動かすか、移行後に競合で止まった場合も
 skill個別リンクまでは張るか。前者は「事前検査で止まれば何も変えない」契約に揃う。
@@ -300,18 +301,27 @@ skill個別リンクまでは張るか。前者は「事前検査で止まれば
 **完了条件**: 旧形式の親symlinkと生成ファイルの競合が同時にある状態で実行しても、
 skillsが空の状態で終了しない回帰テストがある。
 
-### P1: Codex個人プロファイルの再生成がCodex側の追記を消す
+### P1: `cxp` で MCP の有効・無効を allowlist と照合する
 
-`~/.codex/personal.config.toml` は `bin/generate-codex-personal-profile.py` が
-`config.toml` とallowlistから生成する。Codexはこのプロファイルへ `model`、
-`model_reasoning_effort`、`[tui]`、`[projects]` の信頼設定、`[plugins]` の無効化を書き足すため、
-次回のsetupで競合になる。`--replace-conflicts` で再生成するとこれらが消える（差分61行を確認）。
-2026-10-01 時点ではユーザーが追記の維持を選び、Codex側の競合は未解消のまま残している。
+2026-10-01 のセキュリティレビュー（ADR 0023）の指摘。`cxp` は個人プロファイルの
+`enabled` が boolean であることしか検査しないため、会社の MCP サーバを手で `enabled = true` に
+すると起動できてしまう。setup の所有判定で検知できるのは次回の setup 実行時だけ。
 
-**決めること**: 生成物にMCP以外の既存セクションを引き継ぐか、Codexの追記先を
-base設定へ寄せてプロファイルは生成専用に保つか。
+**完了条件**: allowlist 外のサーバが `enabled = true` のプロファイルで、`cxp` が起動前に止まる回帰テストがある。
 
-**完了条件**: Codexが追記した上記の設定を保ったまま、`setup.sh --codex` が競合なしで完了する。
+### P2: Codex個人プロファイルで引き継いだ値の変化を表示する
+
+同じレビューの指摘。setup は所有外のキー名しか表示しないため、`[projects]` の信頼設定や
+`[hooks.state]` の `trusted_hash`、`[plugins]` の有効化（plugin同梱のMCPを含む）が変わっても気づけない。
+
+**決めること**: 前回生成時との差分を表示するか、所有外キーの digest を別に記録して変化時に警告するか。
+
+**完了条件**: 所有外のキーの値が前回の生成から変わったとき、setup の出力で分かる。
+
+### P3: 個人プロファイル生成の一時ファイルを `mkstemp` にする
+
+同じレビューの指摘（Low）。`write_profile` は固定名の `<dest>.tmp` を使う。setup からは
+`mktemp` の宛先で呼ぶため実害は無いが、手動実行時の固定名は避けたい。
 
 ### P2: `setup.sh` の failure と policy violation を別の出口にする
 

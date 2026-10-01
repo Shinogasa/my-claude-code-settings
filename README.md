@@ -384,6 +384,14 @@ allowlist へ追加したサーバは base の headers、token 環境変数、ar
 生成後にサーバが追加・削除された場合、または `url` / `command` が変わった場合、
 `cxp` は起動前に不一致を検出し、`setup.sh` の再実行を促して停止する。
 
+#### Codex が保存した設定は引き継ぐ
+
+`setup.sh` が所有するのは `model_provider` と `[mcp_servers.*]` だけである。Codex は `cxp` の
+セッションで保存した設定（モデル既定、project の信頼、ステータスライン、hook の信頼など）を
+このプロファイルへ書き込むため、それ以外のキーは再生成時にそのまま引き継ぐ。引き継いだキーは
+`setup.sh` の出力に一覧で表示される。所有キーを手で編集した場合だけ、次回の `setup.sh` が
+競合として止まる。経緯は `docs/adr/0023-codex-personal-profile-key-ownership.md` を参照。
+
 **検査の範囲**: `config.toml` の `[mcp_servers.*]` のみ。プラグイン marketplace 由来の
 MCP サーバ（`~/.codex/plugins/` 配下で定義され `codex mcp list` には出る）は
 `config.toml` に現れないため、この生成にも検査にも**含まれない**。
