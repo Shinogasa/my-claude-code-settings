@@ -976,5 +976,25 @@ class TestCommentsAndParseFailures(TrackingFixture):
                 result = run_guard_in(command, self.main_repo, self.main_repo)
                 self.assertEqual(result.returncode, ALLOW, result.stderr)
 
+class TestDestructivePushTarget(TrackingFixture):
+    """force push / 削除の宛先ブランチも、commit と同じ候補集合から判定する。"""
+
+    def assert_result(self, command, cwd, expected):
+        result = run_guard_in(command, cwd, cwd)
+        self.assertEqual(result.returncode, expected, f"{command}: {result.stderr}")
+
+    def test_force_push_after_cd_uses_moved_repository(self):
+        self.assert_result("cd child && git push --force", self.main_repo, ALLOW)
+        self.assert_result(f"cd {self.main_repo} && git push --force", self.feature, BLOCK)
+
+    def test_force_push_with_dash_c_uses_that_repository(self):
+        self.assert_result(f"git -C {self.main_repo} push --force", self.feature, BLOCK)
+
+    def test_force_push_with_unresolved_directory_and_implicit_branch_is_blocked(self):
+        self.assert_result('cd "$X" && git push --force', self.feature, BLOCK)
+
+    def test_explicit_refspec_does_not_need_the_directory(self):
+        self.assert_result('cd "$X" && git push --force origin feature-x', self.feature, ALLOW)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

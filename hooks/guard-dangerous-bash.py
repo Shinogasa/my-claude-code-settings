@@ -645,6 +645,7 @@ def push_target_branches(args: list, cwd: str) -> list:
     """push が書き換えるリモート側のブランチ名を返す。特定できなければ None。
 
     None は「安全」ではなく「検査できなかった」を表す。呼び出し側でブロックへ倒す。
+    cwd が UNRESOLVED でも、宛先を明示した refspec だけなら判定できる。
     """
     if any(a in GIT_PUSH_BROADCAST_FLAGS for a in args):
         return None
@@ -653,6 +654,8 @@ def push_target_branches(args: list, cwd: str) -> list:
     if not refspecs:
         # refspec 省略時の宛先は push.default 依存だが、既定 (simple/current) では
         # 同名のブランチ。detached HEAD や git 管理外では特定できない。
+        if cwd is UNRESOLVED:
+            return None
         branch = run_git(cwd, "symbolic-ref", "--short", "HEAD")
         return [branch] if branch else None
 
@@ -664,6 +667,8 @@ def push_target_branches(args: list, cwd: str) -> list:
         if dst.startswith("refs/heads/"):
             dst = dst[len("refs/heads/"):]
         if dst in ("", "HEAD"):
+            if cwd is UNRESOLVED:
+                return None
             branch = run_git(cwd, "symbolic-ref", "--short", "HEAD")
             if not branch:
                 return None
@@ -680,7 +685,7 @@ def is_ref_deletion(args: list) -> bool:
     return any(spec.startswith(":") for spec in push_positional_args(args)[1:])
 
 
-def destructive_push(tokens: list, cwd: str) -> tuple:
+def destructive_push(tokens: list, candidates: set) -> tuple:
     """リモートの ref を破壊的に動かす push なら (種別, 理由) を返す。該当しなければ ("", "")。
 
     種別は "force" / "delete"。どちらも ref を fast-forward 以外の方向へ動かす点で
@@ -708,11 +713,14 @@ def destructive_push(tokens: list, cwd: str) -> tuple:
     else:
         return "", ""
 
-    targets = push_target_branches(args, cwd)
-    if targets is None:
-        return kind, "対象のブランチを特定できません"
-
-    protected = sorted({t for t in targets if t in PROTECTED_BRANCHES})
+    # commit と同じく、シェルがいる可能性のあるディレクトリすべてで宛先を求める
+    protected = set()
+    for directory in git_target_dirs(tokens, candidates):
+        targets = push_target_branches(args, directory)
+        if targets is None:
+            return kind, "対象のブランチを特定できません"
+        protected |= {t for t in targets if t in PROTECTED_BRANCHES}
+    protected = sorted(protected)
     if protected:
         return kind, f"保護ブランチ ({', '.join(protected)}) が対象です"
     return "", ""
@@ -810,7 +818,7 @@ def main() -> int:
             print("  消しても複製が残る場所があります。", file=sys.stderr)
             print("  必要な場合は、あなた自身が端末で実行してください。", file=sys.stderr)
             return 2
-        kind, reason = destructive_push(simple_command, cwd)
+        kind, reason = destructive_push(simple_command, candidates)
         if kind:
             label = "リモートブランチの削除" if kind == "delete" else "force push"
             print(f"ブロック: この{label}は{reason}。", file=sys.stderr)
