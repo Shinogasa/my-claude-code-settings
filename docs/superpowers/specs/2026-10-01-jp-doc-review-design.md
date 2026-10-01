@@ -25,14 +25,14 @@ yomiyasuの基準で文章をレビューし、自然な日本語に直す。
 
 次のものは対象外とする。
 
-- Bash経由の書き込み（`cat > file` やスクリプトによる書き込み）。Write・Edit・NotebookEditを通らないため、記録できない
+- Bash経由の書き込み（`cat > file` やスクリプトによる書き込み）。Write・Editを通らないため、記録できない
 - submoduleの中のファイル、`node_modules`、`vendor`、`dist`、`build`、ロックファイル
 - レビュー用の下書き置き場（`~/.claude/state/jp-doc-review/drafts/`）
 
 ## 全体の流れ
 
 ```
-[書き込み]  Write / Edit / NotebookEdit
+[書き込み]  Write / Edit
      │  PostToolUse: 対象ファイルなら、パスと書き足した日本語の文字数を記録する（出力なし）
      │  レビュワー（agent_type = jp-doc-reviewer）の書き込みは記録しない
      ▼
@@ -55,6 +55,7 @@ yomiyasuの基準で文章をレビューし、自然な日本語に直す。
 | 追加・変更するもの | 役割 |
 |---|---|
 | `skills/yomiyasu`（submodule） | commitを固定したyomiyasu本体。`manifests/skills.json` の `shared` に追加し、既存の仕組みで両ホストにリンクする |
+| `hooks/hook_support.py` | 会話記録の読み取りと、フックの出力の組み立てをまとめた補助モジュール。下の2本のスクリプトが使う |
 | `hooks/jp-doc-review.py` | 1本のスクリプトで、記録・集約・Confluenceの事前チェックを担う。第1引数でイベントを切り替える |
 | `agents/jp-doc-reviewer.md` | レビュー用サブエージェント。Codex用の定義も既存の生成スクリプトで作られるが、Codexには起動するフックが無い |
 | `hooks/skill-read-check.py` | スキルごとの必読資料を会話記録と照合する、汎用の確認。StopとSubagentStopで動く |
@@ -77,18 +78,20 @@ yomiyasuの基準で文章をレビューし、自然な日本語に直す。
 
 ## 1. 記録（PostToolUse）
 
-matcherは `Write|Edit|NotebookEdit` とする。
+matcherは `Write|Edit` とする。NotebookEditは `.ipynb` だけを書き、対象の拡張子に当たらないので、matcherに入れない。
 
 1. 入力の `agent_type` が `jp-doc-reviewer` なら何もしない
-2. 書き込み先のパスを取る（Write・Editは `file_path`、NotebookEditは `notebook_path`）
+2. 書き込み先のパス（`file_path`）を取り、symlinkを解決した実体のパスにする。同じファイルを別のパスで書いても、まとめて数えるためである
 3. 拡張子が `TARGET_SUFFIXES` に無い、または対象外のパスなら何もしない
-4. 書き込んだ文字列（Writeは `content`、Editは `new_string`、NotebookEditは `new_source`）の日本語の文字数を数える
+4. 書き込んだ文字列（Writeは `content`、Editは `new_string`）の日本語の文字数を数える
 5. `~/.claude/state/jp-doc-review/<session_id>.jsonl` に `{path, jp_chars}` を1行追記する
 
 標準出力には何も出さない。だから、この段階ではコンテキストを消費しない。
 
-submoduleの判定は次のとおり。ファイルのあるディレクトリから親へたどる途中で、`.git` ディレクトリより先に
-`.git` ファイルが見つかれば、submoduleの中とみなす（submoduleの作業ツリーには `.git` ファイルが置かれる）。
+submoduleの判定は次のとおり。ファイルのあるディレクトリから親へたどり、最初に見つかった `.git` で決める。
+`.git` がファイルで、その `gitdir:` が `.git/modules/` の下を指していればsubmoduleの中とみなす。
+git worktreeの作業ツリーにも `.git` ファイルが置かれるが、`gitdir:` は `.git/worktrees/` の下を指すので、submoduleとは区別できる。
+`node_modules` などの除外ディレクトリは、見つかったリポジトリのルートより下の部分だけで判定する。
 
 入力のフィールド名は一次資料と実機の入力で確かめてから実装する。
 

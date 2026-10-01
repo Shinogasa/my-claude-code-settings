@@ -37,7 +37,7 @@ referenceを読まずに書き直した。2回目は、このADRと設計書を�
 
 ## 決定
 
-1. Write・Edit・NotebookEditの後に、PostToolUseフックが対象ファイルを記録する。作業の終わりにStopフックが記録をまとめ、
+1. Write・Editの後に、PostToolUseフックが対象ファイルを記録する。作業の終わりにStopフックが記録をまとめ、
    レビュー用サブエージェント `jp-doc-reviewer`（model: opus）にレビューを依頼する。常時ruleは追加しない
 2. Confluenceへの投稿は、PreToolUseフックが送る前に1回だけ止め、下書きのレビューを求める。2回目は通す
 3. yomiyasuは `skills/yomiyasu` にsubmoduleとして取り込み、commitを固定する
