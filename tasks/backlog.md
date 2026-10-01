@@ -20,6 +20,44 @@
 
 **着手条件**: Codexのサンドボックス内で全テストを回す必要が出たとき。恒久的な権限設定の変更は別途判断する。
 
+### P3: `FORCE_COLOR` が設定されたシェルでコード学習の契約テストが落ちる
+
+`tests/test_code_learning_contract.py` の `test_host_probe_fixture_has_one_deterministic_external_failure` は、
+子プロセスで動かしたunittestの出力に `FAILED (failures=1)` が含まれるかを照合している。
+`FORCE_COLOR=3` があるとPython 3.14のunittestが出力に色のエスケープコードを入れ、文字列が分断されて落ちる。
+2026-10-01に確認し、`env -u FORCE_COLOR` で実行すると通った。
+
+**決めること**: テスト側で子プロセスの環境から色の指定を外すか、照合の前にエスケープコードを取り除くか。
+
+---
+
+## 日本語文書レビュー（yomiyasu）の続き
+
+設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯はADR 0024。
+最初の実装はClaude Codeだけを対象にした。
+
+### P2: Codexでも日本語文書のレビューを動かす
+
+Codexの公式ドキュメント（2026-10-01確認）では、PreToolUse・PostToolUseが `apply_patch` とMCPツールにも動き、
+Stopの `decision: block` で作業を続けさせられる。ただし0.159.2の実機では未確認で、
+このリポジトリには「合成テストが通っても実機で動く証拠にならない」という教訓がある。
+
+**決めること**: Claude Code用の `hooks/jp-doc-review.py` を共有するか、Codex用の入口を分けるか。
+`/hooks` で信頼されていないフックが通知なくスキップされる問題を、どう利用者に知らせるか。
+
+### P3: Bash経由の書き込みをレビューの対象にするか
+
+Write・Edit・NotebookEditを通らない書き込み（`cat > file` やスクリプト）は記録されない。
+更新時刻で拾う案は、ユーザーがエディタで直した文書まで対象に入るため見送った。
+
+**決めること**: 実際にレビューされずに残った文書が見つかったときに、対象にする方法を選ぶ。
+
+### P3: スキル一覧に `yomiyasu:yomiyasu` が重複して出る
+
+yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/` に入っている。
+
+**決めること**: 上流に報告するか、こちらで重複を読み込まない設定にするか。
+
 ---
 
 ## Codex CLI 対応の続き

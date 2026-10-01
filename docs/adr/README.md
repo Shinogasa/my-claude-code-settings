@@ -92,3 +92,7 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0018](0018-codex-gpt6-routing-baseline.md) | Codexサブエージェントの基準ペアをGPT-6へ移す | 2026-09-28 | accepted |
 | [0019](0019-learning-store-lock-outside-git.md) | 学習storeの排他lockをGit metadataの外に置く | 2026-09-29 | superseded by 0020 |
 | [0020](0020-learning-store-directory-lock.md) | 学習store directoryを排他し旧CLIと書込方式を分離する | 2026-09-29 | accepted |
+| [0021](0021-learning-mode-rule-skill-split.md) | learning-mode を常時ruleと詳細skillに分ける | 2026-09-30 | accepted |
+| [0022](0022-legacy-skills-parent-link-migration.md) | 旧形式の skills 親symlinkを setup.sh が自動移行する | 2026-09-30 | accepted |
+| [0023](0023-codex-personal-profile-key-ownership.md) | Codex個人プロファイルの所有をキー単位で分ける | 2026-10-01 | accepted |
+| [0024](0024-jp-doc-review-hook.md) | 日本語文書のレビューをフックとレビュー用サブエージェントで行う | 2026-10-01 | accepted |
