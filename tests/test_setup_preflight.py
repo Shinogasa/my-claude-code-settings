@@ -280,6 +280,29 @@ class SetupPreflightTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_host_root_resolving_into_repository_is_rejected_without_changes(self):
+        """配布先の実体がrepo内なら、退避もリンク作成もせずに止まる。
+
+        backup_path は配布先を字句的にしか検査しないため、ホストのルートがrepoを指すと
+        退避の rename がrepoのファイルを動かし、ln -s がrepo内へリンクを作る。
+        """
+        # 配布元を含まないrepo内ディレクトリを指す。配布元と重なると別の検査で止まり、
+        # この経路を検査できない。
+        codex_root = self.home / ".codex"
+        codex_root.rmdir()
+        repo_dir = self.repository / "unrelated-dir"
+        repo_dir.mkdir()
+        codex_root.symlink_to(repo_dir, target_is_directory=True)
+        planted = repo_dir / "personal.config.toml"
+        planted.write_text('model = "repo-owned"\n', encoding="utf-8")
+
+        result = run_setup(self.repository, self.home, "--codex", "--replace-conflicts")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("リポジトリ内", result.stderr)
+        self.assertEqual(sorted(path.name for path in repo_dir.iterdir()), ["personal.config.toml"])
+        self.assertEqual(planted.read_text(encoding="utf-8"), 'model = "repo-owned"\n')
+
     def test_migration_fixture_tracks_skills_but_excludes_synced(self):
         """移行用の複製repoはskillを追跡し、同期領域を追跡に混ぜない。"""
         synced = self.repository / "skills" / "synced"
@@ -664,6 +687,38 @@ class SetupPreflightTests(unittest.TestCase):
         self.assertFalse(personal.exists())
         self.assertIn("synced", result.stderr)
         self.assertIn("personal-note", result.stderr)
+
+    def test_legacy_parent_with_conflict_stops_before_migration(self):
+        """競合で止まるなら移行もしない。移行だけ済むとskillsが空のまま残る。"""
+        parent = self.legacy_parent()
+        synced = self.repository / "skills/synced/x/SKILL.md"
+        synced.parent.mkdir(parents=True)
+        synced.write_text("同期skill\n", encoding="utf-8")
+        settings = self.home / ".claude/settings.json"
+        settings.write_text('{"user": "owned"}\n', encoding="utf-8")
+
+        result = self.run_tracked_setup("--claude")
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("conflict:", result.stderr)
+        self.assertTrue(parent.is_symlink())
+        self.assertEqual(parent.resolve(), (self.repository / "skills").resolve())
+        self.assertEqual(synced.read_text(encoding="utf-8"), "同期skill\n")
+        self.assertEqual(list(parent.parent.glob("skills.migrating.*")), [])
+        self.assertEqual(settings.read_text(encoding="utf-8"), '{"user": "owned"}\n')
+
+    def test_legacy_parent_with_replaced_conflict_migrates_and_links(self):
+        """置換を指示した競合なら、移行・退避・リンク作成まで1回で完了する。"""
+        parent = self.legacy_parent()
+        settings = self.home / ".claude/settings.json"
+        settings.write_text('{"user": "owned"}\n', encoding="utf-8")
+
+        result = self.run_tracked_setup("--claude", "--replace-conflicts")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_manifest_links(parent, "claude")
+        backups = list((self.home / ".claude/backups").rglob("settings.json"))
+        self.assertEqual(len(backups), 1)
 
     def test_legacy_parent_keeps_tracked_skill_content_and_inode(self):
         """4: git追跡中のskillは内容・inodeとも変えずrepoに残す。"""

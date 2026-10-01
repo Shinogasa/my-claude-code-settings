@@ -689,5 +689,312 @@ class TestProtectedBranchCommit(unittest.TestCase):
         self.assertEqual(run_guard('echo "git commit -m x"', cwd=self.on_main), ALLOW)
 
 
+def run_guard_in(command, payload_cwd, process_cwd):
+    """payload の cwd と hook プロセスの cwd を別々に指定して実行する。"""
+    payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(payload_cwd)}
+    return subprocess.run(
+        [sys.executable, str(GUARD)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        cwd=str(process_cwd),
+    )
+
+
+class TestNestedRepositoryTarget(unittest.TestCase):
+    """コマンド内の cd と相対 -C を、payload の cwd 基準で解決して判定する。
+
+    payload の cwd は前回までの cd に追従するが、同じコマンド内の cd は反映されない。
+    親リポジトリの main を理由に、子リポジトリの作業ブランチのコミットを止めていた。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.parent_main = self.repo("parent-main", "main")
+        self.child_work = self.repo("parent-main/child", "work")
+        self.parent_work = self.repo("parent-work", "work")
+        self.child_main = self.repo("parent-work/child", "main")
+        self.elsewhere = self.base / "elsewhere"
+        self.elsewhere.mkdir()
+
+    def repo(self, relative, branch, with_hooks=False):
+        path = self.base / relative
+        path.mkdir(parents=True)
+        return make_repo(path, with_hooks=with_hooks, branch=branch)
+
+    def test_cd_into_child_on_work_branch_is_allowed(self):
+        result = run_guard_in('cd child && git commit -m "x"', self.parent_main, self.parent_main)
+        self.assertEqual(result.returncode, ALLOW, result.stderr)
+
+    def test_cd_into_child_on_main_is_blocked(self):
+        result = run_guard_in('cd child && git commit -m "x"', self.parent_work, self.parent_work)
+        self.assertEqual(result.returncode, BLOCK)
+        self.assertIn("保護ブランチ", result.stderr)
+
+    def test_relative_dash_c_is_resolved_from_payload_cwd(self):
+        # hook プロセスの cwd が別の場所でも、相対パスは payload の cwd を基準にする
+        allowed = run_guard_in('git -C child commit -m "x"', self.parent_main, self.elsewhere)
+        self.assertEqual(allowed.returncode, ALLOW, allowed.stderr)
+        blocked = run_guard_in('git -C child commit -m "x"', self.parent_work, self.elsewhere)
+        self.assertEqual(blocked.returncode, BLOCK)
+
+    def test_dash_c_after_cd_is_resolved_from_moved_directory(self):
+        result = run_guard_in('cd .. && git -C parent-main/child commit -m "x"',
+                              self.parent_work, self.parent_work)
+        self.assertEqual(result.returncode, ALLOW, result.stderr)
+
+    def test_unresolvable_cd_before_commit_is_blocked_with_guidance(self):
+        for command in ('cd "$DIR" && git commit -m "x"',
+                        'cd - && git commit -m "x"',
+                        'cd $(git rev-parse --show-toplevel) && git commit -m "x"',
+                        'pushd child && git commit -m "x"'):
+            with self.subTest(command=command):
+                result = run_guard_in(command, self.parent_work, self.parent_work)
+                self.assertEqual(result.returncode, BLOCK)
+                self.assertIn("特定できません", result.stderr)
+                self.assertIn("git -C", result.stderr)
+
+    def test_unresolvable_cd_without_commit_is_allowed(self):
+        # 止めるのは commit を含むときだけ。範囲を広げると hook ごと外される
+        result = run_guard_in('cd "$DIR" && ls', self.parent_main, self.parent_main)
+        self.assertEqual(result.returncode, ALLOW, result.stderr)
+
+    def test_no_verify_after_cd_checks_moved_repository(self):
+        # 検証フックの有無も、移動先のリポジトリで判定する
+        hooked = self.repo("elsewhere/hooked", "work", with_hooks=True)
+        result = run_guard_in(f'cd {hooked} && git commit --no-verify -m "x"',
+                              self.parent_work, self.parent_work)
+        self.assertEqual(result.returncode, BLOCK)
+        self.assertIn("--no-verify", result.stderr)
+
+
+class TrackingFixture(unittest.TestCase):
+    """main のリポジトリ・その中の作業ブランチの子・作業ブランチの別リポジトリを用意する。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.main_repo = self.repo("main-repo", "main", with_hooks=True)
+        self.child = self.repo("main-repo/child", "work")
+        self.feature = self.repo("feature-repo", "work")
+        (self.main_repo / "docs").mkdir()
+        (self.feature / "docs-link").symlink_to(self.main_repo / "docs")
+
+    def repo(self, relative, branch, with_hooks=False):
+        path = self.base / relative
+        path.mkdir(parents=True)
+        return make_repo(path, with_hooks=with_hooks, branch=branch)
+
+    def assert_blocked(self, command, cwd):
+        result = run_guard_in(command, cwd, cwd)
+        self.assertEqual(result.returncode, BLOCK, f"{command}: {result.stderr}")
+
+
+class TestDirectoryTrackingFailsClosed(TrackingFixture):
+    """cd を信じすぎて、実際のコミット先ではない場所で判定しないこと（レビュー指摘）。"""
+
+    def test_failed_cd_keeps_previous_directory(self):
+        for command in ('cd nope; git commit -m "x"',
+                        'cd nope || git commit -m "x"',
+                        'cd nope; git commit --no-verify -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.main_repo)
+
+    def test_cd_that_may_not_take_effect_keeps_previous_directory(self):
+        for command in ('cd child | git commit -m "x"',
+                        'cd child & git commit -m "x"',
+                        'false && cd child; git commit -m "x"',
+                        'cd child; git commit -m "x"',
+                        '(cd child) && git commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.main_repo)
+
+    def test_physical_parent_of_symlink_is_not_resolved_textually(self):
+        for command in ('cd -P docs-link/.. && git commit -m "x"',
+                        'git -C docs-link/.. commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.feature)
+
+    def test_cd_forms_the_hook_cannot_expand_are_unresolved(self):
+        for command in ('cd ~- && git commit -m "x"',
+                        'cd feat* && git commit -m "x"',
+                        'cd {a,b} && git commit -m "x"',
+                        'CDPATH=.. cd main-repo && git commit -m "x"',
+                        'export CDPATH=..; cd main-repo && git commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.feature)
+
+    def test_repeated_dash_c_is_cumulative(self):
+        self.assert_blocked(f'git -C {self.base} -C main-repo commit -m "x"', self.feature)
+
+    def test_operator_glued_to_newline_or_paren_still_splits(self):
+        for command in ('git add . &&\ngit commit -m "x"',
+                        'echo a;(git commit -m "x")'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.main_repo)
+
+    def test_cd_into_child_with_and_is_still_allowed(self):
+        result = run_guard_in('cd child && git commit -m "x"', self.main_repo, self.main_repo)
+        self.assertEqual(result.returncode, ALLOW, result.stderr)
+
+class TestPrefixesAndChains(TrackingFixture):
+    """再レビューの指摘: 前置き・リダイレクト・連鎖の切れ目で判定対象を見失わないこと。"""
+
+    def assert_allowed(self, command, cwd):
+        result = run_guard_in(command, cwd, cwd)
+        self.assertEqual(result.returncode, ALLOW, f"{command}: {result.stderr}")
+
+    def test_directory_created_in_same_command_is_unresolved(self):
+        for command in (f'ln -s {self.main_repo} m && cd m && git commit -m "x"',
+                        f'ln -s {self.main_repo} m && git -C m commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.feature)
+
+    def test_dash_c_forms_the_hook_cannot_expand_are_unresolved(self):
+        for command in (f'git -C {self.base}/main-rep? commit -m "x"',
+                        f'git -C {{x,{self.main_repo}}} commit -m "x"',
+                        'git -C ~- commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.feature)
+
+    def test_broken_and_chain_restores_earlier_directories(self):
+        for command in ('cd child && true; git commit -m "x"',
+                        'cd child && true || git commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.main_repo)
+
+    def test_prefixes_and_redirections_do_not_hide_commit(self):
+        for command in ('echo a;>/dev/null git commit -m "x"',
+                        '2>/dev/null git commit -m "x"',
+                        'time git commit -m "x"',
+                        'exec git commit -m "x"',
+                        'nohup git commit -m "x"',
+                        '! git commit -m "x"',
+                        'if git commit -m "x"; then :; fi',
+                        '{ git commit -m "x"; }',
+                        'command git commit -m "x"',
+                        'env X=1 git commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.main_repo)
+
+    def test_builtin_cd_is_tracked(self):
+        self.assert_blocked(f'builtin cd {self.main_repo} && git commit -m "x"', self.feature)
+
+    def test_intended_forms_are_not_over_blocked(self):
+        for command in ('git status && cd child && git commit -m "x"',
+                        'cd child 2>/dev/null && git commit -m "x"',
+                        f'cd "$X" && git -C {self.child} commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_allowed(command, self.main_repo)
+
+class TestFinalReviewFindings(TrackingFixture):
+    """最終確認の指摘: 実行されない cd、リダイレクト除去の副作用、引用符付きの演算子。"""
+
+    def test_cd_that_may_be_skipped_does_not_replace_candidates(self):
+        for command in ('true || cd child && git commit -m "x"',
+                        'echo | cd child && git commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.main_repo)
+
+    def test_cd_after_semicolon_still_replaces(self):
+        result = run_guard_in('git status; cd child && git commit -m "x"',
+                              self.main_repo, self.main_repo)
+        self.assertEqual(result.returncode, ALLOW, result.stderr)
+
+    def test_redirect_to_block_device_is_still_blocked(self):
+        for command in ("dd if=/dev/zero > /dev/sda", "echo x >/dev/sda"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command), BLOCK)
+
+    def test_quoted_operator_in_message_does_not_hide_flags(self):
+        # 作業ブランチ・検証フックありのリポジトリで、--no-verify だけが判定材料になる形にする
+        hooked_work = self.repo("hooked-work", "work", with_hooks=True)
+        for command in ('git commit -m ">" --no-verify',
+                        "git commit -m '>>' -n",
+                        'git commit -m "<" --no-verify',
+                        "git commit -m ';' --no-verify",
+                        'git commit -m "a && b" --no-verify',
+                        'git commit -m x\; --no-verify'):
+            with self.subTest(command=command):
+                result = run_guard_in(command, hooked_work, hooked_work)
+                self.assertEqual(result.returncode, BLOCK, f"{command}: {result.stderr}")
+                self.assertIn("--no-verify", result.stderr)
+
+class TestCommentsAndParseFailures(TrackingFixture):
+    """最終確認の指摘: コメント内の引用符、語の途中の #、パース失敗で素通ししないこと。"""
+
+    def setUp(self):
+        super().setUp()
+        self.hooked_work = self.repo("hooked-work", "work", with_hooks=True)
+
+    def assert_no_verify_blocked(self, command):
+        result = run_guard_in(command, self.hooked_work, self.hooked_work)
+        self.assertEqual(result.returncode, BLOCK, f"{command}: {result.stderr}")
+
+    def test_quote_inside_comment_does_not_desync_operators(self):
+        for command in ("# don't skip the hooks\ngit add . && git commit --no-verify -m x",
+                        '# say "hi\ngit add . ; git commit --no-verify -m x'):
+            with self.subTest(command=command):
+                self.assert_no_verify_blocked(command)
+
+    def test_hash_in_middle_of_word_is_not_a_comment(self):
+        self.assert_no_verify_blocked("curl http://h/p#frag; git commit --no-verify -m x")
+
+    def test_hash_inside_quotes_is_not_a_comment(self):
+        self.assert_no_verify_blocked('git commit -m "fix #12" --no-verify')
+
+    def test_unparseable_command_with_commit_fails_closed(self):
+        for command in ("echo $'\\''; git commit --no-verify -m x",
+                        'echo "$(printf \'"\')"; git commit --no-verify -m x'):
+            with self.subTest(command=command):
+                self.assert_no_verify_blocked(command)
+
+    def test_hash_after_escaped_space_is_not_a_comment(self):
+        for command in ("git commit -m fix\\ #12 --no-verify",
+                        "echo a\\ #x; git commit --no-verify -m y"):
+            with self.subTest(command=command):
+                self.assert_no_verify_blocked(command)
+
+    def test_backslash_newline_does_not_continue_a_comment(self):
+        self.assert_no_verify_blocked("echo x # note \\\ngit commit --no-verify -m y")
+
+    def test_hash_after_closing_paren_is_not_a_comment(self):
+        self.assert_no_verify_blocked("echo $(pwd)#x; git commit --no-verify -m y")
+
+    def test_unparseable_command_with_git_or_device_fails_closed(self):
+        for command in ("echo $'\\''; git \"com\"mit -m x",
+                        "echo $'\\'' ; echo x >/dev/sda"):
+            with self.subTest(command=command):
+                self.assert_no_verify_blocked(command)
+
+    def test_comment_only_and_unrelated_parse_failure_are_allowed(self):
+        for command in ("# just a comment", 'echo "unterminated'):
+            with self.subTest(command=command):
+                result = run_guard_in(command, self.main_repo, self.main_repo)
+                self.assertEqual(result.returncode, ALLOW, result.stderr)
+
+class TestDestructivePushTarget(TrackingFixture):
+    """force push / 削除の宛先ブランチも、commit と同じ候補集合から判定する。"""
+
+    def assert_result(self, command, cwd, expected):
+        result = run_guard_in(command, cwd, cwd)
+        self.assertEqual(result.returncode, expected, f"{command}: {result.stderr}")
+
+    def test_force_push_after_cd_uses_moved_repository(self):
+        self.assert_result("cd child && git push --force", self.main_repo, ALLOW)
+        self.assert_result(f"cd {self.main_repo} && git push --force", self.feature, BLOCK)
+
+    def test_force_push_with_dash_c_uses_that_repository(self):
+        self.assert_result(f"git -C {self.main_repo} push --force", self.feature, BLOCK)
+
+    def test_force_push_with_unresolved_directory_and_implicit_branch_is_blocked(self):
+        self.assert_result('cd "$X" && git push --force', self.feature, BLOCK)
+
+    def test_explicit_refspec_does_not_need_the_directory(self):
+        self.assert_result('cd "$X" && git push --force origin feature-x', self.feature, ALLOW)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
