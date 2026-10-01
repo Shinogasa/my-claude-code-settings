@@ -21,8 +21,12 @@ DEFAULT_STATE = {"version": 1, "generated": {}}
 OWNED_DIGEST_PREFIX = "owned-sha256:"
 
 
-def migrate_legacy_skills_parent(parent, repo_skills, repo_root):
-    """このrepoを指す旧親リンクだけを移行し、移した項目名を返す。"""
+def is_legacy_skills_parent(parent, repo_skills, repo_root):
+    """parent が移行対象の旧親リンクかを、配置を変えずに判定する。
+
+    事前検査は移行より前に走るため、判定と実行を分けておく（ADR 0022）。
+    途中の移行状態が残っていれば、判定もせずに止める。
+    """
     parent = Path(parent).absolute()
     repo_root = Path(repo_root).resolve(strict=True)
     repo_skills = Path(repo_skills).resolve(strict=True)
@@ -30,15 +34,23 @@ def migrate_legacy_skills_parent(parent, repo_skills, repo_root):
     if leftovers:
         raise RuntimeError("途中の移行状態が残っています: " + ", ".join(map(str, leftovers)))
     if not parent.is_symlink():
-        return None
+        return False
     try:
         resolved = parent.resolve(strict=True)
         host_root = parent.parent.resolve(strict=True)
     except (OSError, RuntimeError):
         # 由来を確定できないリンクは外さず、既存preflightで拒否する。
+        return False
+    return resolved == repo_skills and not host_root.is_relative_to(repo_root)
+
+
+def migrate_legacy_skills_parent(parent, repo_skills, repo_root):
+    """このrepoを指す旧親リンクだけを移行し、移した項目名を返す。"""
+    if not is_legacy_skills_parent(parent, repo_skills, repo_root):
         return None
-    if resolved != repo_skills or host_root.is_relative_to(repo_root):
-        return None
+    parent = Path(parent).absolute()
+    repo_root = Path(repo_root).resolve(strict=True)
+    repo_skills = Path(repo_skills).resolve(strict=True)
 
     untracked = []
     for item in sorted(repo_skills.iterdir()):
@@ -361,8 +373,16 @@ def main():
     migration.add_argument("parent")
     migration.add_argument("repo_skills")
     migration.add_argument("repo_root")
+    detection = commands.add_parser("detect-legacy-skills-parent")
+    detection.add_argument("parent")
+    detection.add_argument("repo_skills")
+    detection.add_argument("repo_root")
     args = parser.parse_args()
     try:
+        if args.command == "detect-legacy-skills-parent":
+            if is_legacy_skills_parent(args.parent, args.repo_skills, args.repo_root):
+                print("legacy")
+            return 0
         names = migrate_legacy_skills_parent(args.parent, args.repo_skills, args.repo_root)
     except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
         print(f"エラー: {error}", file=sys.stderr)
