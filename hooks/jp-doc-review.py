@@ -15,12 +15,13 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from hook_support import emit, with_messages  # noqa: E402
+from hook_support import TranscriptError, emit, read_entries, tool_uses, with_messages  # noqa: E402
 
 MIN_JP_CHARS = 100
 TARGET_SUFFIXES = {".md", ".toml", ".yaml", ".yml", ".json"}
 STATE_RETENTION_DAYS = 7
 REVIEWER_AGENT = "jp-doc-reviewer"
+AGENT_TOOL_NAMES = {"Agent", "Task"}  # 古い版ではサブエージェントの起動ツールがTaskという名前だった
 EXCLUDED_DIR_NAMES = {"node_modules", "vendor", "dist", "build", ".git"}
 LOCKFILE_NAMES = {
     "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock",
@@ -184,8 +185,115 @@ def handle_post_tool_use(payload: dict) -> None:
     _append_record(session_key(payload), {"path": str(path), "jp_chars": jp_chars})
 
 
+def _dispatched_path(key: str) -> Path:
+    return state_dir() / f"{key}.dispatched.json"
+
+
+def _flags_path(key: str) -> Path:
+    return state_dir() / f"{key}.flags.json"
+
+
+def _mark_once(key: str, flag: str) -> bool:
+    """初めて立てるフラグなら記録してTrueを返す。2回目以降はFalse。"""
+    flags = read_json(_flags_path(key))
+    if flags.get(flag):
+        return False
+    write_json(_flags_path(key), {**flags, flag: True})
+    return True
+
+
+def cleanup_old_state() -> None:
+    limit = time.time() - STATE_RETENTION_DAYS * 86400
+    for directory in (state_dir(), drafts_dir()):
+        if not directory.is_dir():
+            continue
+        for entry in directory.iterdir():
+            if entry.is_file() and entry.stat().st_mtime < limit:
+                entry.unlink(missing_ok=True)
+
+
+def _review_candidates(records: List[dict]) -> List[str]:
+    totals: Dict[str, int] = {}
+    for record in records:
+        totals[record["path"]] = totals.get(record["path"], 0) + record["jp_chars"]
+    candidates = []
+    for path, total in sorted(totals.items()):
+        file = Path(path)
+        if total < MIN_JP_CHARS or not file.is_file():
+            continue
+        if KANA.search(file.read_text(encoding="utf-8", errors="replace")):
+            candidates.append(path)
+    return candidates
+
+
+def _transcript_size(payload: dict) -> int:
+    path = payload.get("transcript_path")
+    try:
+        return os.path.getsize(path) if path else 0
+    except OSError:
+        return 0
+
+
+def _dispatch_reason(paths: List[str]) -> str:
+    listed = "\n".join(f"- {path}" for path in paths)
+    return (
+        "日本語の文書を書いたので、作業を終える前にレビューが要る。\n"
+        f"Agentツールで subagent_type が {REVIEWER_AGENT} のサブエージェントを1回起動し、次のファイルをまとめて渡して。\n"
+        f"{listed}\n"
+        "レビュワーの報告を受けたら、変えた点と書き手に確かめたい点をユーザーに伝えてから作業を終えて。"
+    )
+
+
+def _finish_dispatch(key: str, payload: dict) -> None:
+    """2回目のStop。依頼した記録を消し、レビュワーが起動したかを確かめる。"""
+    dispatched = read_json(_dispatched_path(key))
+    paths = [path for path in dispatched.get("paths", []) if isinstance(path, str)]
+    if not paths:
+        return  # 別のフックのblockで続いた回。こちらは何も依頼していない
+    records, _ = read_records(key)
+    write_records(key, [record for record in records if record["path"] not in set(paths)])
+    _dispatched_path(key).unlink(missing_ok=True)
+    try:
+        entries = read_entries(payload.get("transcript_path"), int(dispatched.get("transcript_offset", 0)))
+    except TranscriptError as error:
+        emit({"systemMessage": f"jp-doc-reviewerが起動したかを確認できなかった（{error}）"})
+        return
+    invoked = any(
+        name in AGENT_TOOL_NAMES and tool_input.get("subagent_type") == REVIEWER_AGENT
+        for name, tool_input in tool_uses(entries)
+    )
+    if not invoked:
+        names = "、".join(Path(path).name for path in paths)
+        emit({"systemMessage": f"jp-doc-reviewerが起動されないまま作業が終わった。レビューされていない文書: {names}"})
+
+
+def handle_stop(payload: dict) -> None:
+    key = session_key(payload)
+    cleanup_old_state()
+    if payload.get("stop_hook_active"):
+        _finish_dispatch(key, payload)
+        return
+    records, skipped = read_records(key)
+    messages = [f"日本語文書レビューの記録で、読めない行を{skipped}件飛ばした"] if skipped else []
+    candidates = _review_candidates(records)
+    if not candidates:
+        emit(with_messages({}, messages))
+        return
+    if not yomiyasu_skill().is_file():
+        if _mark_once(key, "missing-yomiyasu"):
+            messages.append(
+                "yomiyasuが見つからないため、日本語文書のレビューを省略した。"
+                "skills/yomiyasu のsubmoduleとsetup.shの実行状態を確かめてほしい"
+            )
+        emit(with_messages({}, messages))
+        return
+    write_json(_dispatched_path(key), {"paths": candidates, "transcript_offset": _transcript_size(payload)})
+    emit(with_messages({"decision": "block", "reason": _dispatch_reason(candidates)}, messages))
+
+
 HANDLERS = {
     "post-tool-use": handle_post_tool_use,
+    "stop": handle_stop,
 }
 
 

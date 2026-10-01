@@ -160,6 +160,106 @@ class RecordTests(HookCase):
         self.assertEqual(written[0].parent, self.state)
 
 
+class StopTests(HookCase):
+    def transcript(self, *entries):
+        path = self.base / "transcript.jsonl"
+        with path.open("a", encoding="utf-8") as handle:
+            for entry in entries:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        return path
+
+    def test_blocks_and_lists_files_over_threshold(self):
+        path = self.write_file("a.md", JP_LONG)
+        self.post(path, JP_LONG)
+        code, output, _ = self.stop(transcript=self.transcript({"type": "user", "message": {"content": "x"}}))
+        self.assertEqual(code, 0)
+        self.assertEqual(output["decision"], "block")
+        self.assertIn(str(path), output["reason"])
+        self.assertIn("jp-doc-reviewer", output["reason"])
+
+    def test_does_not_block_below_threshold(self):
+        self.post(self.write_file("a.md", JP_HALF), JP_HALF)
+        self.assertEqual(self.stop()[1], {})
+
+    def test_small_edits_accumulate_across_turns(self):
+        path = self.write_file("a.md", JP_HALF)
+        self.post(path, JP_HALF)
+        self.assertEqual(self.stop()[1], {})
+        self.post(path, JP_HALF, tool="Edit")
+        self.assertEqual(self.stop()[1]["decision"], "block")
+
+    def test_deleted_file_is_not_reviewed(self):
+        path = self.write_file("a.md", JP_LONG)
+        self.post(path, JP_LONG)
+        path.unlink()
+        self.assertEqual(self.stop()[1], {})
+
+    def test_file_without_kana_now_is_not_reviewed(self):
+        path = self.write_file("a.md", JP_LONG)
+        self.post(path, JP_LONG)
+        path.write_text("rewritten in english", encoding="utf-8")
+        self.assertEqual(self.stop()[1], {})
+
+    def test_missing_yomiyasu_is_reported_once_without_blocking(self):
+        self.skill.unlink()
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        first = self.stop()[1]
+        self.assertNotIn("decision", first)
+        self.assertIn("yomiyasu", first["systemMessage"])
+        self.assertEqual(self.stop()[1], {})
+
+    def test_second_stop_clears_and_warns_when_reviewer_was_not_invoked(self):
+        transcript = self.transcript({"type": "user", "message": {"content": "x"}})
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        self.assertEqual(self.stop(transcript=transcript)[1]["decision"], "block")
+        code, output, _ = self.stop(active=True, transcript=transcript)
+        self.assertEqual(code, 0)
+        self.assertNotIn("decision", output)
+        self.assertIn("jp-doc-reviewer", output["systemMessage"])
+        self.assertEqual(self.records(), [])
+        self.assertEqual(self.stop(transcript=transcript)[1], {})
+
+    def test_second_stop_is_quiet_when_reviewer_was_invoked(self):
+        transcript = self.transcript({"type": "user", "message": {"content": "x"}})
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        self.stop(transcript=transcript)
+        self.transcript(agent_call("jp-doc-reviewer"))
+        self.assertEqual(self.stop(active=True, transcript=transcript)[1], {})
+
+    def test_reviewer_call_before_dispatch_does_not_count(self):
+        transcript = self.transcript(agent_call("jp-doc-reviewer"))
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        self.stop(transcript=transcript)
+        self.assertIn("systemMessage", self.stop(active=True, transcript=transcript)[1])
+
+    def test_active_stop_without_our_dispatch_is_silent(self):
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        self.assertEqual(self.stop(active=True)[1], {})
+        self.assertEqual(len(self.records()), 1)
+
+    def test_unreadable_transcript_on_second_stop_is_reported(self):
+        transcript = self.transcript({"type": "user", "message": {"content": "x"}})
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        self.stop(transcript=transcript)
+        transcript.unlink()
+        output = self.stop(active=True, transcript=transcript)[1]
+        self.assertIn("確認できなかった", output["systemMessage"])
+
+    def test_broken_log_lines_are_counted_in_message(self):
+        self.state.mkdir(parents=True)
+        (self.state / "s1.jsonl").write_text("{broken\n", encoding="utf-8")
+        self.assertIn("1件", self.stop()[1]["systemMessage"])
+
+    def test_old_state_files_are_removed(self):
+        self.state.mkdir(parents=True)
+        old = self.state / "old-session.jsonl"
+        old.write_text("", encoding="utf-8")
+        eight_days_ago = time.time() - 8 * 86400
+        os.utime(old, (eight_days_ago, eight_days_ago))
+        self.stop()
+        self.assertFalse(old.exists())
+
+
 class ErrorTests(HookCase):
     def test_invalid_json_fails_loudly_without_blocking(self):
         code, output, stderr = self.run_hook("post-tool-use", None, raw="{broken")
