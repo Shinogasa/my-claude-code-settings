@@ -35,9 +35,27 @@ allowlist なら新しい読み取り操作が誤ってブロックされる。�
 初回コミット (unborn branch) と detached HEAD は、切るべき作業ブランチが
 存在しない・既に名前付きブランチ上にないため対象外。
 
-既知の限界: 判定には PreToolUse が渡す cwd と `git -C` の値を使う。
-`cd other-repo && git commit` のようにコマンド内でディレクトリを移動された場合、
-移動先を追跡しないため検出できない。--no-verify 判定も同じ制約を持つ。
+判定対象のリポジトリは、PreToolUse が渡す cwd を起点に、同じコマンド内の `cd` と
+`git -C` を順に適用して決める。cwd は前回までの cd に追従するが、同じコマンド内の
+cd は反映されないため、ここで追う。相対パスは hook プロセスの cwd ではなく、この起点から解決する。
+
+cd を信じすぎると、実際のコミット先ではない場所で判定して素通しする。そのため判定対象は
+「シェルがいる可能性のあるディレクトリの集合」で持ち、どれか1つでも保護ブランチなら止める。
+- cd の直後が `&&` なら、後続は cd が成功したときだけ走るため、集合を移動先に置き換える
+- それ以外の cd は効かない可能性があるため、移動前の候補も残す
+- `&&` の連鎖が切れたら（`;`、`||`、`|`、`&`、改行、括弧）、それまでに通りうる
+  ディレクトリすべてを候補に戻す（`cd x && false; git commit` で cd が失敗した場合など）
+- 移動先が今は存在しない場合は、同じコマンド内で作られうるため確定できないとみなす
+- 移動先を文字列から確定できない cd / `git -C`（変数、glob、ブレース、`cd -`、`~-`、
+  `-P` などのオプション、CDPATH が効きうる相対パス、pushd / popd）の後に git commit /
+  --no-verify がある場合は、推測で判定せず止めて `git -C <path>` を案内する。
+  止めるのは commit / --no-verify を含むときだけに絞る（範囲を広げると hook ごと外される）
+- `git -C` は文字列上で正規化せず git に解決させ、複数指定は累積する
+- 判定の前に、リダイレクト、先頭の `NAME=value`、前置き（time / exec / nohup / command /
+  builtin / env）、予約語（! / if / then / do / { など）を取り除く
+
+既知の限界: `bash -c '...'` や `"$(...)"` の中のような入れ子のシェル、`GIT_DIR` などの
+環境変数による対象の差し替え、引用符で名前を隠した CDPATH の設定は追わない。
 
 コマンド文字列全体への正規表現マッチではなく、シェルの引用規則を
 尊重してトークン化した上で、各サブコマンドの先頭トークン(コマンド名)
@@ -54,7 +72,25 @@ import sys
 from pathlib import Path
 
 HEREDOC_RE = re.compile(r"<<[-~]?\s*['\"]?(\w+)['\"]?.*?\n.*?\n\1\b", re.DOTALL)
-CONTROL_TOKENS = {";", "&&", "||", "|", "&"}
+OPERATOR_CHARS = "|&;()<>\n"
+# 引用符の中の演算子文字を、トークン化の間だけ私用領域の文字へ退避する対応表。
+MASK_TABLE = {ord(c): 0xE000 + i for i, c in enumerate(OPERATOR_CHARS)}
+UNMASK_TABLE = {value: key for key, value in MASK_TABLE.items()}
+OPERATOR_SET = set(OPERATOR_CHARS)
+# 直後の # がコメントの始まりになる文字。`)` は語の途中（$(...)#）でありうるため含めない。
+COMMENT_START_AFTER = set(" \t\r") | (OPERATOR_SET - {")"})
+
+
+class Operator(str):
+    """引用符の外にあった演算子トークン。引用符付きの `">"` などの引数と区別する。"""
+SEPARATOR_CHARS = set(";&|\n()")
+# リダイレクト演算子。直後のトークン（宛先）と、直前の fd 番号もコマンドから除く。
+REDIRECT_CHARS = set("<>")
+REDIRECT_OPS = {">", ">>", "<", "<<", "<<<", "&>", "&>>", ">&", "<&", ">|", "<>"}
+# 後ろに実際のコマンドが続く前置き・予約語。判定前に取り除く。
+PREFIX_WORDS = {"time", "exec", "nohup", "command", "builtin", "env", "!",
+                "if", "then", "elif", "else", "while", "until", "do", "{", "}"}
+ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 # --no-verify を受け付ける git サブコマンド
 NO_VERIFY_SUBCOMMANDS = {"commit", "merge", "push"}
@@ -100,6 +136,13 @@ TERRAFORM_SAFE_FLAGS = {
 # terraform 自体のグローバルオプション。サブコマンドのフラグと混同しない。
 TERRAFORM_GLOBAL_FLAGS = {"chdir", "help", "version"}
 GIT_TIMEOUT_SEC = 3
+# 解析できないコマンドのうち、止める対象になりうる語。含まなければ従来どおり通す。
+UNPARSEABLE_RISK_RE = re.compile(
+    r"\b(git|commit|push|reset|rm|terraform|dd)\b|--no-verify|/dev/|(^|[\s;&|(])-n\b")
+# cd の移動先を確定できないことを表す。空文字列（判定対象なし）とは区別する。
+UNRESOLVED = None
+# hook がシェルと同じ展開をできない文字。含む cd の移動先は確定できないとみなす。
+UNEXPANDABLE_CHARS = set("$`*?[{")
 
 RM_FLAG_RE = re.compile(r"^-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*$|^-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*$")
 RM_TARGET_RE = re.compile(r"^(/|~)$|^/\*$")
@@ -139,8 +182,10 @@ def strip_line_continuations(command: str) -> str:
     return command.replace("\\\n", "")
 
 
-def tokenize_command(command: str) -> list:
-    """シェルの引用規則を尊重してコマンド全体をトークン化する。パース不能なら空リスト。
+def tokenize_command(command: str):
+    """シェルの引用規則を尊重してコマンド全体をトークン化する。パース不能なら None。
+
+    空リストに畳むと「検査するものが無い」と区別できず素通しになるため、None で返す。
 
     改行を whitespace から外して punctuation_chars に回すことで、裸の改行
     (クォート外・コマンド置換の外にあるもの) を独立トークンとして残す。
@@ -149,29 +194,156 @@ def tokenize_command(command: str) -> list:
     で引用符が閉じないままパース不能になり、コマンド全体の検査が素通りしていた。
     """
     lexer = shlex.shlex(
-        strip_line_continuations(command), posix=True, punctuation_chars="|&;()<>\n")
+        # コメントを先に取り除く。行継続を先に畳むと、コメント末尾の \ が次の行を飲み込む。
+        strip_line_continuations(mask_quoted_operators(command)),
+        posix=True, punctuation_chars=OPERATOR_CHARS)
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
+    # コメントは退避の段階でシェルと同じ規則（語の先頭の # だけ）で取り除く。
+    # shlex の既定は語の途中の # もコメントとみなし、後ろのコマンドを落とす。
+    lexer.commenters = ""
     try:
-        return list(lexer)
+        # 退避後も演算子文字だけでできたトークンは、引用符の外にあった本物の演算子。
+        return [Operator(tok) if set(tok) <= OPERATOR_SET else tok.translate(UNMASK_TABLE)
+                for tok in lexer]
     except ValueError:
-        return []
+        return None
 
 
-def split_simple_commands(tokens: list) -> list:
-    """制御演算子(; && || | & および裸の改行)でトークン列を単純コマンド列に分割する。"""
-    commands = []
-    current = []
+def mask_quoted_operators(command: str) -> str:
+    """引用符・バックスラッシュの中にある演算子文字を私用領域の文字へ退避する。
+
+    posix モードの shlex は引用符を外したトークンを返すため、`-m ">"` の `>` と
+    リダイレクトの `>` を区別できない。shlex に渡す前に退避し、トークン化の後で戻す。
+    """
+    result = []
+    quote = ""
+    escaped = False
+    in_comment = False
+    previous = ""
+    for char in command:
+        if in_comment:
+            # 引用符の追跡をずらさないよう、コメントの中身は捨てる
+            if char == "\n":
+                in_comment = False
+                result.append(char)
+                previous = char
+            continue
+        # `)` の直後は $(...)# のように語の途中でありうるため、コメントの始まりにしない。
+        if not quote and not escaped and char == "#" and (
+                previous == "" or previous in COMMENT_START_AFTER):
+            in_comment = True
+            continue
+        if escaped:
+            # 行継続の改行は後段で取り除くため、退避せずに残す
+            result.append(char if char == "\n" else char.translate(MASK_TABLE))
+            escaped = False
+            # エスケープされた空白は語の一部。直後の # をコメントにしない。
+            previous = "\\"
+            continue
+        previous = char
+        if char == "\\" and quote != "'":
+            escaped = True
+            result.append(char)
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+                result.append(char)
+            else:
+                result.append(char.translate(MASK_TABLE))
+            continue
+        if char in "'\"":
+            quote = char
+        result.append(char)
+    return "".join(result)
+
+
+def is_separator(tok: str) -> bool:
+    """制御演算子・改行・括弧だけでできたトークンか。
+
+    shlex は `&&\n` や `;(` のような記号の連続を1トークンにまとめるため、
+    完全一致だけで判定すると後ろのコマンドが前のコマンドに飲み込まれる。
+    """
+    return isinstance(tok, Operator) and bool(tok) and set(tok) <= SEPARATOR_CHARS
+
+
+def split_glued_operator(tok: str) -> list:
+    """`;>` のように区切りとリダイレクトが1トークンにまとまったものを分ける。"""
+    if not isinstance(tok, Operator) or tok in REDIRECT_OPS or not set(tok) & REDIRECT_CHARS:
+        return [tok]
+    index = min(tok.index(c) for c in REDIRECT_CHARS if c in tok)
+    separator, redirect = tok[:index], tok[index:]
+    return [Operator(part) for part in (separator, redirect) if part]
+
+
+def strip_redirections(tokens: list) -> list:
+    """リダイレクト演算子・宛先・fd 番号を除く。コマンド名の位置を正しく見るため。"""
+    result = []
+    skip_next = False
     for tok in tokens:
-        if tok in CONTROL_TOKENS or (tok and set(tok) <= {"\n"}):
+        if skip_next:
+            skip_next = False
+            continue
+        if isinstance(tok, Operator) and set(tok) & REDIRECT_CHARS:
+            if result and result[-1].isdigit():
+                result.pop()
+            skip_next = True
+            continue
+        result.append(tok)
+    return result
+
+
+def strip_prefixes(tokens: list) -> list:
+    """先頭の `NAME=value`・前置き（time / env など）・予約語を除いた実際のコマンドを返す。"""
+    index = 0
+    while index < len(tokens):
+        tok = tokens[index]
+        if ASSIGNMENT_RE.match(tok):
+            index += 1
+            continue
+        if tok in PREFIX_WORDS:
+            index += 1
+            # env / command / time のオプション（-i、-p など）も読み飛ばす
+            while tok in ("env", "command", "time") and index < len(tokens) \
+                    and tokens[index].startswith("-"):
+                index += 1
+            continue
+        break
+    return tokens[index:]
+
+
+def normalize_command(tokens: list) -> list:
+    return strip_prefixes(strip_redirections(tokens))
+
+
+def split_with_operators(tokens: list) -> list:
+    """単純コマンドごとに (直前の区切り, 前処理後のトークン列, 直後の区切り, 元のトークン列) を返す。
+
+    元のトークン列は、リダイレクト先を見る検査（ブロックデバイスへの書き込み）に使う。
+    """
+    expanded = [part for tok in tokens for part in split_glued_operator(tok)]
+    commands = []
+    previous = ""
+    current = []
+    for tok in expanded:
+        if is_separator(tok):
             if current:
-                commands.append(current)
-            current = []
+                commands.append([previous, normalize_command(current), tok, current])
+                current = []
+                previous = tok
+            else:
+                previous += tok
         else:
             current.append(tok)
     if current:
-        commands.append(current)
-    return commands
+        commands.append([previous, normalize_command(current), "", current])
+    return [tuple(command) for command in commands if command[1] or command[3]]
+
+
+def split_simple_commands(tokens: list) -> list:
+    """制御演算子・改行・括弧でトークン列を単純コマンド列に分割する。"""
+    return [command for _, command, _, _ in split_with_operators(tokens) if command]
 
 
 def is_dangerous(tokens: list) -> bool:
@@ -290,17 +462,96 @@ def is_verification_bypass(tokens: list) -> bool:
     return subcommand == "commit" and "-n" in args
 
 
-def git_dash_c_path(tokens: list) -> str:
-    """`git -C <path>` の path を返す。指定が無ければ空文字列。
+def resolve_path(base, path: str, cdpath_possible: bool = False):
+    """base から path へ移動した先を返す。文字列から確定できなければ UNRESOLVED。
 
-    サブコマンドより後ろの -C は git のグローバルオプションではないため、
-    サブコマンドに到達した時点で探索を打ち切る。
+    絶対パスは base に依存しないため、base が UNRESOLVED でも解決する。
     """
+    if path == "-" or any(c in path for c in UNEXPANDABLE_CHARS):
+        return UNRESOLVED
+    if path.startswith("~") and path != "~" and not path.startswith("~/"):
+        return UNRESOLVED
+    expanded = os.path.expanduser(path)
+    if os.path.isabs(expanded):
+        return expanded
+    if base is UNRESOLVED:
+        return UNRESOLVED
+    # CDPATH は ./ ../ で始まらない相対パスにだけ効く。値は hook から見えない。
+    explicit = expanded in (".", "..") or expanded.startswith(("./", "../"))
+    if cdpath_possible and not explicit:
+        return UNRESOLVED
+    return os.path.join(base, expanded)
+
+
+def cd_target_paths(tokens: list):
+    """cd の引数から移動先の文字列を1つ返す。解釈できなければ UNRESOLVED。"""
+    arguments = tokens[1:]
+    if arguments and arguments[0] == "--":
+        arguments = arguments[1:]
+    elif any(token.startswith("-") and token != "-" for token in arguments):
+        return UNRESOLVED
+    if not arguments:
+        return "~"
+    if len(arguments) > 1:
+        return UNRESOLVED
+    return arguments[0]
+
+
+def operator_kind(op: str) -> str:
+    """区切りを分類する。
+
+    START（先頭）/ AND（&&）/ SEQ（; と改行。前の結果によらず次が走る）/
+    BREAK（||、|、&、括弧。次が走らない、または別のシェルで走る）。
+    """
+    if op == "":
+        return "START"
+    if op.strip("\n") == "&&":
+        return "AND"
+    if set(op) <= {";", "\n"}:
+        return "SEQ"
+    return "BREAK"
+
+
+def apply_directory_change(previous_op: str, tokens: list, next_op: str, candidates: set,
+                           cdpath_possible: bool) -> set:
+    """単純コマンドを実行した後に、シェルがいる可能性のあるディレクトリの集合を返す。
+
+    cd 自体が必ず実行され（直前が先頭・&&・;）、直後が `&&` なら、後続は cd が成功したとき
+    だけ走るため移動先に置き換える。`||` の後やパイプの中の cd は実行されない、または
+    別のシェルで走るため、移動前の候補も残す。
+    移動先が今は存在しない（同じコマンド内で作られうる）場合は確定できないとみなす。
+    """
+    if not tokens or tokens[0] not in ("cd", "pushd", "popd"):
+        return candidates
+    if tokens[0] != "cd":
+        return candidates | {UNRESOLVED}
+    path = cd_target_paths(tokens)
+    moved = set()
+    for base in candidates:
+        target = UNRESOLVED if path is UNRESOLVED else resolve_path(base, path, cdpath_possible)
+        if target is not UNRESOLVED:
+            # bash の既定（論理パス）に合わせて `..` は文字列上で畳む。-P は確定できない扱い。
+            target = os.path.normpath(target)
+        if target is UNRESOLVED or not os.path.isdir(target):
+            moved |= {base, UNRESOLVED}
+        else:
+            moved.add(target)
+    runs_in_this_shell = operator_kind(previous_op) in ("START", "AND", "SEQ")
+    if runs_in_this_shell and operator_kind(next_op) == "AND":
+        return moved
+    return candidates | moved
+
+
+def git_dash_c_paths(tokens: list) -> list:
+    """`git -C <path>` の path を指定順にすべて返す。git は複数の -C を累積して解釈する。"""
+    paths = []
     i = 1
     while i < len(tokens):
         token = tokens[i]
         if token == "-C" and i + 1 < len(tokens):
-            return tokens[i + 1]
+            paths.append(tokens[i + 1])
+            i += 2
+            continue
         if token in GIT_GLOBAL_OPTS_WITH_VALUE:
             i += 2
             continue
@@ -308,19 +559,34 @@ def git_dash_c_path(tokens: list) -> str:
             i += 1
             continue
         break
-    return ""
+    return paths
 
 
-def commit_target_dir(tokens: list, cwd: str) -> str:
-    """git commit ならブランチ判定に使うディレクトリを返す。commit でなければ空文字列。"""
+def git_target_dirs(tokens: list, candidates: set) -> set:
+    """git コマンドが操作しうるディレクトリの集合を返す。
+
+    `-C` は文字列上で正規化せず、そのまま連結して git（カーネル）に解決させる。
+    symlink を含む `link/..` を文字列で畳むと、実際の移動先とずれる。
+    """
+    targets = set()
+    for base in candidates:
+        current = base
+        for path in git_dash_c_paths(tokens):
+            current = resolve_path(current, path)
+            if current is UNRESOLVED:
+                break
+        if current is not UNRESOLVED and not os.path.isdir(current):
+            # 同じコマンド内で作られた場所を指しうる。今の状態では判定できない。
+            current = UNRESOLVED
+        targets.add(current)
+    return targets
+
+
+def is_git_commit(tokens: list) -> bool:
     if not tokens or tokens[0] != "git":
-        return ""
-
+        return False
     subcommand, _ = extract_subcommand(tokens)
-    if subcommand != "commit":
-        return ""
-
-    return git_dash_c_path(tokens) or cwd
+    return subcommand == "commit"
 
 
 def run_git(cwd: str, *args: str) -> str:
@@ -379,6 +645,7 @@ def push_target_branches(args: list, cwd: str) -> list:
     """push が書き換えるリモート側のブランチ名を返す。特定できなければ None。
 
     None は「安全」ではなく「検査できなかった」を表す。呼び出し側でブロックへ倒す。
+    cwd が UNRESOLVED でも、宛先を明示した refspec だけなら判定できる。
     """
     if any(a in GIT_PUSH_BROADCAST_FLAGS for a in args):
         return None
@@ -387,6 +654,8 @@ def push_target_branches(args: list, cwd: str) -> list:
     if not refspecs:
         # refspec 省略時の宛先は push.default 依存だが、既定 (simple/current) では
         # 同名のブランチ。detached HEAD や git 管理外では特定できない。
+        if cwd is UNRESOLVED:
+            return None
         branch = run_git(cwd, "symbolic-ref", "--short", "HEAD")
         return [branch] if branch else None
 
@@ -398,6 +667,8 @@ def push_target_branches(args: list, cwd: str) -> list:
         if dst.startswith("refs/heads/"):
             dst = dst[len("refs/heads/"):]
         if dst in ("", "HEAD"):
+            if cwd is UNRESOLVED:
+                return None
             branch = run_git(cwd, "symbolic-ref", "--short", "HEAD")
             if not branch:
                 return None
@@ -414,7 +685,7 @@ def is_ref_deletion(args: list) -> bool:
     return any(spec.startswith(":") for spec in push_positional_args(args)[1:])
 
 
-def destructive_push(tokens: list, cwd: str) -> tuple:
+def destructive_push(tokens: list, candidates: set) -> tuple:
     """リモートの ref を破壊的に動かす push なら (種別, 理由) を返す。該当しなければ ("", "")。
 
     種別は "force" / "delete"。どちらも ref を fast-forward 以外の方向へ動かす点で
@@ -442,11 +713,14 @@ def destructive_push(tokens: list, cwd: str) -> tuple:
     else:
         return "", ""
 
-    targets = push_target_branches(args, cwd)
-    if targets is None:
-        return kind, "対象のブランチを特定できません"
-
-    protected = sorted({t for t in targets if t in PROTECTED_BRANCHES})
+    # commit と同じく、シェルがいる可能性のあるディレクトリすべてで宛先を求める
+    protected = set()
+    for directory in git_target_dirs(tokens, candidates):
+        targets = push_target_branches(args, directory)
+        if targets is None:
+            return kind, "対象のブランチを特定できません"
+        protected |= {t for t in targets if t in PROTECTED_BRANCHES}
+    protected = sorted(protected)
     if protected:
         return kind, f"保護ブランチ ({', '.join(protected)}) が対象です"
     return "", ""
@@ -493,11 +767,29 @@ def main() -> int:
     executable_part = strip_heredocs(command)
     cwd = payload.get("cwd") or os.getcwd()
 
-    has_bypass = False
-    commit_dirs = []
+    bypass_dirs = set()
+    commit_dirs = set()
+    candidates = {os.path.abspath(cwd)}
+    # これまでに通りうるディレクトリすべて。&& の連鎖が切れたら、どこにいてもおかしくない。
+    seen = set(candidates)
+    cdpath_possible = "CDPATH" in command or bool(os.environ.get("CDPATH"))
     tokens = tokenize_command(executable_part)
-    for simple_command in split_simple_commands(tokens):
-        if is_dangerous(simple_command):
+    if tokens is None:
+        # 解析できないなら判定もできない。対象になりうる語を含むときだけ止める。
+        if UNPARSEABLE_RISK_RE.search(executable_part):
+            print("ブロック: コマンドを解析できないため、安全か判定できません。", file=sys.stderr)
+            print("  引用符の組み合わせ（$'...' や \"$(...)\" の中の引用符など）を単純にして、",
+                  file=sys.stderr)
+            print("  コマンドを分けて実行し直してください。", file=sys.stderr)
+            return 2
+        return 0
+    for previous_op, simple_command, next_op, raw_command in split_with_operators(tokens):
+        if operator_kind(previous_op) in ("SEQ", "BREAK"):
+            candidates = set(seen)
+        candidates = apply_directory_change(
+            previous_op, simple_command, next_op, candidates, cdpath_possible)
+        seen |= candidates
+        if is_dangerous(simple_command) or is_dangerous(raw_command):
             print(f"ブロック: 確定的に危険なコマンドを検出しました: {command}", file=sys.stderr)
             return 2
         state_write = terraform_state_write(simple_command)
@@ -526,7 +818,7 @@ def main() -> int:
             print("  消しても複製が残る場所があります。", file=sys.stderr)
             print("  必要な場合は、あなた自身が端末で実行してください。", file=sys.stderr)
             return 2
-        kind, reason = destructive_push(simple_command, cwd)
+        kind, reason = destructive_push(simple_command, candidates)
         if kind:
             label = "リモートブランチの削除" if kind == "delete" else "force push"
             print(f"ブロック: この{label}は{reason}。", file=sys.stderr)
@@ -548,14 +840,23 @@ def main() -> int:
                   "あなた自身が端末で実行してください。", file=sys.stderr)
             return 2
         if is_verification_bypass(simple_command):
-            has_bypass = True
-        target = commit_target_dir(simple_command, cwd)
-        if target:
-            commit_dirs.append(target)
+            bypass_dirs |= git_target_dirs(simple_command, candidates)
+        if is_git_commit(simple_command):
+            commit_dirs |= git_target_dirs(simple_command, candidates)
+
+    if UNRESOLVED in bypass_dirs or UNRESOLVED in commit_dirs:
+        print("ブロック: git commit の対象リポジトリを特定できません。", file=sys.stderr)
+        print("  同じコマンド内の cd の移動先（変数、cd -、コマンド置換、pushd / popd）を",
+              file=sys.stderr)
+        print("  文字列から確定できないため、保護ブランチと検証フックを判定できません。",
+              file=sys.stderr)
+        print("  対象を明示して実行し直してください:", file=sys.stderr)
+        print("      git -C <リポジトリのパス> commit ...", file=sys.stderr)
+        return 2
 
     # git config の参照は毎回の Bash 呼び出しに載せたくないため、
     # 該当コマンドが実際にあったときだけリポジトリを調べる。
-    if has_bypass and verification_hooks_active(cwd):
+    if any(verification_hooks_active(target) for target in sorted(bypass_dirs)):
         print("ブロック: git の検証フックをスキップしようとしています (--no-verify)。",
               file=sys.stderr)
         print("  このリポジトリには検証フックが設定されています。", file=sys.stderr)
@@ -566,7 +867,7 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    for target in commit_dirs:
+    for target in sorted(commit_dirs):
         branch = protected_branch(target)
         if branch:
             print(f"ブロック: 保護ブランチ ({branch}) への直接コミットです。", file=sys.stderr)
