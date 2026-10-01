@@ -23,14 +23,25 @@ MANDATORY workflow:
 
 ## Troubleshooting Test Failures
 
-1. Use the **tdd-workflow** skill
+1. Use the **superpowers:test-driven-development** skill
 2. Check test isolation
 3. Verify mocks are correct
 4. Fix implementation, not tests (unless tests are wrong)
 
 ## Skill Support
 
-- **tdd-workflow** - Use PROACTIVELY for new features, enforces write-tests-first
+- **superpowers:test-driven-development** - Use before writing implementation code for any feature or bugfix; enforces write-tests-first
+
+## Git Checkpoints
+
+In a Git repository, commit after each TDD stage on the current branch:
+
+- One commit after the failing test is added and RED is confirmed
+- One commit after the minimal fix makes it GREEN
+- One optional commit after refactoring
+
+Each message states the stage and the evidence (which test failed or passed).
+Do not squash or rewrite these commits until the workflow is complete.
 
 ## Test Structure (AAA Pattern)
 

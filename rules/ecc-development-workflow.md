@@ -23,7 +23,7 @@ alwaysApply: true
    - Break down into phases
 
 2. **TDD Approach**
-   - Use the **tdd-workflow** skill
+   - Use the **superpowers:test-driven-development** skill
    - Write tests first (RED)
    - Implement to pass tests (GREEN)
    - Refactor (IMPROVE)

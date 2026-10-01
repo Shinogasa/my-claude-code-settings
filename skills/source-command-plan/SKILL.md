@@ -113,7 +113,7 @@ If you want changes, respond with:
 ## Integration with Other Commands
 
 After planning:
-- Apply the `tdd-workflow` skill for test-driven implementation
+- Apply the `superpowers:test-driven-development` skill for test-driven implementation
 - Apply the `source-command-build-fix` skill if build errors occur
 - Use the host's native semantic review capability (Codex: `/review`)
 - Apply the `verification-loop` skill for deterministic quality gates
