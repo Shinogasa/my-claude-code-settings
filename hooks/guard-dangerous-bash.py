@@ -38,11 +38,20 @@ allowlist なら新しい読み取り操作が誤ってブロックされる。�
 判定対象のリポジトリは、PreToolUse が渡す cwd を起点に、同じコマンド内の `cd` と
 `git -C` を順に適用して決める。cwd は前回までの cd に追従するが、同じコマンド内の
 cd は反映されないため、ここで追う。相対パスは hook プロセスの cwd ではなく、この起点から解決する。
-移動先を文字列から確定できない cd（変数、`cd -`、コマンド置換、pushd / popd）の後に
-git commit / --no-verify がある場合は、推測で判定せず止めて `git -C <path>` を案内する。
-止めるのは commit / --no-verify を含むときだけに絞る（範囲を広げると hook ごと外される）。
 
-既知の限界: サブシェル `( ... )` 内の cd は追わない。
+cd を信じすぎると、実際のコミット先ではない場所で判定して素通しする。そのため判定対象は
+「シェルがいる可能性のあるディレクトリの集合」で持ち、どれか1つでも保護ブランチなら止める。
+- `cd X && ...` のように cd が成功したときだけ後続が走る形だけ、集合を X に置き換える
+- `;`、`||`、`|`、`&`、条件付き実行、サブシェルの cd は、移動前の候補も残す
+- 存在しない移動先へは移動しない（cd は失敗して元の場所に残る）
+- 移動先を文字列から確定できない cd（変数、glob、ブレース、`cd -`、`~-`、`-P` などの
+  オプション、CDPATH が効きうる相対パス、pushd / popd）の後に git commit / --no-verify が
+  ある場合は、推測で判定せず止めて `git -C <path>` を案内する。止めるのは commit /
+  --no-verify を含むときだけに絞る（範囲を広げると hook ごと外される）
+- `git -C` は文字列上で正規化せず git に解決させ、複数指定は累積する
+
+既知の限界: `builtin cd` / `command git` / `env git` / `bash -c '...'` のような前置きや
+入れ子のシェル、`GIT_DIR` などの環境変数による対象の差し替えは追わない。
 
 コマンド文字列全体への正規表現マッチではなく、シェルの引用規則を
 尊重してトークン化した上で、各サブコマンドの先頭トークン(コマンド名)
@@ -60,6 +69,8 @@ from pathlib import Path
 
 HEREDOC_RE = re.compile(r"<<[-~]?\s*['\"]?(\w+)['\"]?.*?\n.*?\n\1\b", re.DOTALL)
 CONTROL_TOKENS = {";", "&&", "||", "|", "&"}
+SEPARATOR_CHARS = set(";&|\n()")
+ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 # --no-verify を受け付ける git サブコマンド
 NO_VERIFY_SUBCOMMANDS = {"commit", "merge", "push"}
@@ -107,6 +118,8 @@ TERRAFORM_GLOBAL_FLAGS = {"chdir", "help", "version"}
 GIT_TIMEOUT_SEC = 3
 # cd の移動先を確定できないことを表す。空文字列（判定対象なし）とは区別する。
 UNRESOLVED = None
+# hook がシェルと同じ展開をできない文字。含む cd の移動先は確定できないとみなす。
+UNEXPANDABLE_CHARS = set("$`*?[{")
 
 RM_FLAG_RE = re.compile(r"^-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*$|^-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*$")
 RM_TARGET_RE = re.compile(r"^(/|~)$|^/\*$")
@@ -165,20 +178,46 @@ def tokenize_command(command: str) -> list:
         return []
 
 
-def split_simple_commands(tokens: list) -> list:
-    """制御演算子(; && || | & および裸の改行)でトークン列を単純コマンド列に分割する。"""
+def is_separator(tok: str) -> bool:
+    """制御演算子・改行・括弧だけでできたトークンか。
+
+    shlex は `&&\n` や `;(` のような記号の連続を1トークンにまとめるため、
+    完全一致だけで判定すると後ろのコマンドが前のコマンドに飲み込まれる。
+    """
+    return bool(tok) and set(tok) <= SEPARATOR_CHARS
+
+
+def strip_assignments(tokens: list) -> list:
+    """先頭の `NAME=value` を除いた実際のコマンドを返す。"""
+    index = 0
+    while index < len(tokens) and ASSIGNMENT_RE.match(tokens[index]):
+        index += 1
+    return tokens[index:]
+
+
+def split_with_operators(tokens: list) -> list:
+    """単純コマンドごとに (直前の区切り, トークン列, 直後の区切り) を返す。"""
     commands = []
+    previous = ""
     current = []
     for tok in tokens:
-        if tok in CONTROL_TOKENS or (tok and set(tok) <= {"\n"}):
+        if is_separator(tok):
             if current:
-                commands.append(current)
-            current = []
+                commands.append([previous, strip_assignments(current), tok])
+                current = []
+                previous = tok
+            else:
+                previous += tok
         else:
             current.append(tok)
     if current:
-        commands.append(current)
-    return commands
+        commands.append([previous, strip_assignments(current), ""])
+    return [tuple(command) for command in commands if command[1]]
+
+
+def split_simple_commands(tokens: list) -> list:
+    """制御演算子・改行・括弧でトークン列を単純コマンド列に分割する。"""
+    return [command for _, command, _ in split_with_operators(tokens)]
 
 
 def is_dangerous(tokens: list) -> bool:
@@ -297,17 +336,79 @@ def is_verification_bypass(tokens: list) -> bool:
     return subcommand == "commit" and "-n" in args
 
 
-def git_dash_c_path(tokens: list) -> str:
-    """`git -C <path>` の path を返す。指定が無ければ空文字列。
+def resolve_cd_target(base, path: str, cdpath_possible: bool):
+    """cd の移動先を返す。文字列から確定できなければ UNRESOLVED。
 
-    サブコマンドより後ろの -C は git のグローバルオプションではないため、
-    サブコマンドに到達した時点で探索を打ち切る。
+    bash の既定（論理パス）に合わせて `..` は文字列上で畳む。`-P` などの
+    オプションは呼び出し側で UNRESOLVED にする。
     """
+    if base is UNRESOLVED or path == "-" or any(c in path for c in UNEXPANDABLE_CHARS):
+        return UNRESOLVED
+    if path.startswith("~") and path != "~" and not path.startswith("~/"):
+        return UNRESOLVED
+    expanded = os.path.expanduser(path)
+    if os.path.isabs(expanded):
+        return os.path.normpath(expanded)
+    # CDPATH は ./ ../ で始まらない相対パスにだけ効く。値は hook から見えない。
+    explicit = expanded in (".", "..") or expanded.startswith(("./", "../"))
+    if cdpath_possible and not explicit:
+        return UNRESOLVED
+    return os.path.normpath(os.path.join(base, expanded))
+
+
+def cd_target_paths(tokens: list):
+    """cd の引数から移動先の文字列を1つ返す。解釈できなければ UNRESOLVED。"""
+    arguments = tokens[1:]
+    if arguments and arguments[0] == "--":
+        arguments = arguments[1:]
+    elif any(token.startswith("-") and token != "-" for token in arguments):
+        return UNRESOLVED
+    if not arguments:
+        return "~"
+    if len(arguments) > 1:
+        return UNRESOLVED
+    return arguments[0]
+
+
+def apply_directory_change(previous_op: str, tokens: list, next_op: str,
+                           candidates: set, cdpath_possible: bool) -> set:
+    """単純コマンドを実行した後に、シェルがいる可能性のあるディレクトリの集合を返す。
+
+    cd が成功したときだけ後続が走る形（`cd X && ...`）なら移動先に置き換える。
+    それ以外（`;`、`||`、`|`、`&`、条件付き実行、サブシェル）は cd が効かない
+    可能性があるため、移動前の候補も残す。存在しない移動先へは移動しない。
+    """
+    if not tokens or tokens[0] not in ("cd", "pushd", "popd"):
+        return candidates
+    if tokens[0] != "cd":
+        return candidates | {UNRESOLVED}
+    path = cd_target_paths(tokens)
+    moved = set()
+    for base in candidates:
+        target = UNRESOLVED if path is UNRESOLVED else resolve_cd_target(base, path, cdpath_possible)
+        if target is UNRESOLVED:
+            moved.add(UNRESOLVED)
+        elif os.path.isdir(target):
+            moved.add(target)
+        else:
+            moved.add(base)
+    runs_unconditionally = previous_op.strip("\n") in ("", ";")
+    only_on_success = next_op.strip("\n") == "&&"
+    if runs_unconditionally and only_on_success:
+        return moved
+    return candidates | moved
+
+
+def git_dash_c_paths(tokens: list) -> list:
+    """`git -C <path>` の path を指定順にすべて返す。git は複数の -C を累積して解釈する。"""
+    paths = []
     i = 1
     while i < len(tokens):
         token = tokens[i]
         if token == "-C" and i + 1 < len(tokens):
-            return tokens[i + 1]
+            paths.append(tokens[i + 1])
+            i += 2
+            continue
         if token in GIT_GLOBAL_OPTS_WITH_VALUE:
             i += 2
             continue
@@ -315,56 +416,32 @@ def git_dash_c_path(tokens: list) -> str:
             i += 1
             continue
         break
-    return ""
+    return paths
 
 
-def resolve_dir(base, path: str):
-    """base から path へ移動した先を返す。確定できなければ UNRESOLVED。"""
-    if "$" in path or "`" in path:
-        return UNRESOLVED
-    expanded = os.path.expanduser(path)
-    if os.path.isabs(expanded):
-        return os.path.normpath(expanded)
-    if base is UNRESOLVED:
-        return UNRESOLVED
-    return os.path.normpath(os.path.join(base, expanded))
+def git_target_dirs(tokens: list, candidates: set) -> set:
+    """git コマンドが操作しうるディレクトリの集合を返す。
 
-
-def apply_directory_change(tokens: list, current):
-    """cd / pushd / popd なら移動後のディレクトリを返す。それ以外は current のまま。"""
-    if not tokens:
-        return current
-    if tokens[0] in ("pushd", "popd"):
-        return UNRESOLVED
-    if tokens[0] != "cd":
-        return current
-    paths = [token for token in tokens[1:] if token == "-" or not token.startswith("-")]
-    if not paths:
-        return resolve_dir(current, "~")
-    if len(paths) > 1 or paths[0] == "-":
-        return UNRESOLVED
-    return resolve_dir(current, paths[0])
-
-
-def git_target_dir(tokens: list, current):
-    """git コマンドが操作するディレクトリを返す。`-C` は current から解決する。"""
-    dash_c = git_dash_c_path(tokens)
-    return resolve_dir(current, dash_c) if dash_c else current
-
-
-def commit_target_dir(tokens: list, current):
-    """git commit ならブランチ判定に使うディレクトリを返す。commit でなければ空文字列。
-
-    移動先を確定できない場合は UNRESOLVED を返す。空文字列に畳むと素通しと区別できない。
+    `-C` は文字列上で正規化せず、そのまま連結して git（カーネル）に解決させる。
+    symlink を含む `link/..` を文字列で畳むと、実際の移動先とずれる。
     """
+    targets = set()
+    for base in candidates:
+        current = base
+        for path in git_dash_c_paths(tokens):
+            if current is UNRESOLVED or "$" in path or "`" in path:
+                current = UNRESOLVED
+                break
+            current = os.path.join(current, os.path.expanduser(path))
+        targets.add(current)
+    return targets
+
+
+def is_git_commit(tokens: list) -> bool:
     if not tokens or tokens[0] != "git":
-        return ""
-
+        return False
     subcommand, _ = extract_subcommand(tokens)
-    if subcommand != "commit":
-        return ""
-
-    return git_target_dir(tokens, current)
+    return subcommand == "commit"
 
 
 def run_git(cwd: str, *args: str) -> str:
@@ -537,12 +614,14 @@ def main() -> int:
     executable_part = strip_heredocs(command)
     cwd = payload.get("cwd") or os.getcwd()
 
-    bypass_dirs = []
-    commit_dirs = []
-    current_dir = os.path.abspath(cwd)
+    bypass_dirs = set()
+    commit_dirs = set()
+    candidates = {os.path.abspath(cwd)}
+    cdpath_possible = "CDPATH" in command or bool(os.environ.get("CDPATH"))
     tokens = tokenize_command(executable_part)
-    for simple_command in split_simple_commands(tokens):
-        current_dir = apply_directory_change(simple_command, current_dir)
+    for previous_op, simple_command, next_op in split_with_operators(tokens):
+        candidates = apply_directory_change(
+            previous_op, simple_command, next_op, candidates, cdpath_possible)
         if is_dangerous(simple_command):
             print(f"ブロック: 確定的に危険なコマンドを検出しました: {command}", file=sys.stderr)
             return 2
@@ -594,10 +673,9 @@ def main() -> int:
                   "あなた自身が端末で実行してください。", file=sys.stderr)
             return 2
         if is_verification_bypass(simple_command):
-            bypass_dirs.append(git_target_dir(simple_command, current_dir))
-        target = commit_target_dir(simple_command, current_dir)
-        if target != "":
-            commit_dirs.append(target)
+            bypass_dirs |= git_target_dirs(simple_command, candidates)
+        if is_git_commit(simple_command):
+            commit_dirs |= git_target_dirs(simple_command, candidates)
 
     if UNRESOLVED in bypass_dirs or UNRESOLVED in commit_dirs:
         print("ブロック: git commit の対象リポジトリを特定できません。", file=sys.stderr)
@@ -611,7 +689,7 @@ def main() -> int:
 
     # git config の参照は毎回の Bash 呼び出しに載せたくないため、
     # 該当コマンドが実際にあったときだけリポジトリを調べる。
-    if any(verification_hooks_active(target) for target in bypass_dirs):
+    if any(verification_hooks_active(target) for target in sorted(bypass_dirs)):
         print("ブロック: git の検証フックをスキップしようとしています (--no-verify)。",
               file=sys.stderr)
         print("  このリポジトリには検証フックが設定されています。", file=sys.stderr)
@@ -622,7 +700,7 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    for target in commit_dirs:
+    for target in sorted(commit_dirs):
         branch = protected_branch(target)
         if branch:
             print(f"ブロック: 保護ブランチ ({branch}) への直接コミットです。", file=sys.stderr)

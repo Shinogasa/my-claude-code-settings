@@ -770,5 +770,71 @@ class TestNestedRepositoryTarget(unittest.TestCase):
         self.assertIn("--no-verify", result.stderr)
 
 
+class TestDirectoryTrackingFailsClosed(unittest.TestCase):
+    """cd を信じすぎて、実際のコミット先ではない場所で判定しないこと（レビュー指摘）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.main_repo = self.repo("main-repo", "main", with_hooks=True)
+        self.child = self.repo("main-repo/child", "work")
+        self.feature = self.repo("feature-repo", "work")
+        (self.main_repo / "docs").mkdir()
+        (self.feature / "docs-link").symlink_to(self.main_repo / "docs")
+
+    def repo(self, relative, branch, with_hooks=False):
+        path = self.base / relative
+        path.mkdir(parents=True)
+        return make_repo(path, with_hooks=with_hooks, branch=branch)
+
+    def assert_blocked(self, command, cwd):
+        result = run_guard_in(command, cwd, cwd)
+        self.assertEqual(result.returncode, BLOCK, f"{command}: {result.stderr}")
+
+    def test_failed_cd_keeps_previous_directory(self):
+        for command in ('cd nope; git commit -m "x"',
+                        'cd nope || git commit -m "x"',
+                        'cd nope; git commit --no-verify -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.main_repo)
+
+    def test_cd_that_may_not_take_effect_keeps_previous_directory(self):
+        for command in ('cd child | git commit -m "x"',
+                        'cd child & git commit -m "x"',
+                        'false && cd child; git commit -m "x"',
+                        'cd child; git commit -m "x"',
+                        '(cd child) && git commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.main_repo)
+
+    def test_physical_parent_of_symlink_is_not_resolved_textually(self):
+        for command in ('cd -P docs-link/.. && git commit -m "x"',
+                        'git -C docs-link/.. commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.feature)
+
+    def test_cd_forms_the_hook_cannot_expand_are_unresolved(self):
+        for command in ('cd ~- && git commit -m "x"',
+                        'cd feat* && git commit -m "x"',
+                        'cd {a,b} && git commit -m "x"',
+                        'CDPATH=.. cd main-repo && git commit -m "x"',
+                        'export CDPATH=..; cd main-repo && git commit -m "x"'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.feature)
+
+    def test_repeated_dash_c_is_cumulative(self):
+        self.assert_blocked(f'git -C {self.base} -C main-repo commit -m "x"', self.feature)
+
+    def test_operator_glued_to_newline_or_paren_still_splits(self):
+        for command in ('git add . &&\ngit commit -m "x"',
+                        'echo a;(git commit -m "x")'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.main_repo)
+
+    def test_cd_into_child_with_and_is_still_allowed(self):
+        result = run_guard_in('cd child && git commit -m "x"', self.main_repo, self.main_repo)
+        self.assertEqual(result.returncode, ALLOW, result.stderr)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
