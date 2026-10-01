@@ -1148,37 +1148,40 @@ Python や Markdown だけを触る作業中も常に効いている。
 なお `setup.sh` の「テンプレートに無いキーは温存する」マージ方式は、`/model` などが
 書き込んだ値を保護するための意図的な設計であり、**変更しない**。
 
-### コンテナ環境で PreToolUse フックが fail-open している → 決めること
+### コンテナ環境で PreToolUse フックが fail-open している → `cw-workspace-local` へ移管する（先方への追記待ち）
 
-2026-08-16 の `/doctor` 実測。直近50セッション（8日間）で
-`hook_non_blocking_error` が **160 件**発生している。
+2026-08-16 に、Linux コンテナで `rtk: Permission denied` などの `hook_non_blocking_error` が
+多発し、PreToolUse の hook が静かに素通りしていた。2026-10-01 の確認では次のとおり。
 
-| 発生元 | 件数 |
-|---|---|
-| `/workspace`（Linux コンテナ） | 130 |
-| `cw-coding-agent-workspace` | 17 |
-| `Shinonome-doki` | 7 |
-| `my-claude-code-settings` | 6 |
+- `cw-workspace-local` はコンテナ起動時に `cw_doctor.py --check-pre-tool-use-hooks-only` を実行し、
+  PreToolUse の hook が起動できない・他ユーザーが書き込めるときは起動を止める（fail-closed）
+- 直近のコンテナセッション（2026-09-08 の3件）に hook のエラーは無い
+- コンテナ内で `guard-dangerous-bash` が登録され効いているかは未確認。記録に残る PreToolUse:Bash は
+  `rtk hook claude` だけだが、無出力で成功した hook が記録に残るかが分からない
 
-内訳は `rtk: Permission denied`（126件）と
-`warn-branch-behind-main.sh: No such file or directory`（13件）。
-エラー文字列が `/bin/sh: 1:` 形式（dash）であることから、**91% は Linux コンテナ由来**。
-macOS 側では設定済みフック3本すべてが存在し実行可能であることを確認済み。
+残りの確認は、コンテナの設定を管理する `cw-workspace-local/tasks/backlog.md` で追跡する（二重管理を避ける）。
+2026-10-01 時点で先方の作業ツリーに未コミットの変更があったため、追記は保留している。
+追記したらこの項目を参照だけに縮める。
 
-問題は件数ではなく性質にある。**これらは non-blocking エラー、すなわち fail-open**。
-コンテナ内では `PreToolUse:Bash` の3本中2本が起動すらせず、しかも静かに素通りする。
+### cmux の hook が 5 秒でタイムアウトする
 
-**未確認（重要）**: `guard-dangerous-bash.sh` がコンテナ内で機能しているかは
-**分かっていない**。今回のエラー一覧に現れていないが、それは「動いた」証拠ではなく
-「エラーを出さなかった」証拠にすぎない。起動していないだけの可能性を潰していない。
+cmux（0.64.25）が Claude Code の起動時に `--settings` で渡す一時ファイル
+（`$TMPDIR/cmux-claude-settings.*`）の hook が、`timeout = 5` で打ち切られることがある。
+このリポジトリの設定ではなく、cmux が起動のたびに生成する設定に入っている。
 
-**決めること**: 3点ある。
+```
+UserPromptSubmit hook [cmux_cli=... hooks enqueue claude prompt-submit ...] timed out after 5s — output discarded.
+```
 
-1. コンテナ環境でフックによる防御が必要か。必要なら `rtk` と
-   `warn-branch-behind-main.sh` をどう配布するか
-2. 不要なら、環境を検出してフック登録自体を行わない形にするか
-   （エラーを黙らせるのではなく、登録しないことで「動いていない」を明示する）
-3. `guard-dangerous-bash.sh` のコンテナ内での実効性を、どう観測可能にするか
+- `UserPromptSubmit` を含むほぼ全イベント（Notification、PreToolUse、PostToolUse、Stop など）が
+  `timeout = 5`。`PermissionRequest` は 125、Stop の `auto-name` は 120
+- hook 内の cmux CLI 呼び出しは `CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5` と失敗時の `{}` を持つのに、
+  全体が 5 秒を超えた。どこで待っているか（CLI の起動、ソケット接続、標準入力の読み取り）は未確認
+- 打ち切られても出力が捨てられるだけで、Claude Code の動作は止まらない。cmux 側の通知や
+  プロンプト連携が欠ける可能性がある（未確認）
 
-**着手条件**: 3 は即時。コンテナで破壊的コマンドを扱う前に確認しておく必要がある。
-1 と 2 は 3 の結果を見てから。
+**決めること**: どこで直すか。cmux の設定で timeout を変えられるか、cmux への報告で直してもらうか、
+`CMUX_CLAUDE_HOOKS_DISABLED=1` で連携を切るか。先に、どの段階で 5 秒かかっているかを計測する。
+管轄がこのリポジトリか（ホストのツール設定なので dotfiles 側か）も決める。
+
+**着手条件**: 即時着手できる。再現頻度を数えるところから始める。
