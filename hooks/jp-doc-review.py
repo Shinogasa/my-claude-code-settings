@@ -110,12 +110,24 @@ def is_target(path: Path) -> bool:
     return not any(part in EXCLUDED_DIR_NAMES for part in inner[:-1])
 
 
-def _written_text(tool_name: str, tool_input: dict) -> Tuple[Optional[str], str]:
-    if tool_name == "Write":
-        return tool_input.get("file_path"), str(tool_input.get("content") or "")
-    if tool_name == "Edit":
-        return tool_input.get("file_path"), str(tool_input.get("new_string") or "")
-    return None, ""
+WRITTEN_TEXT_KEYS = {"Write": "content", "Edit": "new_string"}
+
+
+def _written_text(tool_name: str, tool_input: object) -> Tuple[str, str]:
+    """書き込み先のパスと、書き込んだ文字列を返す。入力の形が想定と違えば ValueError を投げる。
+
+    何も知らせずに終えると、全リポジトリで記録が止まっても気づけない。そのため、形の違いはエラーにする。
+    Editのnew_stringが空文字列なのは削除として正当なので、キーの有無と型で判定する。
+    """
+    text_key = WRITTEN_TEXT_KEYS[tool_name]
+    if not isinstance(tool_input, dict):
+        raise ValueError(f"{tool_name}の入力の形が想定と違う（tool_inputがオブジェクトではない）")
+    file_path, text = tool_input.get("file_path"), tool_input.get(text_key)
+    if not isinstance(file_path, str) or not file_path:
+        raise ValueError(f"{tool_name}の入力の形が想定と違う（file_pathが文字列ではない）")
+    if not isinstance(text, str):
+        raise ValueError(f"{tool_name}の入力の形が想定と違う（{text_key}が文字列ではない）")
+    return file_path, text
 
 
 def _log_path(key: str) -> Path:
@@ -184,12 +196,11 @@ def write_json(path: Path, value: dict) -> None:
 
 
 def handle_post_tool_use(payload: dict) -> None:
-    if payload.get("agent_type") == REVIEWER_AGENT:
+    tool_name = payload.get("tool_name")
+    if tool_name not in WRITTEN_TEXT_KEYS or payload.get("agent_type") == REVIEWER_AGENT:
         return
-    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
-    raw_path, text = _written_text(str(payload.get("tool_name", "")), tool_input)
-    if not raw_path:
-        return
+    key = session_key(payload)
+    raw_path, text = _written_text(tool_name, payload.get("tool_input"))
     path = Path(raw_path)
     if not path.is_absolute():
         path = Path(str(payload.get("cwd") or ".")) / path
@@ -199,7 +210,7 @@ def handle_post_tool_use(payload: dict) -> None:
     jp_chars = count_jp_chars(text)
     if jp_chars == 0:
         return
-    _append_record(session_key(payload), {"path": str(path), "jp_chars": jp_chars})
+    _append_record(key, {"path": str(path), "jp_chars": jp_chars})
 
 
 def _dispatched_path(key: str) -> Path:
@@ -485,7 +496,10 @@ def main(argv: List[str]) -> int:
         print(f"使い方: {Path(argv[0]).name} <{'|'.join(HANDLERS)}>", file=sys.stderr)
         return 1
     try:
-        payload = json.loads(sys.stdin.read() or "{}")
+        raw = sys.stdin.read()
+        if not raw.strip():
+            raise ValueError("入力が空")
+        payload = json.loads(raw)
         if not isinstance(payload, dict):
             raise ValueError("入力がJSONオブジェクトではない")
         HANDLERS[argv[1]](payload)
