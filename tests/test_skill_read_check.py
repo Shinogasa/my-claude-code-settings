@@ -189,7 +189,9 @@ class SkillReadCheckTests(unittest.TestCase):
         self.assertEqual(self.run_hook()["decision"], "block")
 
     def test_stale_manifest_entry_is_reported(self):
+        # どの置き場にも無いときだけ、対応表が古いとみなす
         (self.root / "references" / "b.md").unlink()
+        (self.copy / "references" / "b.md").unlink()
         self.transcript(prompt(), call("Skill", skill="demo"),
                         *self.reads("references/a.md", "references/domains/x.md"))
         output = self.run_hook()

@@ -3,6 +3,9 @@
   "skills": {
     "yomiyasu": {
       "root": "~/.claude/skills/yomiyasu",
+      "alternateRoots": [
+        "~/.claude/skills/yomiyasu/skills/yomiyasu"
+      ],
       "allOf": [
         "references/gemini-syntax.md",
         "references/slop-catalog.md"

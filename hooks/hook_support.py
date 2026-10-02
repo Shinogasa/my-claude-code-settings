@@ -7,6 +7,7 @@ import json
 from typing import List, Optional, Tuple
 
 ToolUse = Tuple[str, dict]
+TASK_NOTIFICATION = "<task-notification>"  # バックグラウンドの作業の完了通知。userの行として残る
 
 
 class TranscriptError(Exception):
@@ -55,17 +56,31 @@ def _content(entry: dict):
     return message.get("content") if isinstance(message, dict) else None
 
 
+def first_text(entry: dict) -> Optional[str]:
+    """行の本文の最初の文字列を返す。本文が文字列ならそのまま、textのリストなら最初のtextを返す。"""
+    content = _content(entry)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                return part["text"]
+    return None
+
+
 def is_human_prompt(entry: dict) -> bool:
-    """ユーザーが入力したプロンプトの行か。ツールの結果やメタ情報の行は含めない。"""
+    """ユーザーが入力したプロンプトの行か。ツールの結果、メタ情報、作業の完了通知の行は含めない。"""
     if entry.get("type") != "user" or entry.get("isMeta"):
         return False
     content = _content(entry)
-    if isinstance(content, str):
-        return True
     if isinstance(content, list):
         kinds = {part.get("type") for part in content if isinstance(part, dict)}
-        return "text" in kinds and "tool_result" not in kinds
-    return False
+        if "text" not in kinds or "tool_result" in kinds:
+            return False
+    elif not isinstance(content, str):
+        return False
+    text = first_text(entry)
+    return not (text or "").startswith(TASK_NOTIFICATION)
 
 
 def since_last_prompt(entries: List[dict]) -> List[dict]:
