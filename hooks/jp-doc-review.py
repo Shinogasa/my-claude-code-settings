@@ -496,8 +496,9 @@ def _confluence_reason(draft: Path) -> str:
     return (
         "Confluenceへ送る前に、日本語のレビューが要る。この投稿はまだ送っていない。\n"
         f"本文を下書き {draft} に書き出した。\n"
-        f"Agentツールで subagent_type が {REVIEWER_AGENT} のサブエージェントを起動してこの下書きを渡し、文章だけを直させて。"
-        "HTMLのタグ、data-* 属性、ADFの構造は変えさせないこと。\n"
+        f"Agentツールで、subagent_typeを{REVIEWER_AGENT}にしたサブエージェントを起動し、この下書きを渡して。\n"
+        "レビュワーには、このセッションで書いた箇所だけを直させること。"
+        "HTMLのタグ、data-*属性、ADFの構造は変えさせない。\n"
         "直した下書きの内容で、同じツールを同じ投稿先へもう一度呼んで投稿して。"
     )
 
@@ -511,17 +512,19 @@ def handle_pre_tool_use_confluence(payload: dict) -> None:
         return
     key = session_key(payload)
     with session_lock(key):
-        _handle_confluence(key, tool_name, tool_input, body)
+        _handle_confluence(key, payload, tool_name, tool_input, body)
 
 
-def _handle_confluence(key: str, tool_name: str, tool_input: dict, body: str) -> None:
+def _handle_confluence(key: str, payload: dict, tool_name: str, tool_input: dict, body: str) -> None:
     target = _confluence_target(tool_name, tool_input)
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     state = read_json(_confluence_path(key))
-    first_digest = state.pop(target, None)
-    if first_digest is None:
+    first = state.pop(target, None)
+    if first is None:
         draft = _write_draft(key, digest, body, tool_input.get("contentFormat"))
-        write_json(_confluence_path(key), {**state, target: digest})
+        write_json(_confluence_path(key), {
+            **state, target: {"digest": digest, "transcript_offset": _transcript_size(payload)},
+        })
         emit({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
@@ -529,8 +532,16 @@ def _handle_confluence(key: str, tool_name: str, tool_input: dict, body: str) ->
         }})
         return
     write_json(_confluence_path(key), state)
-    if first_digest == digest:
-        emit({"systemMessage": f"Confluenceへの投稿が、日本語のレビューを通らないまま送られた（{tool_name}）"})
+    if first.get("digest") == digest:
+        emit({"systemMessage": f"本文が1回目と同じなので、Confluenceへの投稿は日本語のレビューを通らないまま送られる（{tool_name}）"})
+        return
+    try:
+        invoked = reviewer_invoked_after(payload.get("transcript_path"), first.get("transcript_offset"))
+    except TranscriptError as error:
+        emit({"systemMessage": f"Confluenceへの投稿の前に{REVIEWER_AGENT}が起動したかを確認できなかった（{error}）"})
+        return
+    if not invoked:
+        emit({"systemMessage": f"{REVIEWER_AGENT}が起動されないまま、Confluenceへの投稿を通した（{tool_name}）"})
 
 
 HANDLERS = {
