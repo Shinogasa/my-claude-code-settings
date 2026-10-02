@@ -56,6 +56,32 @@ def yomiyasu_skill() -> Path:
     return Path(override) if override else Path.home() / ".claude" / "skills" / "yomiyasu" / "SKILL.md"
 
 
+def claude_home() -> Path:
+    override = os.environ.get("JP_DOC_REVIEW_CLAUDE_HOME")
+    return Path(override) if override else Path.home() / ".claude"
+
+
+def temporary_roots() -> List[Path]:
+    """一時ディレクトリの置き場。JP_DOC_REVIEW_TEMP_DIRS（os.pathsep区切り）で差し替えられる。"""
+    override = os.environ.get("JP_DOC_REVIEW_TEMP_DIRS")
+    if override is not None:
+        return [Path(item) for item in override.split(os.pathsep) if item]
+    return [Path(tempfile.gettempdir()), Path("/tmp"), Path("/private/tmp")]
+
+
+def _is_disposable(path: Path) -> bool:
+    """使い捨ての作業ファイルか。pathはsymlinkを解決した絶対パスで渡す。
+
+    ~/.claude/ の下は、このリポジトリが管理する設定ならsymlinkを解決するとリポジトリ側になるので、ここには当たらない。
+    """
+    if path.name == "todo.md" and path.parent.name == "tasks":
+        return True
+    if ".superpowers" in path.parts[:-1]:
+        return True
+    roots = [claude_home(), drafts_dir(), *temporary_roots()]
+    return any(Path(os.path.realpath(root)) in path.parents for root in roots)
+
+
 def reviewer_definition() -> Path:
     override = os.environ.get("JP_DOC_REVIEW_AGENT_DEF")
     return Path(override) if override else Path.home() / ".claude" / "agents" / f"{REVIEWER_AGENT}.md"
@@ -104,7 +130,7 @@ def is_target(path: Path) -> bool:
     """レビューの記録対象か。pathはsymlinkを解決した絶対パスで渡す。"""
     if path.suffix not in TARGET_SUFFIXES or path.name in LOCKFILE_NAMES:
         return False
-    if drafts_dir().resolve() in path.parents:
+    if _is_disposable(path):
         return False
     root, kind = _find_git_root(path.parent)
     if kind == "submodule":
