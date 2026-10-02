@@ -33,10 +33,19 @@ class ReviewerAgentTests(unittest.TestCase):
                 self.assertIn(marker, self.body)
 
     def test_body_makes_reading_and_editing_instructions_explicit(self):
-        for marker in ("SKILL.md` を全文読む", "次の資料を全文読む", "その場で書き換える",
-                       "読めなかったことを報告する", "grepして確かめる"):
+        for marker in ("`SKILL.md` をReadツールで全文読む", "次の資料をReadツールで全文読む", "その場で書き換える",
+                       "読めなかった資料を報告する", "grepして確かめる"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.body)
+
+    def test_body_limits_rewriting_to_requested_range(self):
+        for marker in ("範囲を指定されたら、その範囲だけ", "指定が無ければファイル全体"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.body)
+
+    def test_report_section_has_room_for_unread_references(self):
+        report = self.body.split("## 報告", 1)[1]
+        self.assertIn("読めなかった資料（あれば）", report)
         # 固定先のSKILL.mdはslop-catalog.mdに触れないので、「SKILL.mdが参照する資料」は事実と違う
         self.assertNotIn("が参照する資料", self.body)
 
