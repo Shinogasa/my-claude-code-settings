@@ -508,6 +508,7 @@ Claude Codeが書いた日本語のMarkdownや設定ファイルをコミット�
 | `jp-doc-review.py post-tool-use` | PostToolUse（Write・Edit） | 書き込んだ日本語の文字数を記録する |
 | `jp-doc-review.py pre-tool-use-bash` | PreToolUse（Bash） | `git commit` の前にレビューを依頼する |
 | `jp-doc-review.py pre-tool-use-confluence` | PreToolUse（Confluenceの投稿） | 投稿の前に下書きのレビューを依頼する |
+| `jp-doc-review.py pre-tool-use-agent` | PreToolUse（Agent・Task） | レビュワーへの依頼文のパスを、Editの許可リストに記録する |
 | `skill-read-check.py` | Stop・SubagentStop | 必読資料の読み漏れを会話記録から見つける |
 
 配線は `settings.json.template` だけにある。`codex/hooks.json` には配線していないので、Codex CLIでは動かない。
@@ -519,8 +520,10 @@ Claude Codeが書いた日本語のMarkdownや設定ファイルをコミット�
 `jp-doc-reviewer` が使えるBashは、yomiyasuのリンターだけにしている。レビュワーは社内文書を読むので、
 本文に仕込まれた指示でコマンドを実行されないよう、定義のhooksで `jp-doc-review.py pre-tool-use-reviewer-bash` を呼び、
 リンター以外のコマンドを止める。
-あわせて、Editでyomiyasuの置き場、フック、レビュワーの定義、`settings*.json` を書き換えるのも止める。
-リンターやフックを書き換えてから許された形で実行する抜け道を塞ぐためである。
+Editは、依頼文に書かれたファイルだけに絞る。`Agent|Task` のPreToolUseフックが、`jp-doc-reviewer` への依頼文からパスを取り出して
+セッションごとの許可リストに記録し、Editのフックは、許可リストにあるファイルだけを通す。
+yomiyasuの置き場、フック、レビュワーの定義、`settings*.json` は、依頼文に書かれていても通さない。
+パスは `/` を含む英数字と `._~-` の連続として取り出すので、日本語やスペースを含むパスは取り出せず、レビュワーは直せない。
 
 yomiyasuはsubmodule（`skills/yomiyasu`）として固定している。npx版のyomiyasuを入れていたPCでは、
 先に `npx skills remove -g yomiyasu` で外してから `bash setup.sh --claude` を実行する。

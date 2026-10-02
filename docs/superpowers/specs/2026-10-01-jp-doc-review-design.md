@@ -185,7 +185,11 @@ MCPサーバー名が変わっても捕まえられるように、サーバー�
 レビュワーは社内文書を読むので、本文に仕込まれた指示でコマンドを実行されないよう、定義のhooksで道具を絞る。
 
 - Bashは、`python3 <yomiyasuの置き場>/scripts/yomiyasu_lint.py <ファイル1つ>` の形だけ通す。区切りや引用符付きの `~` は通さず、`-` で始まる対象も止める（`pre-tool-use-reviewer-bash`）
-- Editは、yomiyasuの置き場、フックのディレクトリ、レビュワー定義、`settings*.json` の下を止める。リンターを書き換えてから実行する抜け道を塞ぐ（`pre-tool-use-reviewer-edit`）
+- Editは、依頼文に書かれたファイルだけを通す。`Agent|Task` のPreToolUseフック（`pre-tool-use-agent`）が、`jp-doc-reviewer` への依頼文から
+  `/` を含む語をパスとして取り出し、実在する通常ファイルの実体を `<key>.reviewer-allow.json` に和で記録する。
+  `pre-tool-use-reviewer-edit` は、許可リストにある実体だけを通す。許可リストが無い、読めない、壊れているときは止める。
+  yomiyasuの置き場、フックのディレクトリ、レビュワー定義、`settings*.json` は、許可リストにあっても止める。
+  日本語やスペースを含むパスは取り出せないので、そのファイルは直せない
 
 次のものは変えない。
 
