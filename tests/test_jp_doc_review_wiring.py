@@ -32,6 +32,14 @@ class ReviewerAgentTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.body)
 
+    def test_body_makes_reading_and_editing_instructions_explicit(self):
+        for marker in ("SKILL.md` を全文読む", "次の資料を全文読む", "その場で書き換える",
+                       "読めなかったことを報告する", "grepして確かめる"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.body)
+        # 固定先のSKILL.mdはslop-catalog.mdに触れないので、「SKILL.mdが参照する資料」は事実と違う
+        self.assertNotIn("が参照する資料", self.body)
+
     def test_body_lists_what_must_not_change(self):
         for marker in ("★", "コード", "URL", "テスト", "data-*"):
             with self.subTest(marker=marker):
