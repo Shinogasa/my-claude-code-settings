@@ -463,6 +463,46 @@ class ErrorTests(HookCase):
         self.assertEqual(code, 1)
         self.assertIn("session_id", stderr)
 
+    def test_changed_write_or_edit_input_fails_loudly(self):
+        path = str(self.write_file("a.md", "x"))
+        broken_inputs = (
+            ("Write", {"file_path": path}),
+            ("Edit", {"file_path": path, "old_string": "x"}),
+            ("Write", {"path": path, "content": JP_LONG}),
+            ("Edit", {"file_path": 1, "new_string": JP_LONG}),
+            ("Write", {"file_path": path, "content": None}),
+            ("Write", "not a dict"),
+        )
+        for tool, tool_input in broken_inputs:
+            with self.subTest(tool=tool, tool_input=tool_input):
+                payload = {"session_id": "s1", "cwd": str(self.repo), "tool_name": tool, "tool_input": tool_input}
+                code, output, stderr = self.run_hook("post-tool-use", payload)
+                self.assertEqual((code, output), (1, {}))
+                self.assertIn("入力の形", stderr)
+        self.assertEqual(self.records(), [])
+
+    def test_edit_with_empty_new_string_is_valid(self):
+        path = self.write_file("a.md", "x")
+        self.assertEqual(self.post(path, "", tool="Edit"), (0, {}, ""))
+
+    def test_other_tools_are_ignored(self):
+        payload = {"session_id": "s1", "cwd": str(self.repo), "tool_name": "NotebookEdit", "tool_input": {}}
+        self.assertEqual(self.run_hook("post-tool-use", payload), (0, {}, ""))
+
+    def test_empty_stdin_fails_loudly(self):
+        for event in ("post-tool-use", "pre-tool-use-bash", "pre-tool-use-confluence"):
+            with self.subTest(event=event):
+                code, output, stderr = self.run_hook(event, None, raw="")
+                self.assertEqual((code, output), (1, {}))
+                self.assertIn("入力が空", stderr)
+
+    def test_missing_session_id_fails_even_for_non_target_file(self):
+        path = self.write_file("a.py", "x")
+        payload = {"tool_name": "Write", "cwd": str(self.repo), "tool_input": {"file_path": str(path), "content": "x"}}
+        code, _, stderr = self.run_hook("post-tool-use", payload)
+        self.assertEqual(code, 1)
+        self.assertIn("session_id", stderr)
+
     def test_unknown_event_fails(self):
         code, _, stderr = self.run_hook("unknown", {})
         self.assertEqual(code, 1)
