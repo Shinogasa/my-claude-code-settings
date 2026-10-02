@@ -25,6 +25,7 @@ CODEX_AGENT_PROFILES = {
     "code-architect": ("gpt-6-sol", "high"),
     "code-explorer": ("gpt-6-sol", "medium"),
     "code-simplifier": ("gpt-6-luna", "medium"),
+    "jp-doc-reviewer": ("gpt-6-sol", "high"),
     "planner": ("gpt-6-sol", "high"),
     "refactor-cleaner": ("gpt-6-luna", "high"),
     "security-reviewer": ("gpt-6-sol", "high"),
