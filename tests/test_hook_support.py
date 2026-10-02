@@ -88,6 +88,12 @@ class TranscriptTests(unittest.TestCase):
         self.assertFalse(hook_support.is_human_prompt({**prompt("x"), "isMeta": True}))
         self.assertFalse(hook_support.is_human_prompt(call("Read", file_path="/a")))
 
+    def test_task_notification_is_not_a_human_prompt(self):
+        self.assertFalse(hook_support.is_human_prompt(prompt("<task-notification>\n<task-id>a</task-id>")))
+        self.assertFalse(hook_support.is_human_prompt(
+            {"type": "user", "message": {"content": [{"type": "text", "text": "<task-notification>x"}]}}))
+        self.assertTrue(hook_support.is_human_prompt(prompt("see <task-notification> later")))
+
     def test_since_last_prompt(self):
         entries = [prompt("1"), call("Skill", skill="x"), prompt("2"), call("Read", file_path="/a"), tool_result()]
         self.assertEqual(hook_support.since_last_prompt(entries), entries[3:])

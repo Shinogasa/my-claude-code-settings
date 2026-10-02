@@ -25,6 +25,13 @@ def call(name, **tool_input):
     return {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": name, "input": tool_input}]}}
 
 
+def skill_body(base_dir, as_list=False):
+    """スラッシュコマンドでスキルを呼んだときに残る、isMetaのuserの行。"""
+    text = f"Base directory for this skill: {base_dir}\n\n# demo"
+    content = [{"type": "text", "text": text}] if as_list else text
+    return {"type": "user", "isMeta": True, "message": {"role": "user", "content": content}}
+
+
 class SkillReadCheckTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -35,11 +42,16 @@ class SkillReadCheckTests(unittest.TestCase):
             path = self.root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("x", encoding="utf-8")
+            copy = self.base / "copy" / "skills" / "demo" / relative
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            copy.write_text("x", encoding="utf-8")
+        self.copy = self.base / "copy" / "skills" / "demo"
         self.alias = self.base / "alias-demo"
         self.alias.symlink_to(self.root)
         self.manifest = self.base / "manifest.json"
         self.manifest.write_text(json.dumps({"schemaVersion": 1, "skills": {"demo": {
             "root": str(self.alias),
+            "alternateRoots": [str(self.copy)],
             "allOf": ["references/a.md", "references/b.md"],
             "anyOf": [["references/domains/x.md", "references/domains/y.md"]],
         }}}), encoding="utf-8")
@@ -56,9 +68,11 @@ class SkillReadCheckTests(unittest.TestCase):
     def reads(self, *relatives, root=None):
         return [call("Read", file_path=str((root or self.root) / relative)) for relative in relatives]
 
-    def run_hook(self, event="stop", active=False):
+    def run_hook(self, event="stop", active=False, agent_type="general-purpose"):
         key = "agent_transcript_path" if event == "subagent-stop" else "transcript_path"
         payload = {"session_id": "s1", key: str(self.transcript_path), "stop_hook_active": active}
+        if event == "subagent-stop" and agent_type is not None:
+            payload["agent_type"] = agent_type
         env = {**os.environ, "SKILL_READ_CHECK_MANIFEST": str(self.manifest)}
         env.pop("FORCE_COLOR", None)
         result = subprocess.run([sys.executable, str(HOOK), event], input=json.dumps(payload),
@@ -126,6 +140,54 @@ class SkillReadCheckTests(unittest.TestCase):
         self.transcript(prompt("task"), call("Skill", skill="demo"), prompt("follow-up"))
         self.assertEqual(self.run_hook("subagent-stop")["decision"], "block")
 
+    def test_subagent_stop_without_agent_type_does_nothing(self):
+        self.transcript(prompt("task"), call("Skill", skill="demo"))
+        self.assertEqual(self.run_hook("subagent-stop", agent_type=None), {})
+        self.assertEqual(self.run_hook("subagent-stop", agent_type=""), {})
+
+    def test_bash_command_with_relative_path_counts_as_read(self):
+        self.transcript(prompt(), call("Skill", skill="demo"),
+                        call("Bash", command="cat ~/.claude/skills/demo/references/a.md"),
+                        call("Bash", command="sed -n '1,400p' references/b.md && cat references/domains/y.md"))
+        self.assertEqual(self.run_hook(), {})
+
+    def test_bash_command_with_real_path_counts_as_read(self):
+        paths = " ".join(str(self.root / relative) for relative in
+                         ("references/a.md", "references/b.md", "references/domains/x.md"))
+        self.transcript(prompt(), call("Skill", skill="demo"), call("Bash", command=f"cat {paths}"))
+        self.assertEqual(self.run_hook(), {})
+
+    def test_bash_command_without_required_path_does_not_count(self):
+        self.transcript(prompt(), call("Skill", skill="demo"), call("Bash", command="ls references"))
+        self.assertEqual(self.run_hook()["decision"], "block")
+
+    def test_reading_skill_md_in_alternate_root_counts_as_invocation(self):
+        self.transcript(prompt(), *self.reads("SKILL.md", root=self.copy))
+        self.assertEqual(self.run_hook()["decision"], "block")
+
+    def test_reads_in_alternate_root_satisfy_requirements(self):
+        self.transcript(prompt(), call("Skill", skill="demo"),
+                        *self.reads("references/a.md", "references/domains/y.md", root=self.copy),
+                        *self.reads("references/b.md"))
+        self.assertEqual(self.run_hook(), {})
+
+    def test_slash_command_base_directory_counts_as_invocation(self):
+        for base_dir, as_list in ((self.alias, False), (self.copy, True)):
+            with self.subTest(base_dir=base_dir.name, as_list=as_list):
+                self.transcript_path.unlink(missing_ok=True)
+                self.transcript(prompt("/demo"), skill_body(base_dir, as_list))
+                self.assertEqual(self.run_hook()["decision"], "block")
+
+    def test_base_directory_of_other_skill_is_ignored(self):
+        self.transcript(prompt("/other"), skill_body(self.base / "skills" / "other"))
+        self.assertEqual(self.run_hook(), {})
+
+    def test_task_notification_does_not_end_the_turn_window(self):
+        notification = {"type": "user", "message": {"role": "user",
+                                                    "content": "<task-notification>\n<task-id>x</task-id>"}}
+        self.transcript(prompt(), call("Skill", skill="demo"), notification)
+        self.assertEqual(self.run_hook()["decision"], "block")
+
     def test_stale_manifest_entry_is_reported(self):
         (self.root / "references" / "b.md").unlink()
         self.transcript(prompt(), call("Skill", skill="demo"),
@@ -159,10 +221,13 @@ class RepositoryManifestTests(unittest.TestCase):
         self.assertEqual(manifest["schemaVersion"], 1)
         entry = manifest["skills"]["yomiyasu"]
         self.assertEqual(entry["root"], "~/.claude/skills/yomiyasu")
+        self.assertEqual(entry["alternateRoots"], ["~/.claude/skills/yomiyasu/skills/yomiyasu"])
         submodule = REPO_ROOT / "skills" / "yomiyasu"
-        for relative in entry["allOf"] + [item for group in entry["anyOf"] for item in group]:
-            with self.subTest(relative=relative):
-                self.assertTrue((submodule / relative).is_file())
+        roots = [submodule, submodule / "skills" / "yomiyasu"]
+        for root in roots:
+            for relative in ["SKILL.md"] + entry["allOf"] + [item for group in entry["anyOf"] for item in group]:
+                with self.subTest(root=str(root), relative=relative):
+                    self.assertTrue((root / relative).is_file())
 
 
 if __name__ == "__main__":
