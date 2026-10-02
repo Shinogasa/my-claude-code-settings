@@ -46,5 +46,48 @@ class ReviewerAgentTests(unittest.TestCase):
                 self.assertIn(marker, self.body)
 
 
+SETTINGS = json.loads((REPO_ROOT / "settings.json.template").read_text(encoding="utf-8"))
+CONFLUENCE_MATCHER = "mcp__.*__(create|update)Confluence(Page|FooterComment|InlineComment)"
+
+
+def commands(event, matcher=None):
+    found = []
+    for group in SETTINGS["hooks"].get(event, []):
+        if matcher is not None and group.get("matcher") != matcher:
+            continue
+        found.extend(hook["command"] for hook in group["hooks"])
+    return found
+
+
+class WiringTests(unittest.TestCase):
+    def test_post_tool_use_records_writes_and_edits(self):
+        self.assertIn("python3 ~/.claude/hooks/jp-doc-review.py post-tool-use", commands("PostToolUse", "Write|Edit"))
+
+    def test_confluence_matcher_catches_only_posting_tools(self):
+        self.assertIn("python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use", commands("PreToolUse", CONFLUENCE_MATCHER))
+        pattern = re.compile(f"^(?:{CONFLUENCE_MATCHER})$")
+        for name in ("createConfluencePage", "updateConfluencePage",
+                     "createConfluenceFooterComment", "createConfluenceInlineComment"):
+            with self.subTest(name=name):
+                self.assertTrue(pattern.match(f"mcp__atlassian-http__{name}"))
+        self.assertFalse(pattern.match("mcp__atlassian-http__getConfluencePage"))
+
+    def test_existing_bash_guards_are_kept(self):
+        self.assertIn("~/.claude/hooks/guard-dangerous-bash.sh", commands("PreToolUse", "Bash"))
+
+    def test_stop_runs_review_and_read_check(self):
+        stop = commands("Stop")
+        self.assertIn("python3 ~/.claude/hooks/jp-doc-review.py stop", stop)
+        self.assertIn("python3 ~/.claude/hooks/skill-read-check.py stop", stop)
+
+    def test_subagent_stop_runs_read_check(self):
+        self.assertIn("python3 ~/.claude/hooks/skill-read-check.py subagent-stop", commands("SubagentStop"))
+
+    def test_codex_wiring_is_untouched(self):
+        codex = (REPO_ROOT / "codex" / "hooks.json").read_text(encoding="utf-8")
+        self.assertNotIn("jp-doc-review", codex)
+        self.assertNotIn("skill-read-check", codex)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

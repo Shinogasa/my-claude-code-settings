@@ -40,6 +40,55 @@
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "mcp__.*__(create|update)Confluence(Page|FooterComment|InlineComment)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/jp-doc-review.py post-tool-use",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/jp-doc-review.py stop",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/skill-read-check.py stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/skill-read-check.py subagent-stop",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "SessionStart": [

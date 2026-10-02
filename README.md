@@ -434,7 +434,8 @@ provider は起動時に確定するため、警告は次の起動前に直す�
 │   ├── hexagonal-architecture/  #   ヘキサゴナルアーキテクチャ
 │   ├── learning-mode/           #   学習モードの手順と書式
 │   ├── security-review/         #   セキュリティレビュー
-│   └── verification-loop/       #   検証ループ（Iron Law付き）
+│   ├── verification-loop/       #   検証ループ（Iron Law付き）
+│   └── yomiyasu/                #   日本語文書の書き直し（git submodule）
 ├── commands/                    # スラッシュコマンド
 │   ├── aside.md                 #   サイドクエスチョン
 │   ├── build-fix.md             #   ビルドエラー修正
@@ -456,6 +457,7 @@ provider は起動時に確定するため、警告は次の起動前に直す�
 │   ├── refactor-cleaner.md      #   デッドコード除去
 │   ├── security-reviewer.md     #   セキュリティレビュー
 │   ├── build-error-resolver.md  #   ビルドエラー解決
+│   ├── jp-doc-reviewer.md       #   日本語文書のレビュー（opus、yomiyasu）
 │   └── silent-failure-hunter.md #   サイレント障害検出
 ├── codex/                       # Codex固有アダプター
 │   ├── RTK.md                   #   RTK公式のCodex向けシェル指示
@@ -472,7 +474,10 @@ provider は起動時に確定するため、警告は次の起動前に直す�
 │   └── ecc-testing.md           #   テスト要件
 ├── hooks/                       # 危険コマンドブロック等のhooksスクリプト（Claude向けrtkフックはsettings.json.template側で管理）
 │   ├── guard-dangerous-bash.sh  #   PreToolUse(Bash)フックのエントリポイント
-│   └── guard-dangerous-bash.py  #   危険コマンド判定の実処理
+│   ├── guard-dangerous-bash.py  #   危険コマンド判定の実処理
+│   ├── hook_support.py          #   会話記録の読み取りと出力の補助
+│   ├── jp-doc-review.py         #   日本語文書の記録・レビュー依頼・Confluenceの事前チェック
+│   └── skill-read-check.py      #   スキルの必読資料の読み漏れ確認
 ├── bin/                         # 起動ラッパー（PATHを通して使う）
 │   ├── ccp                      #   個人Anthropicアカウントで Claude Code を起動する
 │   ├── cxp                      #   個人ChatGPTアカウントで Codex CLI を起動する
