@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """日本語文書のレビューをjp-doc-reviewerへ依頼するClaude Codeフック。
 
-使い方: jp-doc-review.py <post-tool-use|pre-tool-use-bash|pre-tool-use-confluence>（入力はstdinのJSON）
+使い方: jp-doc-review.py <post-tool-use|pre-tool-use-bash|pre-tool-use-confluence|pre-tool-use-reviewer-bash>（入力はstdinのJSON）
 設計: docs/superpowers/specs/2026-10-01-jp-doc-review-design.md
 判断の経緯: docs/adr/0024-jp-doc-review-hook.md
 """
@@ -25,6 +25,8 @@ MIN_JP_CHARS = 100
 DRAFT_SUFFIXES = {"markdown": ".md", "adf": ".json"}  # それ以外（html、指定なし）は .html
 TARGET_SUFFIXES = {".md", ".toml", ".yaml", ".yml", ".json"}
 STATE_RETENTION_DAYS = 7
+CLEANUP_INTERVAL_SECONDS = 3600  # 掃除の走査は、この間隔に1回に抑える
+CLEANUP_STAMP_NAME = ".last-cleanup"
 REVIEWER_AGENT = "jp-doc-reviewer"
 AGENT_TOOL_NAMES = {"Agent", "Task"}  # 古い版ではサブエージェントの起動ツールがTaskという名前だった
 EXCLUDED_DIR_NAMES = {"node_modules", "vendor", "dist", "build", ".git"}
@@ -261,6 +263,7 @@ def handle_post_tool_use(payload: dict) -> None:
     if tool_name not in WRITTEN_TEXT_KEYS or payload.get("agent_type") == REVIEWER_AGENT:
         return
     key = session_key(payload)
+    cleanup_old_state()
     raw_path, text = _written_text(tool_name, payload.get("tool_input"))
     path = Path(raw_path)
     if not path.is_absolute():
@@ -293,8 +296,17 @@ def _mark_once(key: str, flag: str) -> bool:
 
 
 def cleanup_old_state() -> None:
-    """保存日数を過ぎた状態ファイルと下書きを消す。"""
-    limit = time.time() - STATE_RETENTION_DAYS * 86400
+    """保存日数を過ぎた状態ファイルと下書きを消す。走査は1時間に1回に抑える（印のファイルのmtimeで判定）。"""
+    if not state_dir().is_dir():
+        return
+    stamp = state_dir() / CLEANUP_STAMP_NAME
+    now = time.time()
+    try:
+        if now - stamp.stat().st_mtime < CLEANUP_INTERVAL_SECONDS:
+            return
+    except FileNotFoundError:
+        pass
+    limit = now - STATE_RETENTION_DAYS * 86400
     for directory in (state_dir(), drafts_dir()):
         if not directory.is_dir():
             continue
@@ -304,6 +316,7 @@ def cleanup_old_state() -> None:
                     entry.unlink()
             except FileNotFoundError:
                 continue  # 並行して動いた別のフックが先に消した
+    _write_private(stamp, "")
 
 
 def _shell_tokens(command: str) -> List[str]:
@@ -518,6 +531,12 @@ def _write_draft(key: str, digest: str, body: str, content_format: object) -> Pa
     return path
 
 
+def _remove_draft(value: object) -> None:
+    """1回目で作った下書きを消す。下書きの置き場の外は、状態ファイルが書き換えられていても消さない。"""
+    if isinstance(value, str) and Path(value).parent == drafts_dir():
+        Path(value).unlink(missing_ok=True)
+
+
 def _confluence_reason(draft: Path) -> str:
     return (
         "Confluenceへ送る前に、日本語のレビューが要る。この投稿はまだ送っていない。\n"
@@ -534,6 +553,7 @@ def handle_pre_tool_use_confluence(payload: dict) -> None:
     tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
     body = str(tool_input.get("body") or "")
     title = str(tool_input.get("title") or "")
+    cleanup_old_state()
     if count_jp_chars(f"{title}\n{body}") < MIN_JP_CHARS:
         return
     key = session_key(payload)
@@ -546,10 +566,12 @@ def _handle_confluence(key: str, payload: dict, tool_name: str, tool_input: dict
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     state = read_json(_confluence_path(key))
     first = state.pop(target, None)
+    if first is not None:
+        _remove_draft(first.get("draft"))
     if first is None:
         draft = _write_draft(key, digest, body, tool_input.get("contentFormat"))
         write_json(_confluence_path(key), {
-            **state, target: {"digest": digest, "transcript_offset": _transcript_size(payload)},
+            **state, target: {"digest": digest, "transcript_offset": _transcript_size(payload), "draft": str(draft)},
         })
         emit({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -570,10 +592,47 @@ def _handle_confluence(key: str, payload: dict, tool_name: str, tool_input: dict
         emit({"systemMessage": f"{REVIEWER_AGENT}が起動されないまま、Confluenceへの投稿を通した（{tool_name}）"})
 
 
+LINTER_RELATIVE_PATHS = ("scripts/yomiyasu_lint.py", "skills/yomiyasu/scripts/yomiyasu_lint.py")
+COMMAND_SEPARATORS = ("&&", "||", ";", "|", "&", "\n", "\r", "$(", "`", ">", "<")
+
+
+def _allowed_linters() -> List[str]:
+    skill_root = yomiyasu_skill().parent
+    return [str(skill_root / relative) for relative in LINTER_RELATIVE_PATHS]
+
+
+def _is_linter_command(command: str) -> bool:
+    """python3 <リンター> <ファイル1つ> の形か。区切りを含むもの、shlexで分けられないものは偽。"""
+    if any(separator in command for separator in COMMAND_SEPARATORS):
+        return False
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return False
+    return len(words) == 3 and words[0] == "python3" and os.path.expanduser(words[1]) in _allowed_linters()
+
+
+def handle_pre_tool_use_reviewer_bash(payload: dict) -> None:
+    """jp-doc-reviewerのBashをリンターだけに絞る。想定外の入力は、フックのエラーでなく拒否にする。"""
+    tool_input = payload.get("tool_input")
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if isinstance(command, str) and _is_linter_command(command):
+        return
+    emit({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": (
+            f"{REVIEWER_AGENT} が使える Bash はリンターだけ。"
+            "python3 <yomiyasuの置き場>/scripts/yomiyasu_lint.py '<ファイル>' の形で、区切りや別のコマンドを付けずに呼んで。"
+        ),
+    }})
+
+
 HANDLERS = {
     "post-tool-use": handle_post_tool_use,
     "pre-tool-use-bash": handle_pre_tool_use_bash,
     "pre-tool-use-confluence": handle_pre_tool_use_confluence,
+    "pre-tool-use-reviewer-bash": handle_pre_tool_use_reviewer_bash,
 }
 
 

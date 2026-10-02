@@ -69,7 +69,8 @@ def parse_frontmatter(text: str) -> tuple:
         raise ValueError("frontmatter が見つからない")
     meta = {}
     for line in match.group(1).splitlines():
-        if ":" not in line:
+        # hooks など入れ子の行は読まない。Codex側へ移すのはbacklogで、キーが紛れ込むと意味の無い値になる
+        if ":" not in line or line[0] in " \t-":
             continue
         key, value = line.split(":", 1)
         meta[key.strip()] = value.strip()
