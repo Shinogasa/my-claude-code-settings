@@ -519,6 +519,8 @@ Claude Codeが書いた日本語のMarkdownや設定ファイルをコミット�
 `jp-doc-reviewer` が使えるBashは、yomiyasuのリンターだけにしている。レビュワーは社内文書を読むので、
 本文に仕込まれた指示でコマンドを実行されないよう、定義のhooksで `jp-doc-review.py pre-tool-use-reviewer-bash` を呼び、
 リンター以外のコマンドを止める。
+あわせて、Editでyomiyasuの置き場、フック、レビュワーの定義、`settings*.json` を書き換えるのも止める。
+リンターやフックを書き換えてから許された形で実行する抜け道を塞ぐためである。
 
 yomiyasuはsubmodule（`skills/yomiyasu`）として固定している。npx版のyomiyasuを入れていたPCでは、
 先に `npx skills remove -g yomiyasu` で外してから `bash setup.sh --claude` を実行する。
