@@ -9,6 +9,7 @@ docs/research/2026-10-02-claude-code-hook-payloads.md に記録している。
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -51,18 +52,41 @@ class HookCase(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_hook(self, event, payload, raw=None):
+    def hook_env(self):
         env = {**os.environ, "JP_DOC_REVIEW_STATE_DIR": str(self.state),
                "JP_DOC_REVIEW_YOMIYASU_SKILL": str(self.skill),
                "JP_DOC_REVIEW_AGENT_DEF": str(self.agent_def)}
         env.pop("FORCE_COLOR", None)
+        return env
+
+    def run_hook(self, event, payload, raw=None):
+        # 権限を確かめるテストが実行環境のumaskに左右されないよう、よくある022にそろえる
         result = subprocess.run(
             [sys.executable, str(HOOK), event],
             input=raw if raw is not None else json.dumps(payload, ensure_ascii=False),
-            capture_output=True, text=True, env=env,
+            capture_output=True, text=True, env=self.hook_env(), preexec_fn=lambda: os.umask(0o022),
         )
         output = json.loads(result.stdout) if result.stdout.strip() else {}
         return result.returncode, output, result.stderr
+
+    def run_parallel(self, event, payloads):
+        """同じイベントを並行して動かし、(終了コード, 出力, 標準エラー) の一覧を返す。"""
+        processes = [
+            subprocess.Popen([sys.executable, str(HOOK), event], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, env=self.hook_env())
+            for _ in payloads
+        ]
+        for process, payload in zip(processes, payloads):
+            process.stdin.write(json.dumps(payload, ensure_ascii=False))
+            process.stdin.close()
+        results = []
+        for process in processes:
+            stdout, stderr = process.stdout.read(), process.stderr.read()
+            process.wait()
+            process.stdout.close()
+            process.stderr.close()
+            results.append((process.returncode, json.loads(stdout) if stdout.strip() else {}, stderr))
+        return results
 
     def write_file(self, relative, text, root=None):
         path = (root or self.repo) / relative
@@ -449,6 +473,73 @@ class ConfluenceTests(HookCase):
         self.pre(JP_LONG, pageId="1")
         self.pre(JP_LONG + "。", pageId="1")
         self.assertEqual(self.pre(JP_LONG + "、", pageId="1")[1]["hookSpecificOutput"]["permissionDecision"], "deny")
+
+
+class StateFileTests(HookCase):
+    CONFLUENCE_TOOL = "mcp__atlassian-http__createConfluencePage"
+
+    def confluence_payload(self, page_id, session="s1"):
+        return {"session_id": session, "tool_name": self.CONFLUENCE_TOOL,
+                "tool_input": {"title": "", "body": JP_LONG, "pageId": page_id}}
+
+    def test_state_is_private(self):
+        self.state.mkdir(mode=0o755)
+        os.chmod(self.state, 0o755)
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        self.assertEqual(decision_of(self.commit()), "deny")
+        self.run_hook("pre-tool-use-confluence", self.confluence_payload("1"))
+        self.skill.unlink()
+        self.post(self.write_file("b.md", JP_LONG), JP_LONG, session="s2")
+        self.assertIn("systemMessage", self.commit(session="s2")[1])
+        names = {path.name for path in self.state.iterdir()}
+        for expected in ("s1.jsonl", "s1.dispatched.json", "s1.confluence.json", "s2.flags.json"):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, names)
+        for directory in (self.state, self.state / "drafts"):
+            with self.subTest(directory=directory.name):
+                self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+        files = [path for path in self.state.rglob("*") if path.is_file()]
+        self.assertTrue(any(path.parent.name == "drafts" for path in files))
+        for path in files:
+            with self.subTest(file=path.name):
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_parallel_first_posts_are_all_denied_and_recorded(self):
+        for round_number in range(5):
+            with self.subTest(round=round_number):
+                shutil.rmtree(self.state, ignore_errors=True)
+                page_ids = [f"{round_number}-{index}" for index in range(6)]
+                results = self.run_parallel("pre-tool-use-confluence",
+                                            [self.confluence_payload(page_id) for page_id in page_ids])
+                for code, output, stderr in results:
+                    self.assertEqual(code, 0, stderr)
+                    self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+                state = json.loads((self.state / "s1.confluence.json").read_text(encoding="utf-8"))
+                self.assertEqual(len(state), len(page_ids))
+
+    def test_writes_in_parallel_with_second_commit_are_kept(self):
+        for round_number in range(3):
+            with self.subTest(round=round_number):
+                shutil.rmtree(self.state, ignore_errors=True)
+                self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+                self.assertEqual(decision_of(self.commit()), "deny")
+                paths = [self.write_file(f"r{round_number}-{index}.md", JP_HALF) for index in range(6)]
+                commit_payload = {"session_id": "s1", "cwd": str(self.repo), "tool_name": "Bash",
+                                  "tool_input": {"command": "git commit -m x"}}
+                processes = [
+                    subprocess.Popen([sys.executable, str(HOOK), "pre-tool-use-bash"], stdin=subprocess.PIPE,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                     env=self.hook_env()),
+                ]
+                processes[0].stdin.write(json.dumps(commit_payload))
+                processes[0].stdin.close()
+                results = self.run_parallel("post-tool-use", [
+                    {"session_id": "s1", "cwd": str(self.repo), "tool_name": "Write",
+                     "tool_input": {"file_path": str(path), "content": JP_HALF}} for path in paths])
+                processes[0].wait()
+                processes[0].stderr.close()
+                self.assertTrue(all(code == 0 for code, _, _ in results), results)
+                self.assertEqual({record["path"] for record in self.records()}, {str(path) for path in paths})
 
 
 class ErrorTests(HookCase):
