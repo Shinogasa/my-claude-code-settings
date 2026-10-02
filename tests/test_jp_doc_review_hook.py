@@ -522,6 +522,27 @@ class ReviewerBashTests(HookCase):
         self.assertDenied(f"python3 {self.lint_path()} 'a;b.md'")
         self.assertDenied(f"python3 {self.lint_path()} $(id)")
 
+    def test_quoted_or_escaped_program_and_linter_are_denied(self):
+        # シェルは引用符の中の ~ を展開しないので、cwd 相対の ~/... が実行されてしまう
+        self.env_overrides["HOME"] = str(self.base)
+        tail = "yomiyasu/scripts/yomiyasu_lint.py"
+        for command in (f"python3 '~/{tail}' a.md", f'python3 "~/{tail}" a.md', f"python3 ~\\/{tail} a.md",
+                        f"python3 ~/yomiyasu/scr\\ipts/yomiyasu_lint.py a.md", f"'python3' ~/{tail} a.md",
+                        f'"python3" {self.lint_path()} a.md', f"python3 '{self.lint_path()}' a.md",
+                        f'python3 "{self.lint_path()}" a.md'):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_option_like_target_is_denied(self):
+        for target in ("-", "--json", "'-x'", "'--json'"):
+            with self.subTest(target=target):
+                self.assertDenied(f"python3 {self.lint_path()} {target}")
+
+    def test_quoted_target_still_passes(self):
+        self.env_overrides["HOME"] = str(self.base)
+        self.assertAllowed("python3 ~/yomiyasu/scripts/yomiyasu_lint.py 'docs/a b.md'")
+        self.assertAllowed(f'python3 {self.lint_path()} "docs/a.md"')
+
     def test_unparsable_command_is_denied(self):
         self.assertDenied(f"python3 {self.lint_path()} 'a.md")
 
@@ -530,6 +551,61 @@ class ReviewerBashTests(HookCase):
             with self.subTest(tool_input=tool_input):
                 payload = {"session_id": "s1", "tool_name": "Bash", "tool_input": tool_input}
                 result = self.run_hook("pre-tool-use-reviewer-bash", payload)
+                self.assertEqual((result[0], decision_of(result)), (0, "deny"))
+
+
+class ReviewerEditTests(HookCase):
+    """jp-doc-reviewer の Edit で、制限の仕組みそのものを書き換えさせない。"""
+
+    def edit(self, file_path):
+        payload = {"session_id": "s1", "tool_name": "Edit", "agent_type": "jp-doc-reviewer", "cwd": str(self.repo),
+                   "tool_input": {"file_path": file_path, "old_string": "a", "new_string": "b"}}
+        return self.run_hook("pre-tool-use-reviewer-edit", payload)
+
+    def assertAllowed(self, file_path):
+        self.assertEqual(self.edit(file_path), (0, {}, ""), file_path)
+
+    def assertDenied(self, file_path):
+        result = self.edit(file_path)
+        self.assertEqual((result[0], decision_of(result)), (0, "deny"), file_path)
+
+    def test_normal_documents_pass(self):
+        self.assertAllowed(str(self.write_file("docs/a.md", "x")))
+        self.assertAllowed("docs/relative.md")
+
+    def test_protected_files_are_denied(self):
+        self.claude_home.mkdir(parents=True)
+        for name in ("settings.json", "settings.local.json", "settings.personal.json"):
+            (self.claude_home / name).write_text("{}", encoding="utf-8")
+        scripts = self.skill.parent / "scripts"
+        scripts.mkdir()
+        (scripts / "yomiyasu_lint.py").write_text("", encoding="utf-8")
+        protected = [self.skill, scripts / "yomiyasu_lint.py", self.skill.parent / "references" / "new.md",
+                     HOOK, HOOK.parent / "hook_support.py", self.agent_def,
+                     *(self.claude_home / name for name in ("settings.json", "settings.local.json", "settings.personal.json"))]
+        for path in protected:
+            with self.subTest(path=str(path)):
+                self.assertDenied(str(path))
+
+    def test_symlinks_to_protected_files_are_denied(self):
+        link = self.repo / "link.md"
+        link.symlink_to(self.skill)
+        self.assertDenied(str(link))
+        directory_link = self.repo / "hooks-link"
+        directory_link.symlink_to(HOOK.parent)
+        self.assertDenied(str(directory_link / "jp-doc-review.py"))
+
+    def test_settings_symlinked_from_claude_home_are_denied(self):
+        self.claude_home.mkdir(parents=True)
+        managed = self.write_file("settings.json.template", "{}")
+        (self.claude_home / "settings.json").symlink_to(managed)
+        self.assertDenied(str(managed))
+
+    def test_missing_or_non_string_file_path_is_denied(self):
+        for tool_input in ({}, {"file_path": 5}, {"file_path": None}, {"file_path": ""}, "x"):
+            with self.subTest(tool_input=tool_input):
+                payload = {"session_id": "s1", "tool_name": "Edit", "tool_input": tool_input}
+                result = self.run_hook("pre-tool-use-reviewer-edit", payload)
                 self.assertEqual((result[0], decision_of(result)), (0, "deny"))
 
 

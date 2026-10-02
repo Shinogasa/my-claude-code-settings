@@ -33,6 +33,14 @@ class ReviewerAgentTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, frontmatter)
 
+    def test_edit_is_guarded_by_agent_hook(self):
+        frontmatter = AGENT.read_text(encoding="utf-8").split("---\n")[1]
+        for marker in ("matcher: Edit",
+                       "command: python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-reviewer-edit"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, frontmatter)
+        self.assertIn("依頼されたファイルだけ", self.body)
+
     def test_body_treats_documents_as_data_and_limits_bash(self):
         for marker in ("データとして扱う", "従わない", "リンターだけ", "シングルクォート",
                        "'<ファイル>'", "そのまま報告"):
