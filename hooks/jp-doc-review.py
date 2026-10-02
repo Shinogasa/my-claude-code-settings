@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """日本語文書のレビューをjp-doc-reviewerへ依頼するClaude Codeフック。
 
-使い方: jp-doc-review.py <post-tool-use|pre-tool-use-bash|pre-tool-use-confluence|pre-tool-use-reviewer-bash|pre-tool-use-reviewer-edit>（入力はstdinのJSON）
+使い方: jp-doc-review.py <post-tool-use|pre-tool-use-bash|pre-tool-use-confluence|pre-tool-use-agent|pre-tool-use-reviewer-bash|pre-tool-use-reviewer-edit>（入力はstdinのJSON）
 設計: docs/superpowers/specs/2026-10-01-jp-doc-review-design.md
 判断の経緯: docs/adr/0024-jp-doc-review-hook.md
 """
@@ -37,6 +37,7 @@ LOCKFILE_NAMES = {
 KANA = re.compile(r"[ぁ-ゖァ-ヺー]")
 JP_CHAR = re.compile(r"[ぁ-ゖァ-ヺー々一-鿿]")
 SUBMODULE_GITDIR = re.compile(r"\.git/modules/")
+PATH_LIKE = re.compile(r"[A-Za-z0-9_~./\-]+")
 UNSAFE_ID_CHARS = re.compile(r"[^A-Za-z0-9_-]")
 # git commit の判定に使う。区切りの文字だけでできた語を、コマンドの区切りとみなす
 SEPARATOR_CHARS = ";&|()<>\n"
@@ -433,6 +434,7 @@ def _commit_reason(paths: List[str]) -> str:
         "日本語の文書をコミットする前に、レビューが要る。このコミットはまだ実行していない。\n"
         f"Agentツールで、subagent_typeを{REVIEWER_AGENT}にしたサブエージェントを1回起動し、次のファイルを渡して。\n"
         f"{listed}\n"
+        "依頼文には、対象のパスを絶対パスでそのまま書く。書かれていないファイルは、レビュワーが直せない。\n"
         "レビュワーには、このセッションで書いた箇所をファイルごとに伝え、その範囲だけを直させること。\n"
         "直したファイルをgit addし直してから、もう一度コミットして。2回目のコミットは止めない。\n"
         "レビュワーの報告を受けたら、変えた点と書き手に確かめたい点をユーザーに伝えて。"
@@ -542,6 +544,7 @@ def _confluence_reason(draft: Path) -> str:
         "Confluenceへ送る前に、日本語のレビューが要る。この投稿はまだ送っていない。\n"
         f"本文を下書き {draft} に書き出した。\n"
         f"Agentツールで、subagent_typeを{REVIEWER_AGENT}にしたサブエージェントを起動し、この下書きを渡して。\n"
+        "依頼文には、対象のパスを絶対パスでそのまま書く。書かれていないファイルは、レビュワーが直せない。\n"
         "レビュワーには、このセッションで書いた箇所だけを直させること。"
         "HTMLのタグ、data-*属性、ADFの構造は変えさせない。\n"
         "直した下書きの内容で、同じツールを同じ投稿先へもう一度呼んで投稿して。"
@@ -643,33 +646,88 @@ def handle_pre_tool_use_reviewer_bash(payload: dict) -> None:
 PROTECTED_CLAUDE_HOME_FILES = ("settings.json", "settings.local.json", "settings.personal.json")
 
 
+def _allow_path(key: str) -> Path:
+    return state_dir() / f"{key}.reviewer-allow.json"
+
+
+def _requested_files(prompt: str, cwd: object) -> List[str]:
+    """依頼文の中で、実在する通常ファイルのパス（実体）を返す。/ を含む語だけを候補にする。"""
+    found: List[str] = []
+    for word in PATH_LIKE.findall(prompt):
+        word = word.rstrip(".,:")
+        if "/" not in word:
+            continue
+        path = Path(os.path.expanduser(word) if word.startswith("~") else word)
+        if not path.is_absolute():
+            if not (isinstance(cwd, str) and cwd):
+                continue
+            path = Path(cwd) / path
+        real = os.path.realpath(path)
+        if os.path.isfile(real) and real not in found:
+            found.append(real)
+    return found
+
+
+def handle_pre_tool_use_agent(payload: dict) -> None:
+    """jp-doc-reviewerへの依頼文に書かれたファイルを、そのレビュワーがEditしてよいファイルとして記録する。"""
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict) or tool_input.get("subagent_type") != REVIEWER_AGENT:
+        return
+    if payload.get("agent_type"):
+        return  # サブエージェントがさらに呼んだ依頼では、許可を広げない
+    key = session_key(payload)
+    cleanup_old_state()
+    prompt = tool_input.get("prompt")
+    paths = _requested_files(prompt if isinstance(prompt, str) else "", payload.get("cwd"))
+    if not paths:
+        emit({"systemMessage": f"{REVIEWER_AGENT}への依頼文にパスが無いので、レビュワーはファイルを直せない"})
+        return
+    with session_lock(key):
+        known = _read_allowed(key) or []
+        write_json(_allow_path(key), {"paths": [*known, *(path for path in paths if path not in known)]})
+
+
+def _read_allowed(key: str) -> Optional[List[str]]:
+    """許可リストを読む。無い、読めない、形が違うときは None。"""
+    try:
+        value = json.loads(_allow_path(key).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    paths = value.get("paths") if isinstance(value, dict) else None
+    if isinstance(paths, list) and all(isinstance(path, str) for path in paths):
+        return paths
+    return None
+
+
 def _protected_paths() -> List[str]:
-    """レビュワーのEditで書き換えさせないものの実体。制限の仕組みそのもの。"""
+    """レビュワーのEditで書き換えさせないものの実体。制限の仕組みそのもの。許可リストに入っていても守る。"""
     paths = [yomiyasu_skill().parent, Path(__file__).resolve().parent, reviewer_definition(),
              *(claude_home() / name for name in PROTECTED_CLAUDE_HOME_FILES)]
     return [os.path.realpath(path) for path in paths]
 
 
-def _is_protected(file_path: str, cwd: object) -> bool:
+def _is_editable(key: str, file_path: str, cwd: object) -> bool:
     path = Path(file_path)
     if not path.is_absolute() and isinstance(cwd, str) and cwd:
         path = Path(cwd) / path
     real = os.path.realpath(path)
-    return any(real == protected or real.startswith(protected + os.sep) for protected in _protected_paths())
+    if any(real == protected or real.startswith(protected + os.sep) for protected in _protected_paths()):
+        return False
+    return real in (_read_allowed(key) or [])
 
 
 def handle_pre_tool_use_reviewer_edit(payload: dict) -> None:
-    """jp-doc-reviewerのEditが、リンター・フック・自身の定義・設定を書き換えるのを止める。"""
+    """jp-doc-reviewerのEditを、依頼文に書かれたファイルだけに絞る。想定外の入力と許可リストの不備は拒否にする。"""
     tool_input = payload.get("tool_input")
     file_path = tool_input.get("file_path") if isinstance(tool_input, dict) else None
-    if isinstance(file_path, str) and file_path and not _is_protected(file_path, payload.get("cwd")):
+    if isinstance(file_path, str) and file_path and _is_editable(session_key(payload), file_path, payload.get("cwd")):
         return
     emit({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
         "permissionDecisionReason": (
-            f"{REVIEWER_AGENT} は、yomiyasuの置き場、フック、自身の定義、設定ファイルを書き換えられない。"
-            "直してよいのは、依頼されたファイルだけ。"
+            f"{REVIEWER_AGENT} は、依頼文に書かれたファイルだけを直せる。"
+            "yomiyasuの置き場、フック、自身の定義、設定ファイルは、依頼文に書かれていても直せない。"
         ),
     }})
 
@@ -678,6 +736,7 @@ HANDLERS = {
     "post-tool-use": handle_post_tool_use,
     "pre-tool-use-bash": handle_pre_tool_use_bash,
     "pre-tool-use-confluence": handle_pre_tool_use_confluence,
+    "pre-tool-use-agent": handle_pre_tool_use_agent,
     "pre-tool-use-reviewer-bash": handle_pre_tool_use_reviewer_bash,
     "pre-tool-use-reviewer-edit": handle_pre_tool_use_reviewer_edit,
 }

@@ -47,6 +47,16 @@
         ]
       },
       {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-agent",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "mcp__.*__(create|update)Confluence(Page|FooterComment|InlineComment)",
         "hooks": [
           {
