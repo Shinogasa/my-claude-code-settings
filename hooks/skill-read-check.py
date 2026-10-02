@@ -56,8 +56,15 @@ def invoked_skills(manifest: Dict[str, dict], window: List[dict]) -> List[str]:
     ]
 
 
-def missing_reads(entry: dict, reads: Set[str]) -> Tuple[List[str], List[str]]:
-    """読まれていない必読資料（フルパス）と、ディスクに無い資料（対応表が古い）を返す。"""
+def missing_reads(entry: dict, reads: Set[str]) -> Tuple[List[Tuple[str, str]], List[str]]:
+    """読まれていない必読資料と、ディスクに無い資料（対応表が古い）を返す。
+
+    戻り値:
+    - missing: (display_name, full_description) のタプルのリスト
+      - allOf: ("filename", "/full/path")
+      - anyOf: ("x.md / y.md のうち1つ", "/…/x.md / /…/y.md のうち1つ")
+    - stale: 文字列のリスト
+    """
     root = real(entry["root"])
     missing, stale = [], []
     for relative in entry.get("allOf", []):
@@ -65,22 +72,25 @@ def missing_reads(entry: dict, reads: Set[str]) -> Tuple[List[str], List[str]]:
         if not os.path.exists(full):
             stale.append(relative)
         elif full not in reads:
-            missing.append(full)
+            missing.append((Path(relative).name, full))
     for group in entry.get("anyOf", []):
         existing = [os.path.realpath(os.path.join(root, relative)) for relative in group]
         existing = [full for full in existing if os.path.exists(full)]
         if not existing:
             stale.append(" / ".join(group))
         elif not any(full in reads for full in existing):
-            missing.append(" / ".join(existing) + " のうち1つ")
+            display_names = " / ".join(Path(relative).name for relative in group)
+            display = display_names + " のうち1つ"
+            full_description = " / ".join(existing) + " のうち1つ"
+            missing.append((display, full_description))
     return missing, stale
 
 
-def _block_reason(problems: Dict[str, List[str]]) -> str:
+def _block_reason(problems: Dict[str, List[Tuple[str, str]]]) -> str:
     lines = ["スキルを呼んだのに、そのスキルが読むよう求める資料をまだ読んでいない。"
              "作業を終える前に、次の資料をReadで全文読み、その基準で作業を見直して。"]
     for name, missing in problems.items():
-        lines.extend(f"- {name}: {item}" for item in missing)
+        lines.extend(f"- {name}: {description}" for _display, description in missing)
     return "\n".join(lines)
 
 
@@ -109,7 +119,7 @@ def check(event: str, payload: dict) -> None:
         emit(with_messages({"decision": "block", "reason": _block_reason(problems)}, messages))
         return
     if problems:
-        summary = "; ".join(f"{name}（{', '.join(Path(item).name for item in missing)}）" for name, missing in problems.items())
+        summary = "; ".join(f"{name}（{', '.join(display for display, _desc in missing)}）" for name, missing in problems.items())
         messages.append(f"スキルの必読資料が読まれないまま作業が終わった: {summary}")
     emit(with_messages({}, messages))
 

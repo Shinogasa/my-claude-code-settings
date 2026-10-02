@@ -143,6 +143,15 @@ class SkillReadCheckTests(unittest.TestCase):
         self.transcript(prompt())
         self.assertIn("対応表を読めなかった", self.run_hook()["systemMessage"])
 
+    def test_second_stop_names_every_any_of_candidate(self):
+        self.transcript(prompt(), call("Skill", skill="demo"),
+                        *self.reads("references/a.md", "references/b.md"))
+        output = self.run_hook(active=True)
+        system_message = output["systemMessage"]
+        self.assertIn("x.md", system_message)
+        self.assertIn("y.md", system_message)
+        self.assertIn("のうち1つ", system_message)
+
 
 class RepositoryManifestTests(unittest.TestCase):
     def test_yomiyasu_entry_points_to_existing_files_in_submodule(self):
