@@ -2038,53 +2038,72 @@ Expected: npx版の `~/.agents/skills/yomiyasu` と、そこを指していた `
 - [ ] **Step 3: setup.shを実行する（ユーザーの確認を取ってから）**
 
 ```bash
-bash setup.sh
-readlink ~/.claude/skills/yomiyasu ~/.agents/skills/yomiyasu
-python3 -c "import json;print(sorted(json.load(open('$HOME/.claude/settings.json'))['hooks']))"
+bash setup.sh --claude
+readlink ~/.claude/skills/yomiyasu
+python3 - <<'EOF'
+import json, os
+hooks = json.load(open(os.path.expanduser("~/.claude/settings.json")))["hooks"]
+print(sorted(hooks))
+print([h["command"] for g in hooks["PreToolUse"] if g.get("matcher") == "Bash" for h in g["hooks"]])
+print([h["command"] for g in hooks["Stop"] for h in g["hooks"]])
+EOF
 ```
 
-Expected: 2つのリンクがリポジトリの `skills/yomiyasu` を指す。`hooks` に `PostToolUse`、`PreToolUse`、`SessionStart`、`Stop`、`SubagentStop` がある。
+Expected: リンクがリポジトリの `skills/yomiyasu` を指す。`hooks` に `PostToolUse`、`PreToolUse`、`SessionStart`、`Stop`、`SubagentStop` がある。
+PreToolUseのBashのグループに既存の3本と `jp-doc-review.py pre-tool-use-bash` があり、Stopは `skill-read-check.py stop` だけになっている。
 衝突が出たら、内容を確かめてユーザーに報告し、指示に従う。
 
-- [ ] **Step 4: 新しいセッションで、日本語の文書のレビューが起動することを確かめる**
+- [ ] **Step 4: 日本語の文書をコミットすると止められ、レビューの後のコミットが通ることを確かめる**
 
 Bashから `claude -p` を直接起動すると、`~/.claude/settings.json` の会社の接続情報で動いてしまう
 （`docs/research/2026-10-02-claude-code-hook-payloads.md`）。個人用の設定を渡す `bin/ccp` を使う。
 `--allowedTools` は値を複数受け取るので、プロンプトはその前に置く。
 
-
 ```bash
-SPIKE=$(mktemp -d) && git -C "$SPIKE" init -q
-cd "$SPIKE" && ~/.claude/bin/ccp -p "README.md に、このディレクトリの目的を日本語で5文書いて。書き終えたら作業を終えて。" \
+SPIKE=$(mktemp -d ~/jp-doc-review-spike.XXXX) && git -C "$SPIKE" init -q
+cd "$SPIKE" && ~/.claude/bin/ccp -p "README.md に、このディレクトリの目的を日本語で5文書いて、git add してコミットして。" \
   --allowedTools "Write,Edit,Agent,Read,Bash"
-ls ~/.claude/state/jp-doc-review/
+git -C "$SPIKE" log --oneline
+ls -la ~/.claude/state/jp-doc-review/
 ```
 
+一時ディレクトリの下のファイルはレビューの対象から外れるので、作業用のリポジトリはホームの下に作る。
 確かめる点は次のとおり。
 
-1. 応答の中で `jp-doc-reviewer` が起動している
-2. レビュワーの書き込みが記録されていない（状態ディレクトリの記録に、レビュワーの書き込みの行が増えていない）
-3. 最後のStopで止まらずに終わる
-4. 「jp-doc-reviewerが起動されないまま」「必読資料が読まれないまま」の表示が出ていない
+1. 1回目の `git commit` が止められ、応答の中で `jp-doc-reviewer` が起動している
+2. レビュワーが直したファイルを `git add` し直したコミットが通り、`git log` に残っている
+3. レビュワーの書き込みが記録されていない（状態ディレクトリの記録に、レビュワーの書き込みの行が増えていない）
+4. 「jp-doc-reviewerが起動されないまま」の表示が出ていない。`<session>.dispatched.json` が残っていない
+5. 状態ディレクトリが0700、ファイルが0600になっている
 
-- [ ] **Step 5: 読み漏れの確認が止めることを確かめる**
+- [ ] **Step 5: 読み込み確認が止めること、止めすぎないことを確かめる**
 
 ```bash
 cd "$SPIKE" && ~/.claude/bin/ccp -p "yomiyasuスキルを呼んで、references は読まずに、note.md に日本語で1文だけ書いて終えて。" \
   --allowedTools "Skill,Read,Write"
+cd "$SPIKE" && ~/.claude/bin/ccp -p "yomiyasuスキルを呼んで、references/gemini-syntax.md、references/slop-catalog.md、references/domains/tech.md をBashのcatで読んでから、note.md に日本語で1文だけ書いて終えて。" \
+  --allowedTools "Skill,Read,Write,Bash"
+cd "$SPIKE" && ~/.claude/bin/ccp -p "yomiyasu:yomiyasu スキルを呼んで、そのスキルの references を3つ（gemini-syntax、slop-catalog、domains/tech）Readで読んでから、note.md に日本語で1文だけ書いて終えて。" \
+  --allowedTools "Skill,Read,Write"
 ```
 
-Expected: 作業を終える前に、`references/gemini-syntax.md` などを読むよう差し戻される。
+Expected: 1つ目は、作業を終える前に `references/gemini-syntax.md` などを読むよう差し戻される。
+2つ目（referenceをBashで読んだ場合）と3つ目（複製の置き場の `yomiyasu:yomiyasu` から呼んだ場合）は止められない。
 
-- [ ] **Step 6: Confluenceの1回目が止まることを確かめる（送らない範囲だけ）**
+- [ ] **Step 6: 対話のセッションでSubagentStopの誤った表示が出ないことを確かめる**
+
+ユーザーに、プロンプト候補が有効な対話のセッションで数回やり取りしてもらう。
+「スキルの読み込み確認: 会話記録を読めなかった」などの表示が、サブエージェントを起動していないのに出ないことを確かめる。
+
+- [ ] **Step 7: Confluenceの1回目が止まることを確かめる（送らない範囲だけ）**
 
 対話のセッションで、ユーザーに次を依頼してもらう。「テスト用に、Confluenceの個人スペースへ、日本語で200文字ほどのページを作って」。
 1回目の投稿が止められ、`~/.claude/state/jp-doc-review/drafts/` に下書きができることだけを確かめる。
 止まった時点で作業を中断してもらい、2回目の投稿（実際の送信）はしない。
 
-- [ ] **Step 7: 結果を記録してコミットする**
+- [ ] **Step 8: 結果を記録してコミットする**
 
-`docs/research/2026-10-02-claude-code-hook-payloads.md` に「実機での確認」の節を足し、Step 4〜6で確かめた点と、想定と違った点を書く。
+`docs/research/2026-10-02-claude-code-hook-payloads.md` に「実機での確認」の節を足し、Step 4〜7で確かめた点と、想定と違った点を書く。
 
 ```bash
 git add docs/research/2026-10-02-claude-code-hook-payloads.md
