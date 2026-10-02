@@ -48,6 +48,11 @@ class HookCase(unittest.TestCase):
         self.repo = self.base / "repo"
         (self.repo / ".git").mkdir(parents=True)
         self.transcript_path = self.base / "transcript.jsonl"
+        # テストのファイルは一時ディレクトリの下に作るので、除外する置き場を差し替える
+        self.claude_home = self.base / "claude-home"
+        self.temp_root = self.base / "tmp"
+        self.env_overrides = {"JP_DOC_REVIEW_CLAUDE_HOME": str(self.claude_home),
+                              "JP_DOC_REVIEW_TEMP_DIRS": str(self.temp_root)}
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -55,9 +60,9 @@ class HookCase(unittest.TestCase):
     def hook_env(self):
         env = {**os.environ, "JP_DOC_REVIEW_STATE_DIR": str(self.state),
                "JP_DOC_REVIEW_YOMIYASU_SKILL": str(self.skill),
-               "JP_DOC_REVIEW_AGENT_DEF": str(self.agent_def)}
+               "JP_DOC_REVIEW_AGENT_DEF": str(self.agent_def), **self.env_overrides}
         env.pop("FORCE_COLOR", None)
-        return env
+        return {name: value for name, value in env.items() if value is not None}
 
     def run_hook(self, event, payload, raw=None):
         # 権限を確かめるテストが実行環境のumaskに左右されないよう、よくある022にそろえる
@@ -188,6 +193,44 @@ class RecordTests(HookCase):
         draft.write_text("x", encoding="utf-8")
         self.post(draft, JP_LONG)
         self.assertEqual(self.records(), [])
+
+    def test_ignores_disposable_work_files(self):
+        for relative in ("tasks/todo.md", ".superpowers/sdd/x/brief.md", "docs/.superpowers/a.md"):
+            self.post(self.write_file(relative, "x"), JP_LONG)
+        self.assertEqual(self.records(), [])
+
+    def test_other_todo_and_tasks_files_are_recorded(self):
+        for relative in ("tasks/backlog.md", "docs/todo.md"):
+            self.post(self.write_file(relative, "x"), JP_LONG)
+        self.assertEqual(len(self.records()), 2)
+
+    def test_ignores_files_under_claude_home(self):
+        self.post(self.write_file("projects/p/memory/MEMORY.md", "x", root=self.claude_home), JP_LONG)
+        self.post(self.write_file("plans/plan.md", "x", root=self.claude_home), JP_LONG)
+        self.assertEqual(self.records(), [])
+
+    def test_managed_file_linked_from_claude_home_is_recorded_as_repository_file(self):
+        real = self.write_file("rules/a.md", "x")
+        self.claude_home.mkdir()
+        (self.claude_home / "rules").symlink_to(self.repo / "rules")
+        self.post(self.claude_home / "rules" / "a.md", JP_LONG)
+        self.assertEqual(self.records(), [{"path": str(real), "jp_chars": 144}])
+
+    def test_ignores_files_under_temporary_directories(self):
+        scratch = self.temp_root / "scratch"
+        (scratch / ".git").mkdir(parents=True)
+        self.post(self.write_file("a.md", "x", root=scratch), JP_LONG)
+        self.assertEqual(self.records(), [])
+
+    def test_default_temporary_directory_follows_tmpdir(self):
+        system_tmp = self.base / "system-tmp"
+        self.env_overrides = {**self.env_overrides, "JP_DOC_REVIEW_TEMP_DIRS": None, "TMPDIR": str(system_tmp)}
+        scratch = system_tmp / "scratch"
+        (scratch / ".git").mkdir(parents=True)
+        path = self.write_file("a.md", "x", root=scratch)
+        self.post(path, JP_LONG)
+        # /tmp の下で動く環境では repo 側も除外されるので、scratch の除外だけを確かめる
+        self.assertNotIn(str(path), [record["path"] for record in self.records()])
 
     def test_symlinked_path_is_recorded_as_real_path(self):
         real = self.write_file("rules/a.md", "x")
