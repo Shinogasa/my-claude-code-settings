@@ -824,6 +824,11 @@ class ConfluenceTests(HookCase):
         reason = self.pre(JP_LONG, pageId="9")[1]["hookSpecificOutput"]["permissionDecisionReason"]
         self.assertIn("対象のパスを絶対パスでそのまま書く", reason)
 
+    def test_confluence_reason_asks_for_user_confirmation_before_second_post(self):
+        reason = self.pre(JP_LONG, pageId="9")[1]["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("レビュワーが変えた点をユーザーに見せ、投稿してよいかを確かめてから送る", reason)
+        self.assertIn("ユーザーの確認なしに2回目を送らない", reason)
+
     def test_draft_suffix_follows_content_format(self):
         self.pre(JP_LONG, contentFormat="markdown", pageId="1")
         self.pre(JP_LONG + "。", contentFormat="adf", pageId="2")
