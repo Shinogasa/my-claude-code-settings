@@ -513,12 +513,20 @@ Claude Codeが書いた日本語のMarkdownや設定ファイルをコミット�
 配線は `settings.json.template` だけにある。`codex/hooks.json` には配線していないので、Codex CLIでは動かない。
 
 記録と下書きは `~/.claude/state/jp-doc-review/` に置く。下書きは社内文書の写しを含みうるので、
-ディレクトリは0700、ファイルは0600で作る。7日を過ぎたものは、次にコミットを確かめるときに消す。
+ディレクトリは0700、ファイルは0600で作る。Confluenceの下書きは、2回目の投稿を通したときに消す。
+7日を過ぎた状態ファイルと下書きは、コミットの確認、Confluenceへの投稿、Write・Editの後に消す。走査は1時間に1回までにしている。
+
+`jp-doc-reviewer` が使えるBashは、yomiyasuのリンターだけにしている。レビュワーは社内文書を読むので、
+本文に仕込まれた指示でコマンドを実行されないよう、定義のhooksで `jp-doc-review.py pre-tool-use-reviewer-bash` を呼び、
+リンター以外のコマンドを止める。
 
 yomiyasuはsubmodule（`skills/yomiyasu`）として固定している。npx版のyomiyasuを入れていたPCでは、
 先に `npx skills remove -g yomiyasu` で外してから `bash setup.sh --claude` を実行する。
 npx版を残すと、`npx skills update` がリンクをたどってsubmoduleの中身を上書きするおそれがある。
 既存のリンクが残っていれば、setup.shが衝突として止まるので、中身を確かめてから置き換える。
+
+レビュワーはyomiyasuの `SKILL.md`、`references/`、`scripts/yomiyasu_lint.py` をそのまま読み、実行する。
+固定を上げるとき（`git submodule update --remote skills/yomiyasu` など）は、差分を読んでからコミットする。
 
 設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯と却下した案は
 `docs/adr/0024-jp-doc-review-hook.md` を参照。
