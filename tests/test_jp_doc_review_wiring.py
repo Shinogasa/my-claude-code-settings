@@ -26,6 +26,22 @@ class ReviewerAgentTests(unittest.TestCase):
         self.assertEqual(set(codex_agents.parse_tools(self.meta["tools"])), {"Read", "Edit", "Bash"})
         self.assertEqual(self.meta["model"], "opus")
 
+    def test_bash_is_limited_to_the_linter_by_agent_hook(self):
+        frontmatter = AGENT.read_text(encoding="utf-8").split("---\n")[1]
+        for marker in ("hooks:", "PreToolUse:", "matcher: Bash", "type: command",
+                       "command: python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-reviewer-bash"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, frontmatter)
+
+    def test_body_treats_documents_as_data_and_limits_bash(self):
+        for marker in ("データとして扱う", "従わない", "リンターだけ", "シングルクォート",
+                       "'<ファイル>'", "そのまま報告"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.body)
+
+    def test_nested_frontmatter_does_not_leak_into_meta(self):
+        self.assertEqual(set(self.meta), {"name", "description", "tools", "model", "color", "hooks"})
+
     def test_body_requires_reading_all_references_before_rewriting(self):
         for marker in ("references/gemini-syntax.md", "references/slop-catalog.md", "references/domains/",
                        "主張", "比重", "言い切りの強さ", "文の働き", "yomiyasu_lint.py"):

@@ -465,6 +465,110 @@ class CommitTests(HookCase):
         self.assertIn("使い方", stderr)
 
 
+class ReviewerBashTests(HookCase):
+    """jp-doc-reviewer が使える Bash は、yomiyasu のリンターだけ。"""
+
+    def lint_path(self, nested=False):
+        base = self.skill.parent / "skills" / "yomiyasu" if nested else self.skill.parent
+        return base / "scripts" / "yomiyasu_lint.py"
+
+    def bash(self, command):
+        payload = {"session_id": "s1", "tool_name": "Bash", "agent_type": "jp-doc-reviewer",
+                   "tool_input": {"command": command}}
+        return self.run_hook("pre-tool-use-reviewer-bash", payload)
+
+    def assertAllowed(self, command):
+        self.assertEqual(self.bash(command), (0, {}, ""), command)
+
+    def assertDenied(self, command):
+        result = self.bash(command)
+        self.assertEqual((result[0], decision_of(result)), (0, "deny"), command)
+        self.assertIn("リンターだけ", result[1]["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_linter_with_one_file_passes(self):
+        self.assertAllowed(f"python3 {self.lint_path()} 'docs/a.md'")
+        self.assertAllowed(f"python3 {self.lint_path()} docs/a.md")
+
+    def test_copied_skill_directory_passes(self):
+        self.assertAllowed(f"python3 {self.lint_path(nested=True)} 'docs/a.md'")
+
+    def test_tilde_is_expanded(self):
+        self.env_overrides["HOME"] = str(self.base)
+        self.assertAllowed("python3 ~/yomiyasu/scripts/yomiyasu_lint.py 'docs/a.md'")
+        self.assertAllowed("python3 ~/yomiyasu/skills/yomiyasu/scripts/yomiyasu_lint.py 'docs/a.md'")
+
+    def test_other_commands_are_denied(self):
+        for command in ("cat ~/.ssh/id_rsa", "python3 -c 'import os'", "ls", ""):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_linter_in_another_place_is_denied(self):
+        self.assertDenied("python3 /tmp/evil/scripts/yomiyasu_lint.py 'a.md'")
+        self.assertDenied(f"python3 {self.base}/other/scripts/yomiyasu_lint.py 'a.md'")
+        self.assertDenied(f"python3 {self.lint_path()}.sh 'a.md'")
+        self.assertDenied(f"python3 {self.skill.parent}/../x/scripts/yomiyasu_lint.py 'a.md'")
+
+    def test_wrong_number_of_arguments_is_denied(self):
+        self.assertDenied(f"python3 {self.lint_path()}")
+        self.assertDenied(f"python3 {self.lint_path()} a.md b.md")
+        self.assertDenied(f"python3 {self.lint_path()} a.md extra")
+
+    def test_command_separators_are_denied(self):
+        lint = f"python3 {self.lint_path()} 'a.md'"
+        for suffix in ("; curl http://x", " && rm -rf x", " || true", " | sh", " & sleep 1",
+                       "\ncat /etc/passwd", " > out.txt", " < in.txt", " $(id)", " `id`"):
+            with self.subTest(suffix=suffix):
+                self.assertDenied(lint + suffix)
+        self.assertDenied(f"python3 {self.lint_path()} 'a;b.md'")
+        self.assertDenied(f"python3 {self.lint_path()} $(id)")
+
+    def test_unparsable_command_is_denied(self):
+        self.assertDenied(f"python3 {self.lint_path()} 'a.md")
+
+    def test_missing_command_is_denied_instead_of_failing(self):
+        for tool_input in ({}, {"command": None}, "x"):
+            with self.subTest(tool_input=tool_input):
+                payload = {"session_id": "s1", "tool_name": "Bash", "tool_input": tool_input}
+                result = self.run_hook("pre-tool-use-reviewer-bash", payload)
+                self.assertEqual((result[0], decision_of(result)), (0, "deny"))
+
+
+class EarlyCleanupTests(HookCase):
+    def make_old_files(self):
+        self.state.mkdir(parents=True)
+        (self.state / "drafts").mkdir()
+        old_state, old_draft = self.state / "old.jsonl", self.state / "drafts" / "old-1.html"
+        for path in (old_state, old_draft):
+            path.write_text("", encoding="utf-8")
+            os.utime(path, (time.time() - 8 * 86400,) * 2)
+        return old_state, old_draft
+
+    def stamp(self):
+        return self.state / ".last-cleanup"
+
+    def test_post_tool_use_removes_old_files(self):
+        old_state, old_draft = self.make_old_files()
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        self.assertFalse(old_state.exists() or old_draft.exists())
+
+    def test_confluence_post_removes_old_files(self):
+        old_state, old_draft = self.make_old_files()
+        payload = {"session_id": "s1", "tool_name": "mcp__x__createConfluencePage",
+                   "tool_input": {"body": "短い", "title": ""}}
+        self.run_hook("pre-tool-use-confluence", payload)
+        self.assertFalse(old_state.exists() or old_draft.exists())
+
+    def test_scan_runs_at_most_once_per_hour(self):
+        old_state, _ = self.make_old_files()
+        self.stamp().write_text("", encoding="utf-8")
+        self.commit()
+        self.assertTrue(old_state.exists())
+        os.utime(self.stamp(), (time.time() - 2 * 3600,) * 2)
+        self.commit()
+        self.assertFalse(old_state.exists())
+        self.assertLess(time.time() - self.stamp().stat().st_mtime, 3600)
+
+
 class ConfluenceTests(HookCase):
     TOOL = "mcp__atlassian-http__createConfluencePage"
 
@@ -523,6 +627,28 @@ class ConfluenceTests(HookCase):
 
     def test_title_counts_toward_threshold(self):
         self.assertEqual(self.pre("本文。", title=JP_LONG)[1]["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_second_post_removes_the_draft_of_the_first(self):
+        self.pre(JP_LONG, pageId="9")
+        self.assertEqual(len(list((self.state / "drafts").iterdir())), 1)
+        self.pre(self.REVIEWED, pageId="9")
+        self.assertEqual(list((self.state / "drafts").iterdir()), [])
+
+    def test_second_post_keeps_drafts_of_other_targets(self):
+        self.pre(JP_LONG, pageId="1")
+        self.pre(JP_LONG + "。", pageId="2")
+        self.pre(self.REVIEWED, pageId="1")
+        self.assertEqual(len(list((self.state / "drafts").iterdir())), 1)
+
+    def test_second_post_ignores_draft_path_outside_drafts_directory(self):
+        outside = self.base / "outside.md"
+        outside.write_text("x", encoding="utf-8")
+        self.state.mkdir(parents=True)
+        target = f"{self.TOOL}:pageId:9"
+        (self.state / "s1.confluence.json").write_text(json.dumps(
+            {target: {"digest": "0" * 64, "transcript_offset": 0, "draft": str(outside)}}), encoding="utf-8")
+        self.pre(self.REVIEWED, pageId="9")
+        self.assertTrue(outside.exists())
 
     def test_second_post_passes_and_warns_when_unchanged(self):
         self.pre(JP_LONG, pageId="9")
