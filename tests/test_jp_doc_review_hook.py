@@ -401,6 +401,11 @@ class CommitTests(HookCase):
         self.transcript(agent_call("jp-doc-reviewer", name="Task"))
         self.assertEqual(self.commit(transcript=transcript), (0, {}, ""))
 
+    def test_commit_reason_asks_for_absolute_paths_in_the_request(self):
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        reason = self.commit()[1]["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("対象のパスを絶対パスでそのまま書く", reason)
+
     def test_second_commit_warns_when_reviewer_was_not_invoked(self):
         transcript = self.transcript({"type": "user", "message": {"content": "x"}})
         self.post(self.write_file("a.md", JP_LONG), JP_LONG)
@@ -554,11 +559,92 @@ class ReviewerBashTests(HookCase):
                 self.assertEqual((result[0], decision_of(result)), (0, "deny"))
 
 
-class ReviewerEditTests(HookCase):
-    """jp-doc-reviewer の Edit で、制限の仕組みそのものを書き換えさせない。"""
+class ReviewerAllowTests(HookCase):
+    """jp-doc-reviewer への依頼文に書かれたファイルを、Editの許可リストへ記録する。"""
 
-    def edit(self, file_path):
-        payload = {"session_id": "s1", "tool_name": "Edit", "agent_type": "jp-doc-reviewer", "cwd": str(self.repo),
+    def agent(self, prompt, subagent_type="jp-doc-reviewer", session="s1", **extra):
+        payload = {"session_id": session, "cwd": str(self.repo), "tool_name": "Agent",
+                   "tool_input": {"subagent_type": subagent_type, "description": "d", "prompt": prompt}, **extra}
+        return self.run_hook("pre-tool-use-agent", payload)
+
+    def allowed(self, session="s1"):
+        path = self.state / f"{session}.reviewer-allow.json"
+        return json.loads(path.read_text(encoding="utf-8"))["paths"] if path.exists() else None
+
+    def test_path_in_backticks_is_recorded(self):
+        doc = self.write_file("docs/a.md", "x")
+        self.assertEqual(self.agent(f"次を直して。\n- `{doc}`"), (0, {}, ""))
+        self.assertEqual(self.allowed(), [os.path.realpath(doc)])
+
+    def test_path_between_japanese_characters_is_recorded(self):
+        self.write_file("docs/a.md", "x")
+        self.agent("docs/a.mdを直して")
+        self.assertEqual(self.allowed(), [os.path.realpath(self.repo / "docs/a.md")])
+
+    def test_tilde_and_relative_paths_are_expanded(self):
+        home = self.base / "home"
+        (home / "notes").mkdir(parents=True)
+        (home / "notes" / "n.md").write_text("x", encoding="utf-8")
+        self.write_file("docs/r.md", "x")
+        self.env_overrides["HOME"] = str(home)
+        self.agent("~/notes/n.md と docs/r.md")
+        self.assertEqual(sorted(self.allowed()), sorted(os.path.realpath(path) for path in
+                                                        (home / "notes" / "n.md", self.repo / "docs" / "r.md")))
+
+    def test_trailing_punctuation_is_dropped(self):
+        self.write_file("docs/a.md", "x")
+        self.agent("対象は docs/a.md, docs/a.md. docs/a.md:")
+        self.assertEqual(self.allowed(), [os.path.realpath(self.repo / "docs/a.md")])
+
+    def test_missing_files_directories_and_words_without_slash_are_not_recorded(self):
+        self.write_file("docs/a.md", "x")
+        code, output, _ = self.agent("docs/missing.md と docs と a.md と /etc/ と docs/")
+        self.assertEqual(code, 0)
+        self.assertIsNone(self.allowed())
+        self.assertIn("依頼文にパスが無い", output["systemMessage"])
+
+    def test_symlink_is_recorded_as_real_path(self):
+        target = self.write_file("docs/real.md", "x")
+        (self.repo / "link.md").symlink_to(target)
+        self.agent("link.md/x link.md")
+        self.assertEqual(self.allowed(), [os.path.realpath(target)])
+
+    def test_other_subagent_types_are_not_recorded(self):
+        self.write_file("docs/a.md", "x")
+        self.assertEqual(self.agent("docs/a.md", subagent_type="Explore"), (0, {}, ""))
+        self.assertIsNone(self.allowed())
+
+    def test_calls_from_a_subagent_are_not_recorded(self):
+        self.write_file("docs/a.md", "x")
+        self.assertEqual(self.agent("docs/a.md", agent_type="jp-doc-reviewer"), (0, {}, ""))
+        self.assertIsNone(self.allowed())
+
+    def test_second_call_adds_to_the_first(self):
+        first, second = self.write_file("docs/a.md", "x"), self.write_file("docs/b.md", "x")
+        self.agent("docs/a.md")
+        self.agent("docs/b.md")
+        self.assertEqual(sorted(self.allowed()), sorted(os.path.realpath(path) for path in (first, second)))
+
+    def test_allow_list_is_private_and_removed_when_old(self):
+        self.write_file("docs/a.md", "x")
+        self.agent("docs/a.md")
+        path = self.state / "s1.reviewer-allow.json"
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        os.utime(path, (time.time() - 8 * 86400,) * 2)
+        self.commit(session="other")
+        self.assertFalse(path.exists())
+
+
+class ReviewerEditTests(HookCase):
+    """jp-doc-reviewer の Edit は、依頼文に書かれたファイルだけ。制限の仕組みそのものは書き換えさせない。"""
+
+    def allow(self, *paths, session="s1"):
+        self.state.mkdir(parents=True, exist_ok=True)
+        (self.state / f"{session}.reviewer-allow.json").write_text(
+            json.dumps({"paths": [os.path.realpath(path) for path in paths]}), encoding="utf-8")
+
+    def edit(self, file_path, session="s1"):
+        payload = {"session_id": session, "tool_name": "Edit", "agent_type": "jp-doc-reviewer", "cwd": str(self.repo),
                    "tool_input": {"file_path": file_path, "old_string": "a", "new_string": "b"}}
         return self.run_hook("pre-tool-use-reviewer-edit", payload)
 
@@ -568,40 +654,61 @@ class ReviewerEditTests(HookCase):
     def assertDenied(self, file_path):
         result = self.edit(file_path)
         self.assertEqual((result[0], decision_of(result)), (0, "deny"), file_path)
+        self.assertIn("依頼文に書かれたファイルだけを直せる", result[1]["hookSpecificOutput"]["permissionDecisionReason"])
 
-    def test_normal_documents_pass(self):
-        self.assertAllowed(str(self.write_file("docs/a.md", "x")))
-        self.assertAllowed("docs/relative.md")
+    def test_requested_file_passes(self):
+        doc = self.write_file("docs/a.md", "x")
+        self.allow(doc)
+        self.assertAllowed(str(doc))
+        self.assertAllowed("docs/a.md")
 
-    def test_protected_files_are_denied(self):
+    def test_unrequested_markdown_is_denied(self):
+        self.allow(self.write_file("docs/a.md", "x"))
+        self.assertDenied(str(self.write_file("docs/other.md", "x")))
+        self.assertDenied(str(self.repo / ".claude" / "settings.json"))
+
+    def test_other_sessions_allow_list_does_not_count(self):
+        doc = self.write_file("docs/a.md", "x")
+        self.allow(doc, session="other")
+        self.assertDenied(str(doc))
+
+    def test_symlink_to_requested_file_passes(self):
+        doc = self.write_file("docs/a.md", "x")
+        (self.repo / "link.md").symlink_to(doc)
+        self.allow(doc)
+        self.assertAllowed(str(self.repo / "link.md"))
+
+    def test_protected_files_are_denied_even_when_listed(self):
         self.claude_home.mkdir(parents=True)
         for name in ("settings.json", "settings.local.json", "settings.personal.json"):
             (self.claude_home / name).write_text("{}", encoding="utf-8")
         scripts = self.skill.parent / "scripts"
         scripts.mkdir()
         (scripts / "yomiyasu_lint.py").write_text("", encoding="utf-8")
-        protected = [self.skill, scripts / "yomiyasu_lint.py", self.skill.parent / "references" / "new.md",
-                     HOOK, HOOK.parent / "hook_support.py", self.agent_def,
+        protected = [self.skill, scripts / "yomiyasu_lint.py", HOOK, HOOK.parent / "hook_support.py", self.agent_def,
                      *(self.claude_home / name for name in ("settings.json", "settings.local.json", "settings.personal.json"))]
+        self.allow(*protected)
         for path in protected:
             with self.subTest(path=str(path)):
                 self.assertDenied(str(path))
 
-    def test_symlinks_to_protected_files_are_denied(self):
+    def test_symlink_to_protected_file_is_denied_even_when_listed(self):
         link = self.repo / "link.md"
         link.symlink_to(self.skill)
+        self.allow(link)
         self.assertDenied(str(link))
-        directory_link = self.repo / "hooks-link"
-        directory_link.symlink_to(HOOK.parent)
-        self.assertDenied(str(directory_link / "jp-doc-review.py"))
 
-    def test_settings_symlinked_from_claude_home_are_denied(self):
-        self.claude_home.mkdir(parents=True)
-        managed = self.write_file("settings.json.template", "{}")
-        (self.claude_home / "settings.json").symlink_to(managed)
-        self.assertDenied(str(managed))
+    def test_missing_or_broken_allow_list_denies(self):
+        doc = self.write_file("docs/a.md", "x")
+        self.assertDenied(str(doc))
+        self.state.mkdir(parents=True)
+        for content in ("{broken", "[]", '{"paths": "x"}', '{"paths": [1]}', '{}'):
+            with self.subTest(content=content):
+                (self.state / "s1.reviewer-allow.json").write_text(content, encoding="utf-8")
+                self.assertDenied(str(doc))
 
     def test_missing_or_non_string_file_path_is_denied(self):
+        self.allow(self.write_file("docs/a.md", "x"))
         for tool_input in ({}, {"file_path": 5}, {"file_path": None}, {"file_path": ""}, "x"):
             with self.subTest(tool_input=tool_input):
                 payload = {"session_id": "s1", "tool_name": "Edit", "tool_input": tool_input}
@@ -679,6 +786,10 @@ class ConfluenceTests(HookCase):
         entry = state[f"{self.TOOL}:pageId:9"]
         self.assertEqual(entry["transcript_offset"], transcript.stat().st_size)
         self.assertEqual(len(entry["digest"]), 64)
+
+    def test_confluence_reason_asks_for_absolute_paths_in_the_request(self):
+        reason = self.pre(JP_LONG, pageId="9")[1]["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("対象のパスを絶対パスでそのまま書く", reason)
 
     def test_draft_suffix_follows_content_format(self):
         self.pre(JP_LONG, contentFormat="markdown", pageId="1")

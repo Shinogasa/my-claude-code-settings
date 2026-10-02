@@ -114,6 +114,12 @@ class WiringTests(unittest.TestCase):
             "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash",
         ])
 
+    def test_agent_calls_are_recorded_and_existing_hooks_remain(self):
+        self.assertEqual(commands("PreToolUse", "Agent|Task"),
+                         ["python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-agent"])
+        self.assertIn("python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash", commands("PreToolUse", "Bash"))
+        self.assertEqual(len(commands("PreToolUse", CONFLUENCE_MATCHER)), 1)
+
     def test_stop_runs_only_read_check(self):
         self.assertEqual(commands("Stop"), ["python3 ~/.claude/hooks/skill-read-check.py stop"])
 
