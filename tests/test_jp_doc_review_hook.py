@@ -260,6 +260,59 @@ class StopTests(HookCase):
         self.assertFalse(old.exists())
 
 
+class ConfluenceTests(HookCase):
+    TOOL = "mcp__atlassian-http__createConfluencePage"
+
+    def pre(self, body, title="", tool=None, **tool_input):
+        payload = {"session_id": "s1", "tool_name": tool or self.TOOL,
+                   "tool_input": {"cloudId": "c", "spaceId": "1", "title": title, "body": body, **tool_input}}
+        return self.run_hook("pre-tool-use", payload)
+
+    def test_short_japanese_passes(self):
+        self.assertEqual(self.pre("短い本文です。"), (0, {}, ""))
+
+    def test_first_post_is_denied_with_draft(self):
+        code, output, _ = self.pre(f"<p>{JP_LONG}</p>", contentFormat="html")
+        decision = output["hookSpecificOutput"]
+        self.assertEqual((code, decision["permissionDecision"]), (0, "deny"))
+        drafts = list((self.state / "drafts").iterdir())
+        self.assertEqual(len(drafts), 1)
+        self.assertEqual(drafts[0].suffix, ".html")
+        self.assertEqual(drafts[0].read_text(encoding="utf-8"), f"<p>{JP_LONG}</p>")
+        self.assertIn(str(drafts[0]), decision["permissionDecisionReason"])
+
+    def test_draft_suffix_follows_content_format(self):
+        self.pre(JP_LONG, contentFormat="markdown", pageId="1")
+        self.pre(JP_LONG + "。", contentFormat="adf", pageId="2")
+        self.pre(JP_LONG + "、", pageId="3")
+        suffixes = sorted(path.suffix for path in (self.state / "drafts").iterdir())
+        self.assertEqual(suffixes, [".html", ".json", ".md"])
+
+    def test_title_counts_toward_threshold(self):
+        self.assertEqual(self.pre("本文。", title=JP_LONG)[1]["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_second_post_passes_and_warns_when_unchanged(self):
+        self.pre(JP_LONG, pageId="9")
+        code, output, _ = self.pre(JP_LONG, pageId="9")
+        self.assertEqual(code, 0)
+        self.assertNotIn("hookSpecificOutput", output)
+        self.assertIn("レビューを通らない", output["systemMessage"])
+
+    def test_second_post_with_reviewed_body_is_silent(self):
+        self.pre(JP_LONG, pageId="9")
+        self.assertEqual(self.pre(JP_LONG.replace("テスト用", "確認用"), pageId="9")[1], {})
+
+    def test_targets_are_tracked_separately(self):
+        self.pre(JP_LONG, pageId="1")
+        denied = self.pre(JP_LONG, pageId="2")[1]
+        self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_after_passing_the_same_target_is_checked_again(self):
+        self.pre(JP_LONG, pageId="1")
+        self.pre(JP_LONG + "。", pageId="1")
+        self.assertEqual(self.pre(JP_LONG + "、", pageId="1")[1]["hookSpecificOutput"]["permissionDecision"], "deny")
+
+
 class ErrorTests(HookCase):
     def test_invalid_json_fails_loudly_without_blocking(self):
         code, output, stderr = self.run_hook("post-tool-use", None, raw="{broken")

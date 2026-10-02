@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hook_support import TranscriptError, emit, read_entries, tool_uses, with_messages  # noqa: E402
 
 MIN_JP_CHARS = 100
+DRAFT_SUFFIXES = {"markdown": ".md", "adf": ".json"}  # それ以外（html、指定なし）は .html
 TARGET_SUFFIXES = {".md", ".toml", ".yaml", ".yml", ".json"}
 STATE_RETENTION_DAYS = 7
 REVIEWER_AGENT = "jp-doc-reviewer"
@@ -291,9 +292,66 @@ def handle_stop(payload: dict) -> None:
     emit(with_messages({"decision": "block", "reason": _dispatch_reason(candidates)}, messages))
 
 
+def _confluence_path(key: str) -> Path:
+    return state_dir() / f"{key}.confluence.json"
+
+
+def _confluence_target(tool_name: str, tool_input: dict) -> str:
+    for field in ("pageId", "parentCommentId", "title"):
+        value = tool_input.get(field)
+        if value:
+            return f"{tool_name}:{field}:{value}"
+    return f"{tool_name}:none"
+
+
+def _write_draft(key: str, digest: str, body: str, content_format: object) -> Path:
+    suffix = DRAFT_SUFFIXES.get(str(content_format or ""), ".html")
+    path = drafts_dir() / f"{key}-{digest[:12]}{suffix}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def _confluence_reason(draft: Path) -> str:
+    return (
+        "Confluenceへ送る前に、日本語のレビューが要る。この投稿はまだ送っていない。\n"
+        f"本文を下書き {draft} に書き出した。\n"
+        f"Agentツールで subagent_type が {REVIEWER_AGENT} のサブエージェントを起動してこの下書きを渡し、文章だけを直させて。"
+        "HTMLのタグ、data-* 属性、ADFの構造は変えさせないこと。\n"
+        "直した下書きの内容で、同じツールを同じ投稿先へもう一度呼んで投稿して。"
+    )
+
+
+def handle_pre_tool_use(payload: dict) -> None:
+    tool_name = str(payload.get("tool_name", ""))
+    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    body = str(tool_input.get("body") or "")
+    title = str(tool_input.get("title") or "")
+    if count_jp_chars(f"{title}\n{body}") < MIN_JP_CHARS:
+        return
+    key = session_key(payload)
+    target = _confluence_target(tool_name, tool_input)
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    state = read_json(_confluence_path(key))
+    first_digest = state.pop(target, None)
+    if first_digest is None:
+        draft = _write_draft(key, digest, body, tool_input.get("contentFormat"))
+        write_json(_confluence_path(key), {**state, target: digest})
+        emit({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": _confluence_reason(draft),
+        }})
+        return
+    write_json(_confluence_path(key), state)
+    if first_digest == digest:
+        emit({"systemMessage": f"Confluenceへの投稿が、日本語のレビューを通らないまま送られた（{tool_name}）"})
+
+
 HANDLERS = {
     "post-tool-use": handle_post_tool_use,
     "stop": handle_stop,
+    "pre-tool-use": handle_pre_tool_use,
 }
 
 
