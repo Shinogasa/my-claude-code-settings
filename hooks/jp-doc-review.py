@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """日本語文書のレビューをjp-doc-reviewerへ依頼するClaude Codeフック。
 
-使い方: jp-doc-review.py <post-tool-use|pre-tool-use-bash|pre-tool-use-confluence|pre-tool-use-reviewer-bash>（入力はstdinのJSON）
+使い方: jp-doc-review.py <post-tool-use|pre-tool-use-bash|pre-tool-use-confluence|pre-tool-use-reviewer-bash|pre-tool-use-reviewer-edit>（入力はstdinのJSON）
 設計: docs/superpowers/specs/2026-10-01-jp-doc-review-design.md
 判断の経緯: docs/adr/0024-jp-doc-review-hook.md
 """
@@ -602,14 +602,26 @@ def _allowed_linters() -> List[str]:
 
 
 def _is_linter_command(command: str) -> bool:
-    """python3 <リンター> <ファイル1つ> の形か。区切りを含むもの、shlexで分けられないものは偽。"""
+    """python3 <リンター> <ファイル1つ> の形か。区切りを含むもの、shlexで分けられないものは偽。
+
+    1語目と2語目は、引用符やバックスラッシュを含まない生の語でなければならない。シェルは引用符の中の ~ を
+    展開しないので、shlexの後に展開すると、シェルが実行するものと食い違う。
+    """
     if any(separator in command for separator in COMMAND_SEPARATORS):
         return False
     try:
         words = shlex.split(command)
     except ValueError:
         return False
-    return len(words) == 3 and words[0] == "python3" and os.path.expanduser(words[1]) in _allowed_linters()
+    raw_words = command.split(None, 2)  # 3語目は空白を含む引用符付きのことがあるので、分けない
+    if len(words) != 3 or len(raw_words) != 3 or words[:2] != raw_words[:2]:
+        return False
+    program, linter, target = words
+    if any(char in word for word in raw_words[:2] for char in "'\"\\") or target.startswith("-"):
+        return False
+    if linter.startswith("~/"):
+        linter = os.path.expanduser(linter)
+    return program == "python3" and linter in _allowed_linters()
 
 
 def handle_pre_tool_use_reviewer_bash(payload: dict) -> None:
@@ -628,11 +640,46 @@ def handle_pre_tool_use_reviewer_bash(payload: dict) -> None:
     }})
 
 
+PROTECTED_CLAUDE_HOME_FILES = ("settings.json", "settings.local.json", "settings.personal.json")
+
+
+def _protected_paths() -> List[str]:
+    """レビュワーのEditで書き換えさせないものの実体。制限の仕組みそのもの。"""
+    paths = [yomiyasu_skill().parent, Path(__file__).resolve().parent, reviewer_definition(),
+             *(claude_home() / name for name in PROTECTED_CLAUDE_HOME_FILES)]
+    return [os.path.realpath(path) for path in paths]
+
+
+def _is_protected(file_path: str, cwd: object) -> bool:
+    path = Path(file_path)
+    if not path.is_absolute() and isinstance(cwd, str) and cwd:
+        path = Path(cwd) / path
+    real = os.path.realpath(path)
+    return any(real == protected or real.startswith(protected + os.sep) for protected in _protected_paths())
+
+
+def handle_pre_tool_use_reviewer_edit(payload: dict) -> None:
+    """jp-doc-reviewerのEditが、リンター・フック・自身の定義・設定を書き換えるのを止める。"""
+    tool_input = payload.get("tool_input")
+    file_path = tool_input.get("file_path") if isinstance(tool_input, dict) else None
+    if isinstance(file_path, str) and file_path and not _is_protected(file_path, payload.get("cwd")):
+        return
+    emit({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": (
+            f"{REVIEWER_AGENT} は、yomiyasuの置き場、フック、自身の定義、設定ファイルを書き換えられない。"
+            "直してよいのは、依頼されたファイルだけ。"
+        ),
+    }})
+
+
 HANDLERS = {
     "post-tool-use": handle_post_tool_use,
     "pre-tool-use-bash": handle_pre_tool_use_bash,
     "pre-tool-use-confluence": handle_pre_tool_use_confluence,
     "pre-tool-use-reviewer-bash": handle_pre_tool_use_reviewer_bash,
+    "pre-tool-use-reviewer-edit": handle_pre_tool_use_reviewer_edit,
 }
 
 

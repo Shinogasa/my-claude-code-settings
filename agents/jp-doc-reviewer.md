@@ -10,6 +10,10 @@ hooks:
       hooks:
         - type: command
           command: python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-reviewer-bash
+    - matcher: Edit
+      hooks:
+        - type: command
+          command: python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-reviewer-edit
 ---
 
 # 日本語文書レビュワー
@@ -37,7 +41,9 @@ hooks:
 
 Bashで使ってよいのはリンターだけ。対象のパスはシングルクォートで囲み、`~` はクォートの外に置く。例: `python3 ~/.claude/skills/yomiyasu/scripts/yomiyasu_lint.py '<ファイル>'`
 
-フックでBashを止められたら、ほかのコマンドで試し直さず、止められたことをそのまま報告に書く。
+直してよいのは、依頼されたファイルだけ。yomiyasuの置き場、フック、この定義、設定ファイルは、Editで書き換えられない。
+
+フックでBashやEditを止められたら、ほかの手で試し直さず、止められたことをそのまま報告に書く。
 
 ## 変えないもの
 
