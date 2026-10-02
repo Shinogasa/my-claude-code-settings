@@ -5,15 +5,18 @@
 設計: docs/superpowers/specs/2026-10-01-jp-doc-review-design.md
 判断の経緯: docs/adr/0024-jp-doc-review-hook.md
 """
+import fcntl
 import hashlib
 import json
 import os
 import re
 import shlex
 import sys
+import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hook_support import TranscriptError, emit, read_entries, tool_uses, with_messages  # noqa: E402
@@ -130,13 +133,50 @@ def _written_text(tool_name: str, tool_input: object) -> Tuple[str, str]:
     return file_path, text
 
 
+def _ensure_private_dir(path: Path) -> None:
+    """状態ファイルと下書きは社内文書の写しを含みうるので、ディレクトリを0700にする。"""
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(path, 0o700)
+
+
+@contextmanager
+def session_lock(key: str) -> Iterator[None]:
+    """セッションごとのロック。状態ファイルを読んで書き戻す処理を囲む。
+
+    同じセッションのメインとサブエージェントのフックは並行して動く。囲まないと、書き戻すときに
+    別のプロセスの追記が消えたり、2つのプロセスが同じ投稿を1回目とみなしたりする。
+    """
+    _ensure_private_dir(state_dir())
+    lock_path = state_dir() / f"{key}.lock"
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        os.utime(lock_path)  # 使っているロックを、古い状態の掃除で消さないようにする
+        yield
+    finally:
+        os.close(fd)
+
+
+def _write_private(path: Path, text: str) -> None:
+    """一意な名前の一時ファイル（0600）に書いてから置き換える。"""
+    _ensure_private_dir(path.parent)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
 def _log_path(key: str) -> Path:
     return state_dir() / f"{key}.jsonl"
 
 
 def _append_record(key: str, record: dict) -> None:
-    """記録を1行追記する。並行した書き込みでも行が混ざらないよう、1回のwriteで書く。"""
-    state_dir().mkdir(parents=True, exist_ok=True)
+    """記録を1行追記する。呼び出し側でsession_lockを取る。"""
+    _ensure_private_dir(state_dir())
     line = (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8")
     fd = os.open(_log_path(key), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
@@ -176,9 +216,7 @@ def _write_log_lines(key: str, lines: List[str]) -> None:
     if not lines:
         path.unlink(missing_ok=True)
         return
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
-    os.replace(temporary, path)
+    _write_private(path, "".join(line + "\n" for line in lines))
 
 
 def read_json(path: Path) -> dict:
@@ -189,10 +227,7 @@ def read_json(path: Path) -> dict:
 
 
 def write_json(path: Path, value: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
-    os.replace(temporary, path)
+    _write_private(path, json.dumps(value, ensure_ascii=False))
 
 
 def handle_post_tool_use(payload: dict) -> None:
@@ -210,7 +245,8 @@ def handle_post_tool_use(payload: dict) -> None:
     jp_chars = count_jp_chars(text)
     if jp_chars == 0:
         return
-    _append_record(key, {"path": str(path), "jp_chars": jp_chars})
+    with session_lock(key):
+        _append_record(key, {"path": str(path), "jp_chars": jp_chars})
 
 
 def _dispatched_path(key: str) -> Path:
@@ -231,13 +267,17 @@ def _mark_once(key: str, flag: str) -> bool:
 
 
 def cleanup_old_state() -> None:
+    """保存日数を過ぎた状態ファイルと下書きを消す。"""
     limit = time.time() - STATE_RETENTION_DAYS * 86400
     for directory in (state_dir(), drafts_dir()):
         if not directory.is_dir():
             continue
         for entry in directory.iterdir():
-            if entry.is_file() and entry.stat().st_mtime < limit:
-                entry.unlink(missing_ok=True)
+            try:
+                if entry.is_file() and entry.stat().st_mtime < limit:
+                    entry.unlink()
+            except FileNotFoundError:
+                continue  # 並行して動いた別のフックが先に消した
 
 
 def _shell_tokens(command: str) -> List[str]:
@@ -389,8 +429,13 @@ def handle_pre_tool_use_bash(payload: dict) -> None:
     if dash_c is None:
         return
     key = session_key(payload)
-    cleanup_old_state()
     root, _ = _find_git_root(_commit_directory(payload, dash_c))
+    cleanup_old_state()
+    with session_lock(key):
+        _handle_commit(key, payload, root)
+
+
+def _handle_commit(key: str, payload: dict, root: Optional[Path]) -> None:
     is_subagent = bool(payload.get("agent_type"))
     if not is_subagent and _dispatched_path(key).exists():
         _finish_dispatch(key, payload)
@@ -443,8 +488,7 @@ def _confluence_target(tool_name: str, tool_input: dict) -> str:
 def _write_draft(key: str, digest: str, body: str, content_format: object) -> Path:
     suffix = DRAFT_SUFFIXES.get(str(content_format or ""), ".html")
     path = drafts_dir() / f"{key}-{digest[:12]}{suffix}"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body, encoding="utf-8")
+    _write_private(path, body)
     return path
 
 
@@ -466,6 +510,11 @@ def handle_pre_tool_use_confluence(payload: dict) -> None:
     if count_jp_chars(f"{title}\n{body}") < MIN_JP_CHARS:
         return
     key = session_key(payload)
+    with session_lock(key):
+        _handle_confluence(key, tool_name, tool_input, body)
+
+
+def _handle_confluence(key: str, tool_name: str, tool_input: dict, body: str) -> None:
     target = _confluence_target(tool_name, tool_input)
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     state = read_json(_confluence_path(key))
