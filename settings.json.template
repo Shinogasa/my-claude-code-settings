@@ -38,6 +38,11 @@
             "type": "command",
             "command": "~/.claude/hooks/warn-branch-behind-main.sh",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash",
+            "timeout": 10
           }
         ]
       },
@@ -46,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use",
+            "command": "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-confluence",
             "timeout": 10
           }
         ]
@@ -67,11 +72,6 @@
     "Stop": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/jp-doc-review.py stop",
-            "timeout": 10
-          },
           {
             "type": "command",
             "command": "python3 ~/.claude/hooks/skill-read-check.py stop",

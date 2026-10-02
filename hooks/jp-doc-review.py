@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """日本語文書のレビューをjp-doc-reviewerへ依頼するClaude Codeフック。
 
-使い方: jp-doc-review.py <post-tool-use|stop|pre-tool-use>（入力はstdinのJSON）
+使い方: jp-doc-review.py <post-tool-use|pre-tool-use-bash|pre-tool-use-confluence>（入力はstdinのJSON）
 設計: docs/superpowers/specs/2026-10-01-jp-doc-review-design.md
 判断の経緯: docs/adr/0024-jp-doc-review-hook.md
 """
@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -32,6 +33,10 @@ KANA = re.compile(r"[ぁ-ゖァ-ヺー]")
 JP_CHAR = re.compile(r"[ぁ-ゖァ-ヺー々一-鿿]")
 SUBMODULE_GITDIR = re.compile(r"\.git/modules/")
 UNSAFE_ID_CHARS = re.compile(r"[^A-Za-z0-9_-]")
+# git commit の判定に使う。区切りの文字だけでできた語を、コマンドの区切りとみなす
+SEPARATOR_CHARS = ";&|()<>\n"
+ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+GIT_OPTIONS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--attr-source"}
 
 
 def state_dir() -> Path:
@@ -46,6 +51,11 @@ def drafts_dir() -> Path:
 def yomiyasu_skill() -> Path:
     override = os.environ.get("JP_DOC_REVIEW_YOMIYASU_SKILL")
     return Path(override) if override else Path.home() / ".claude" / "skills" / "yomiyasu" / "SKILL.md"
+
+
+def reviewer_definition() -> Path:
+    override = os.environ.get("JP_DOC_REVIEW_AGENT_DEF")
+    return Path(override) if override else Path.home() / ".claude" / "agents" / f"{REVIEWER_AGENT}.md"
 
 
 def session_key(payload: dict) -> str:
@@ -78,11 +88,12 @@ def _git_marker_kind(marker: Path) -> str:
     return "submodule" if SUBMODULE_GITDIR.search(first_line.replace("\\", "/")) else "repo"
 
 
-def _find_git_root(path: Path) -> Tuple[Optional[Path], str]:
-    for parent in path.parents:
-        kind = _git_marker_kind(parent / ".git")
+def _find_git_root(start: Path) -> Tuple[Optional[Path], str]:
+    """ディレクトリ start から親へたどり、最初に見つかった .git の場所と種類を返す。"""
+    for candidate in (start, *start.parents):
+        kind = _git_marker_kind(candidate / ".git")
         if kind != "none":
-            return parent, kind
+            return candidate, kind
     return None, "none"
 
 
@@ -92,7 +103,7 @@ def is_target(path: Path) -> bool:
         return False
     if drafts_dir().resolve() in path.parents:
         return False
-    root, kind = _find_git_root(path)
+    root, kind = _find_git_root(path.parent)
     if kind == "submodule":
         return False
     inner = path.relative_to(root).parts if root else path.parts
@@ -122,34 +133,39 @@ def _append_record(key: str, record: dict) -> None:
         os.close(fd)
 
 
-def read_records(key: str) -> Tuple[List[dict], int]:
-    """記録と、形式が合わずに飛ばした行の数を返す。"""
+def _read_log_lines(key: str) -> List[str]:
+    """記録の行を返す。行の数は、依頼した時点までの行を数えるのに使う。"""
     path = _log_path(key)
     if not path.exists():
-        return [], 0
-    records, skipped = [], 0
-    for line in path.read_text(encoding="utf-8").split("\n"):
-        if not line.strip():
-            continue
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError:
-            skipped += 1
-            continue
-        if isinstance(value, dict) and isinstance(value.get("path"), str) and isinstance(value.get("jp_chars"), int):
-            records.append(value)
-        else:
-            skipped += 1
-    return records, skipped
+        return []
+    return [line for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
 
 
-def write_records(key: str, records: List[dict]) -> None:
+def _parse_record(line: str) -> Optional[dict]:
+    """記録の1行を読む。形式が合わない行は None を返す。"""
+    try:
+        value = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(value, dict) and isinstance(value.get("path"), str) and isinstance(value.get("jp_chars"), int):
+        return value
+    return None
+
+
+def read_records(key: str) -> Tuple[List[dict], int]:
+    """記録と、形式が合わずに飛ばした行の数を返す。"""
+    parsed = [_parse_record(line) for line in _read_log_lines(key)]
+    records = [record for record in parsed if record is not None]
+    return records, len(parsed) - len(records)
+
+
+def _write_log_lines(key: str, lines: List[str]) -> None:
     path = _log_path(key)
-    if not records:
+    if not lines:
         path.unlink(missing_ok=True)
         return
     temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records), encoding="utf-8")
+    temporary.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
     os.replace(temporary, path)
 
 
@@ -213,83 +229,192 @@ def cleanup_old_state() -> None:
                 entry.unlink(missing_ok=True)
 
 
-def _review_candidates(records: List[dict]) -> List[str]:
+def _shell_tokens(command: str) -> List[str]:
+    """コマンドを語と区切りに分ける。shlexで最後まで分けられないときは、分けられたところまでを返す。"""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=SEPARATOR_CHARS)
+    lexer.whitespace = " \t\r"  # 改行は区切りとして返させる
+    tokens: List[str] = []
+    try:
+        for token in lexer:
+            tokens.append(token)
+    except ValueError:
+        pass  # 閉じていない引用符など。コミットのメッセージの中で起きやすいので、それより前の語で判定する
+    return tokens
+
+
+def _segments(tokens: List[str]) -> List[List[str]]:
+    segments: List[List[str]] = [[]]
+    for token in tokens:
+        if token and all(char in SEPARATOR_CHARS for char in token):
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    return segments
+
+
+def _commit_dash_c(words: List[str]) -> Optional[List[str]]:
+    """1つの部分が git commit なら、-C の値の一覧を返す。そうでなければ None。"""
+    index = 0
+    while index < len(words) and ENV_ASSIGNMENT.match(words[index]):
+        index += 1
+    if index >= len(words) or os.path.basename(words[index]) != "git":
+        return None
+    dash_c: List[str] = []
+    index += 1
+    while index < len(words):
+        word = words[index]
+        if word in GIT_OPTIONS_WITH_VALUE:
+            if word == "-C" and index + 1 < len(words):
+                dash_c.append(words[index + 1])
+            index += 2
+        elif word.startswith("-"):
+            index += 1
+        else:
+            return dash_c if word == "commit" else None
+    return None
+
+
+def find_commit(command: str) -> Optional[List[str]]:
+    """コマンドに git commit があれば、最初のものの -C の値の一覧を返す。無ければ None。"""
+    for words in _segments(_shell_tokens(command)):
+        dash_c = _commit_dash_c(words)
+        if dash_c is not None:
+            return dash_c
+    return None
+
+
+def _commit_directory(payload: dict, dash_c: List[str]) -> Path:
+    """コミット先のディレクトリ。-C があればそのパス（相対なら cwd 基準）、無ければ cwd。"""
+    cwd = payload.get("cwd")
+    directory = Path(cwd) if isinstance(cwd, str) and cwd else None
+    for value in dash_c:
+        candidate = Path(os.path.expanduser(value))
+        if candidate.is_absolute():
+            directory = candidate
+        elif directory is not None:
+            directory = directory / candidate
+    if directory is None:
+        raise ValueError("入力にcwdが無く、コミット先のリポジトリを決められない")
+    return Path(os.path.realpath(directory))
+
+
+def _review_candidates(records: List[dict], root: Optional[Path]) -> List[str]:
+    """コミット先のリポジトリの中で、レビューを依頼するファイルを返す。"""
+    if root is None:
+        return []
     totals: Dict[str, int] = {}
     for record in records:
         totals[record["path"]] = totals.get(record["path"], 0) + record["jp_chars"]
     candidates = []
     for path, total in sorted(totals.items()):
         file = Path(path)
-        if total < MIN_JP_CHARS or not file.is_file():
+        if total < MIN_JP_CHARS or not file.is_file() or _find_git_root(file.parent)[0] != root:
             continue
         if KANA.search(file.read_text(encoding="utf-8", errors="replace")):
             candidates.append(path)
     return candidates
 
 
-def _transcript_size(payload: dict) -> int:
+def _transcript_size(payload: dict) -> Optional[int]:
+    """会話記録の今の大きさ。分からないときは None。"""
     path = payload.get("transcript_path")
+    if not isinstance(path, str) or not path:
+        return None
     try:
-        return os.path.getsize(path) if path else 0
+        return os.path.getsize(path)
     except OSError:
-        return 0
+        return None
 
 
-def _dispatch_reason(paths: List[str]) -> str:
+def reviewer_invoked_after(transcript_path: object, offset: object) -> bool:
+    """会話記録の offset より後に、jp-doc-reviewerを起動したか。確かめられないときは TranscriptError。"""
+    if not isinstance(offset, int):
+        raise TranscriptError("依頼した時点の会話記録の大きさが分からない")
+    entries = read_entries(transcript_path if isinstance(transcript_path, str) else None, offset)
+    return any(
+        name in AGENT_TOOL_NAMES and tool_input.get("subagent_type") == REVIEWER_AGENT
+        for name, tool_input in tool_uses(entries)
+    )
+
+
+def _commit_reason(paths: List[str]) -> str:
     listed = "\n".join(f"- {path}" for path in paths)
     return (
-        "日本語の文書を書いたので、作業を終える前にレビューが要る。\n"
-        f"Agentツールで subagent_type が {REVIEWER_AGENT} のサブエージェントを1回起動し、次のファイルをまとめて渡して。\n"
+        "日本語の文書をコミットする前に、レビューが要る。このコミットはまだ実行していない。\n"
+        f"Agentツールで、subagent_typeを{REVIEWER_AGENT}にしたサブエージェントを1回起動し、次のファイルを渡して。\n"
         f"{listed}\n"
-        "レビュワーの報告を受けたら、変えた点と書き手に確かめたい点をユーザーに伝えてから作業を終えて。"
+        "レビュワーには、このセッションで書いた箇所をファイルごとに伝え、その範囲だけを直させること。\n"
+        "直したファイルをgit addし直してから、もう一度コミットして。2回目のコミットは止めない。\n"
+        "レビュワーの報告を受けたら、変えた点と書き手に確かめたい点をユーザーに伝えて。"
     )
 
 
 def _finish_dispatch(key: str, payload: dict) -> None:
-    """2回目のStop。依頼した記録を消し、レビュワーが起動したかを確かめる。"""
+    """依頼した後のコミット。通したうえで、依頼した記録を消し、レビュワーが起動したかを確かめる。"""
     dispatched = read_json(_dispatched_path(key))
-    paths = [path for path in dispatched.get("paths", []) if isinstance(path, str)]
-    if not paths:
-        return  # 別のフックのblockで続いた回。こちらは何も依頼していない
-    records, _ = read_records(key)
-    write_records(key, [record for record in records if record["path"] not in set(paths)])
+    paths = {path for path in dispatched.get("paths", []) if isinstance(path, str)}
+    limit = int(dispatched.get("record_lines", 0))
+    lines = _read_log_lines(key)
+    # 依頼した時点までの行から、依頼したパスの行を消す。依頼の後に書き足した行は、次のコミットのために残す
+    kept = [line for line in lines[:limit] if (record := _parse_record(line)) and record["path"] not in paths]
+    _write_log_lines(key, kept + lines[limit:])
     _dispatched_path(key).unlink(missing_ok=True)
     try:
-        entries = read_entries(payload.get("transcript_path"), int(dispatched.get("transcript_offset", 0)))
+        invoked = reviewer_invoked_after(payload.get("transcript_path"), dispatched.get("transcript_offset"))
     except TranscriptError as error:
-        emit({"systemMessage": f"jp-doc-reviewerが起動したかを確認できなかった（{error}）"})
+        emit({"systemMessage": f"{REVIEWER_AGENT}が起動したかを確認できなかった（{error}）"})
         return
-    invoked = any(
-        name in AGENT_TOOL_NAMES and tool_input.get("subagent_type") == REVIEWER_AGENT
-        for name, tool_input in tool_uses(entries)
-    )
     if not invoked:
-        names = "、".join(Path(path).name for path in paths)
-        emit({"systemMessage": f"jp-doc-reviewerが起動されないまま作業が終わった。レビューされていない文書: {names}"})
+        names = "、".join(sorted(Path(path).name for path in paths))
+        emit({"systemMessage": f"{REVIEWER_AGENT}が起動されないまま、2回目のコミットを通した。レビューされていない文書: {names}"})
 
 
-def handle_stop(payload: dict) -> None:
+def handle_pre_tool_use_bash(payload: dict) -> None:
+    tool_input = payload.get("tool_input")
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if not isinstance(command, str):
+        raise ValueError("Bashの入力にcommand（文字列）が無い")
+    dash_c = find_commit(command)
+    if dash_c is None:
+        return
     key = session_key(payload)
     cleanup_old_state()
-    if payload.get("stop_hook_active"):
+    root, _ = _find_git_root(_commit_directory(payload, dash_c))
+    is_subagent = bool(payload.get("agent_type"))
+    if not is_subagent and _dispatched_path(key).exists():
         _finish_dispatch(key, payload)
         return
+    lines = _read_log_lines(key)
     records, skipped = read_records(key)
     messages = [f"日本語文書レビューの記録で、読めない行を{skipped}件飛ばした"] if skipped else []
-    candidates = _review_candidates(records)
+    candidates = _review_candidates(records, root)
     if not candidates:
         emit(with_messages({}, messages))
         return
-    if not yomiyasu_skill().is_file():
-        if _mark_once(key, "missing-yomiyasu"):
+    if not yomiyasu_skill().is_file() or not reviewer_definition().is_file():
+        if _mark_once(key, "missing-reviewer"):
             messages.append(
-                "yomiyasuが見つからないため、日本語文書のレビューを省略した。"
-                "skills/yomiyasu のsubmoduleとsetup.shの実行状態を確かめてほしい"
+                f"yomiyasuのSKILL.mdか、{REVIEWER_AGENT}の定義が見つからないので、日本語の文書のレビューを省略した。"
+                "skills/yomiyasuのsubmoduleと、setup.shを実行したかを確かめてほしい。"
             )
         emit(with_messages({}, messages))
         return
-    write_json(_dispatched_path(key), {"paths": candidates, "transcript_offset": _transcript_size(payload)})
-    emit(with_messages({"decision": "block", "reason": _dispatch_reason(candidates)}, messages))
+    if is_subagent:
+        names = "、".join(Path(path).name for path in candidates)
+        messages.append(
+            f"サブエージェントは{REVIEWER_AGENT}を起動できないので、このコミットは止めない。"
+            f"次の日本語の文書は、レビューしないままコミットされる: {names}"
+        )
+        emit(with_messages({}, messages))
+        return
+    write_json(_dispatched_path(key), {
+        "paths": candidates, "record_lines": len(lines), "transcript_offset": _transcript_size(payload),
+    })
+    emit(with_messages({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": _commit_reason(candidates),
+    }}, messages))
 
 
 def _confluence_path(key: str) -> Path:
@@ -322,7 +447,7 @@ def _confluence_reason(draft: Path) -> str:
     )
 
 
-def handle_pre_tool_use(payload: dict) -> None:
+def handle_pre_tool_use_confluence(payload: dict) -> None:
     tool_name = str(payload.get("tool_name", ""))
     tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
     body = str(tool_input.get("body") or "")
@@ -350,8 +475,8 @@ def handle_pre_tool_use(payload: dict) -> None:
 
 HANDLERS = {
     "post-tool-use": handle_post_tool_use,
-    "stop": handle_stop,
-    "pre-tool-use": handle_pre_tool_use,
+    "pre-tool-use-bash": handle_pre_tool_use_bash,
+    "pre-tool-use-confluence": handle_pre_tool_use_confluence,
 }
 
 
