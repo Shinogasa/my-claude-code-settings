@@ -606,7 +606,7 @@ class ReviewerAllowTests(HookCase):
     def test_symlink_is_recorded_as_real_path(self):
         target = self.write_file("docs/real.md", "x")
         (self.repo / "link.md").symlink_to(target)
-        self.agent("link.md/x link.md")
+        self.agent("./link.md")
         self.assertEqual(self.allowed(), [os.path.realpath(target)])
 
     def test_other_subagent_types_are_not_recorded(self):
@@ -714,6 +714,39 @@ class ReviewerEditTests(HookCase):
                 payload = {"session_id": "s1", "tool_name": "Edit", "tool_input": tool_input}
                 result = self.run_hook("pre-tool-use-reviewer-edit", payload)
                 self.assertEqual((result[0], decision_of(result)), (0, "deny"))
+
+
+class ReviewerFailClosedTests(HookCase):
+    """reviewer-edit と reviewer-bash は、入力の不備や判定中の例外をすべて deny にする。"""
+
+    EVENTS = ("pre-tool-use-reviewer-edit", "pre-tool-use-reviewer-bash")
+
+    def assertDeniedWith(self, event, payload=None, raw=None):
+        result = self.run_hook(event, payload, raw=raw)
+        self.assertEqual((result[0], decision_of(result)), (0, "deny"), (event, payload, raw, result[2]))
+
+    def test_missing_session_id_is_denied(self):
+        doc = self.write_file("docs/a.md", "x")
+        self.assertDeniedWith("pre-tool-use-reviewer-edit", {"tool_name": "Edit", "tool_input": {"file_path": str(doc)}})
+        self.assertDeniedWith("pre-tool-use-reviewer-edit", {"session_id": 5, "tool_input": {"file_path": str(doc)}})
+
+    def test_nul_in_input_is_denied(self):
+        self.assertDeniedWith("pre-tool-use-reviewer-edit",
+                              {"session_id": "s1", "tool_input": {"file_path": "docs/a\u0000.md"}})
+        self.assertDeniedWith("pre-tool-use-reviewer-bash",
+                              {"session_id": "s1", "tool_input": {"command": "python3 \u0000 a.md"}})
+
+    def test_broken_stdin_is_denied(self):
+        for event in self.EVENTS:
+            for raw in ("", "{broken", "[]", "null"):
+                with self.subTest(event=event, raw=raw):
+                    self.assertDeniedWith(event, raw=raw)
+
+    def test_unusable_state_directory_is_denied(self):
+        doc = self.write_file("docs/a.md", "x")
+        self.state.parent.mkdir(parents=True, exist_ok=True)
+        self.state.write_text("file, not directory", encoding="utf-8")
+        self.assertDeniedWith("pre-tool-use-reviewer-edit", {"session_id": "s1", "tool_input": {"file_path": str(doc)}})
 
 
 class EarlyCleanupTests(HookCase):
