@@ -8,6 +8,7 @@ docs/research/2026-10-02-claude-code-hook-payloads.md に記録している。
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,10 +22,15 @@ JP_LONG = "日本語の文書をレビューするためのテスト用の文で
 JP_HALF = "日本語の文書を少しずつ書き足すためのテスト用の文です。" * 2
 
 
-def agent_call(subagent_type):
+def agent_call(subagent_type, name="Agent"):
     return {"type": "assistant", "message": {"content": [
-        {"type": "tool_use", "name": "Agent",
+        {"type": "tool_use", "name": name,
          "input": {"subagent_type": subagent_type, "description": "d", "prompt": "p"}}]}}
+
+
+def decision_of(result):
+    """run_hook の結果から permissionDecision を取り出す。無ければ None。"""
+    return result[1].get("hookSpecificOutput", {}).get("permissionDecision")
 
 
 class HookCase(unittest.TestCase):
@@ -35,15 +41,20 @@ class HookCase(unittest.TestCase):
         self.skill = self.base / "yomiyasu" / "SKILL.md"
         self.skill.parent.mkdir(parents=True)
         self.skill.write_text("---\nname: yomiyasu\n---\n", encoding="utf-8")
+        self.agent_def = self.base / "agents" / "jp-doc-reviewer.md"
+        self.agent_def.parent.mkdir(parents=True)
+        self.agent_def.write_text("---\nname: jp-doc-reviewer\n---\n", encoding="utf-8")
         self.repo = self.base / "repo"
         (self.repo / ".git").mkdir(parents=True)
+        self.transcript_path = self.base / "transcript.jsonl"
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def run_hook(self, event, payload, raw=None):
         env = {**os.environ, "JP_DOC_REVIEW_STATE_DIR": str(self.state),
-               "JP_DOC_REVIEW_YOMIYASU_SKILL": str(self.skill)}
+               "JP_DOC_REVIEW_YOMIYASU_SKILL": str(self.skill),
+               "JP_DOC_REVIEW_AGENT_DEF": str(self.agent_def)}
         env.pop("FORCE_COLOR", None)
         result = subprocess.run(
             [sys.executable, str(HOOK), event],
@@ -65,17 +76,33 @@ class HookCase(unittest.TestCase):
                    "tool_input": {"file_path": str(path), key: text}, **extra}
         return self.run_hook("post-tool-use", payload)
 
-    def stop(self, active=False, transcript=None, session="s1"):
-        payload = {"session_id": session, "stop_hook_active": active}
+    def transcript(self, *entries):
+        """会話記録に行を追記して、そのパスを返す。"""
+        with self.transcript_path.open("a", encoding="utf-8") as handle:
+            for entry in entries:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        return self.transcript_path
+
+    def commit(self, command="git commit -m x", cwd=None, session="s1", transcript=None, **extra):
+        payload = {"session_id": session, "cwd": str(cwd or self.repo), "tool_name": "Bash",
+                   "tool_input": {"command": command, "description": "d"}, **extra}
         if transcript is not None:
             payload["transcript_path"] = str(transcript)
-        return self.run_hook("stop", payload)
+        return self.run_hook("pre-tool-use-bash", payload)
 
     def records(self, session="s1"):
         path = self.state / f"{session}.jsonl"
         if not path.exists():
             return []
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+    def dispatched(self, session="s1"):
+        return self.state / f"{session}.dispatched.json"
+
+    def make_repo(self, relative):
+        root = self.base / relative
+        (root / ".git").mkdir(parents=True)
+        return root
 
 
 class RecordTests(HookCase):
@@ -160,104 +187,215 @@ class RecordTests(HookCase):
         self.assertEqual(written[0].parent, self.state)
 
 
-class StopTests(HookCase):
-    def transcript(self, *entries):
-        path = self.base / "transcript.jsonl"
-        with path.open("a", encoding="utf-8") as handle:
-            for entry in entries:
-                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        return path
+class CommitTests(HookCase):
+    def reset_state(self):
+        shutil.rmtree(self.state, ignore_errors=True)
 
-    def test_blocks_and_lists_files_over_threshold(self):
+    def test_non_commit_commands_are_ignored(self):
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        for command in ("git status", "echo 'git commit'", "git log | grep commit",
+                        "git commit-tree abc", "git -C . log", "gitx commit"):
+            with self.subTest(command=command):
+                self.assertEqual(self.commit(command), (0, {}, ""))
+        self.assertFalse(self.dispatched().exists())
+        self.assertEqual(len(self.records()), 1)
+
+    def test_detects_commit_inside_compound_commands(self):
         path = self.write_file("a.md", JP_LONG)
-        self.post(path, JP_LONG)
-        code, output, _ = self.stop(transcript=self.transcript({"type": "user", "message": {"content": "x"}}))
-        self.assertEqual(code, 0)
-        self.assertEqual(output["decision"], "block")
-        self.assertIn(str(path), output["reason"])
-        self.assertIn("jp-doc-reviewer", output["reason"])
+        commands = (
+            "git commit -m x",
+            "GIT_AUTHOR_NAME=a LANG=C git commit -m x",
+            "git add a.md && git commit -m x",
+            "git status; git commit -m x",
+            "false || git commit -m x",
+            "git diff | cat\ngit commit -m x",
+            "git -c user.name=a --no-pager commit -m x",
+            "git --git-dir=.git commit -m x",
+            "/usr/bin/git commit -m x",
+            # 本文の二重引用符が対にならず、shlexでは最後まで分けられない形
+            "git commit -m \"$(cat <<'EOF'\nfix: \"a\nEOF\n)\"",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.reset_state()
+                self.post(path, JP_LONG)
+                self.assertEqual(decision_of(self.commit(command)), "deny")
 
-    def test_does_not_block_below_threshold(self):
-        self.post(self.write_file("a.md", JP_HALF), JP_HALF)
-        self.assertEqual(self.stop()[1], {})
+    def test_dash_c_selects_repository_relative_to_cwd(self):
+        other = self.make_repo("other")
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        self.assertEqual(self.commit("git -C ../other commit -m x"), (0, {}, ""))
+        self.assertEqual(decision_of(self.commit("git -C ../repo commit -m x", cwd=other)), "deny")
 
-    def test_small_edits_accumulate_across_turns(self):
+    def test_records_outside_the_repository_are_not_counted(self):
+        other = self.make_repo("other")
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        self.assertEqual(self.commit(cwd=other), (0, {}, ""))
+        self.assertEqual(len(self.records()), 1)
+        self.assertEqual(decision_of(self.commit()), "deny")
+
+    def test_records_in_nested_repository_belong_to_it(self):
+        nested = self.repo / ".claude" / "worktrees" / "wt"
+        nested.mkdir(parents=True)
+        (nested / ".git").write_text(f"gitdir: {self.repo}/.git/worktrees/wt\n", encoding="utf-8")
+        self.post(self.write_file("a.md", JP_LONG, root=nested), JP_LONG)
+        self.assertEqual(self.commit(), (0, {}, ""))
+        self.assertEqual(decision_of(self.commit(cwd=nested)), "deny")
+
+    def test_threshold_boundary(self):
+        short = self.write_file("short.md", "あ" * 99)
+        self.post(short, "あ" * 99)
+        self.assertEqual(self.commit(), (0, {}, ""))
+        exact = self.write_file("exact.md", "あ" * 100)
+        self.post(exact, "あ" * 100, session="s2")
+        self.assertEqual(decision_of(self.commit(session="s2")), "deny")
+
+    def test_small_writes_accumulate_until_commit(self):
         path = self.write_file("a.md", JP_HALF)
         self.post(path, JP_HALF)
-        self.assertEqual(self.stop()[1], {})
+        self.assertEqual(self.commit(), (0, {}, ""))
         self.post(path, JP_HALF, tool="Edit")
-        self.assertEqual(self.stop()[1]["decision"], "block")
+        self.assertEqual(decision_of(self.commit()), "deny")
 
     def test_deleted_file_is_not_reviewed(self):
         path = self.write_file("a.md", JP_LONG)
         self.post(path, JP_LONG)
         path.unlink()
-        self.assertEqual(self.stop()[1], {})
+        self.assertEqual(self.commit(), (0, {}, ""))
 
     def test_file_without_kana_now_is_not_reviewed(self):
         path = self.write_file("a.md", JP_LONG)
         self.post(path, JP_LONG)
         path.write_text("rewritten in english", encoding="utf-8")
-        self.assertEqual(self.stop()[1], {})
+        self.assertEqual(self.commit(), (0, {}, ""))
 
-    def test_missing_yomiyasu_is_reported_once_without_blocking(self):
-        self.skill.unlink()
-        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
-        first = self.stop()[1]
-        self.assertNotIn("decision", first)
-        self.assertIn("yomiyasu", first["systemMessage"])
-        self.assertEqual(self.stop()[1], {})
+    def test_missing_yomiyasu_or_reviewer_is_reported_once_without_blocking(self):
+        for missing in (self.skill, self.agent_def):
+            with self.subTest(missing=missing.name):
+                self.reset_state()
+                saved = missing.read_text(encoding="utf-8")
+                missing.unlink()
+                try:
+                    self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+                    code, output, _ = self.commit()
+                    self.assertEqual(code, 0)
+                    self.assertNotIn("hookSpecificOutput", output)
+                    self.assertIn("レビューを省略", output["systemMessage"])
+                    self.assertEqual(self.commit(), (0, {}, ""))
+                finally:
+                    missing.write_text(saved, encoding="utf-8")
 
-    def test_second_stop_clears_and_warns_when_reviewer_was_not_invoked(self):
-        transcript = self.transcript({"type": "user", "message": {"content": "x"}})
+    def test_commit_inside_subagent_warns_without_blocking(self):
         self.post(self.write_file("a.md", JP_LONG), JP_LONG)
-        self.assertEqual(self.stop(transcript=transcript)[1]["decision"], "block")
-        code, output, _ = self.stop(active=True, transcript=transcript)
+        code, output, _ = self.commit(agent_id="a1", agent_type="general-purpose")
         self.assertEqual(code, 0)
-        self.assertNotIn("decision", output)
-        self.assertIn("jp-doc-reviewer", output["systemMessage"])
-        self.assertEqual(self.records(), [])
-        self.assertEqual(self.stop(transcript=transcript)[1], {})
+        self.assertNotIn("hookSpecificOutput", output)
+        self.assertIn("a.md", output["systemMessage"])
+        self.assertIn("レビューしない", output["systemMessage"])
+        self.assertFalse(self.dispatched().exists())
+        self.assertEqual(len(self.records()), 1)
 
-    def test_second_stop_is_quiet_when_reviewer_was_invoked(self):
+    def test_first_commit_is_denied_with_paths_and_instructions(self):
+        transcript = self.transcript({"type": "user", "message": {"content": "x"}})
+        path = self.write_file("a.md", JP_LONG)
+        self.post(path, JP_LONG)
+        code, output, _ = self.commit(transcript=transcript)
+        self.assertEqual(code, 0)
+        decision = output["hookSpecificOutput"]
+        self.assertEqual((decision["hookEventName"], decision["permissionDecision"]), ("PreToolUse", "deny"))
+        reason = decision["permissionDecisionReason"]
+        for marker in (str(path), "jp-doc-reviewer", "このセッションで書いた箇所", "その範囲だけ",
+                       "git add", "もう一度", "ユーザーに伝え"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, reason)
+        dispatched = json.loads(self.dispatched().read_text(encoding="utf-8"))
+        self.assertEqual(dispatched, {"paths": [str(path)], "record_lines": 1,
+                                      "transcript_offset": transcript.stat().st_size})
+
+    def test_second_commit_passes_and_keeps_writes_after_dispatch(self):
+        transcript = self.transcript({"type": "user", "message": {"content": "x"}})
+        other = self.make_repo("other")
+        elsewhere = self.write_file("b.md", JP_LONG, root=other)
+        self.post(elsewhere, JP_LONG)
+        path = self.write_file("a.md", JP_LONG)
+        self.post(path, JP_LONG)
+        self.assertEqual(decision_of(self.commit(transcript=transcript)), "deny")
+        self.post(path, JP_HALF, tool="Edit")
+        self.transcript(agent_call("jp-doc-reviewer"))
+        self.assertEqual(self.commit(transcript=transcript), (0, {}, ""))
+        self.assertEqual(self.records(), [{"path": str(elsewhere), "jp_chars": 144},
+                                          {"path": str(path), "jp_chars": 52}])
+        self.assertFalse(self.dispatched().exists())
+
+    def test_task_tool_counts_as_reviewer_invocation(self):
         transcript = self.transcript({"type": "user", "message": {"content": "x"}})
         self.post(self.write_file("a.md", JP_LONG), JP_LONG)
-        self.stop(transcript=transcript)
-        self.transcript(agent_call("jp-doc-reviewer"))
-        self.assertEqual(self.stop(active=True, transcript=transcript)[1], {})
+        self.commit(transcript=transcript)
+        self.transcript(agent_call("jp-doc-reviewer", name="Task"))
+        self.assertEqual(self.commit(transcript=transcript), (0, {}, ""))
+
+    def test_second_commit_warns_when_reviewer_was_not_invoked(self):
+        transcript = self.transcript({"type": "user", "message": {"content": "x"}})
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        self.commit(transcript=transcript)
+        code, output, _ = self.commit(transcript=transcript)
+        self.assertEqual(code, 0)
+        self.assertNotIn("hookSpecificOutput", output)
+        self.assertIn("jp-doc-reviewerが起動されない", output["systemMessage"])
+        self.assertIn("a.md", output["systemMessage"])
+        self.assertEqual(self.records(), [])
 
     def test_reviewer_call_before_dispatch_does_not_count(self):
         transcript = self.transcript(agent_call("jp-doc-reviewer"))
         self.post(self.write_file("a.md", JP_LONG), JP_LONG)
-        self.stop(transcript=transcript)
-        self.assertIn("systemMessage", self.stop(active=True, transcript=transcript)[1])
+        self.commit(transcript=transcript)
+        self.assertIn("起動されない", self.commit(transcript=transcript)[1]["systemMessage"])
 
-    def test_active_stop_without_our_dispatch_is_silent(self):
-        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
-        self.assertEqual(self.stop(active=True)[1], {})
-        self.assertEqual(len(self.records()), 1)
-
-    def test_unreadable_transcript_on_second_stop_is_reported(self):
+    def test_unreadable_transcript_on_second_commit_is_reported(self):
         transcript = self.transcript({"type": "user", "message": {"content": "x"}})
         self.post(self.write_file("a.md", JP_LONG), JP_LONG)
-        self.stop(transcript=transcript)
+        self.commit(transcript=transcript)
         transcript.unlink()
-        output = self.stop(active=True, transcript=transcript)[1]
+        self.assertIn("確認できなかった", self.commit(transcript=transcript)[1]["systemMessage"])
+
+    def test_unknown_transcript_size_at_dispatch_is_reported(self):
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        self.assertEqual(decision_of(self.commit()), "deny")
+        self.transcript(agent_call("jp-doc-reviewer"))
+        output = self.commit(transcript=self.transcript_path)[1]
         self.assertIn("確認できなかった", output["systemMessage"])
+
+    def test_writes_after_second_commit_are_checked_again(self):
+        self.post(self.write_file("a.md", JP_LONG), JP_LONG)
+        self.commit()
+        self.commit()
+        self.post(self.write_file("b.md", JP_LONG), JP_LONG)
+        self.assertEqual(decision_of(self.commit()), "deny")
 
     def test_broken_log_lines_are_counted_in_message(self):
         self.state.mkdir(parents=True)
         (self.state / "s1.jsonl").write_text("{broken\n", encoding="utf-8")
-        self.assertIn("1件", self.stop()[1]["systemMessage"])
+        self.assertIn("1件", self.commit()[1]["systemMessage"])
 
-    def test_old_state_files_are_removed(self):
+    def test_old_state_files_are_removed_on_commit(self):
         self.state.mkdir(parents=True)
         old = self.state / "old-session.jsonl"
         old.write_text("", encoding="utf-8")
         eight_days_ago = time.time() - 8 * 86400
         os.utime(old, (eight_days_ago, eight_days_ago))
-        self.stop()
+        self.commit()
         self.assertFalse(old.exists())
+
+    def test_bash_input_without_command_fails_loudly(self):
+        payload = {"session_id": "s1", "cwd": str(self.repo), "tool_name": "Bash", "tool_input": {}}
+        code, output, stderr = self.run_hook("pre-tool-use-bash", payload)
+        self.assertEqual((code, output), (1, {}))
+        self.assertIn("command", stderr)
+
+    def test_stop_event_is_no_longer_handled(self):
+        code, _, stderr = self.run_hook("stop", {"session_id": "s1", "stop_hook_active": False})
+        self.assertEqual(code, 1)
+        self.assertIn("使い方", stderr)
 
 
 class ConfluenceTests(HookCase):
@@ -266,7 +404,7 @@ class ConfluenceTests(HookCase):
     def pre(self, body, title="", tool=None, **tool_input):
         payload = {"session_id": "s1", "tool_name": tool or self.TOOL,
                    "tool_input": {"cloudId": "c", "spaceId": "1", "title": title, "body": body, **tool_input}}
-        return self.run_hook("pre-tool-use", payload)
+        return self.run_hook("pre-tool-use-confluence", payload)
 
     def test_short_japanese_passes(self):
         self.assertEqual(self.pre("短い本文です。"), (0, {}, ""))

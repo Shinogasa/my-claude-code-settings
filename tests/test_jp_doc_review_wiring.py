@@ -64,7 +64,8 @@ class WiringTests(unittest.TestCase):
         self.assertIn("python3 ~/.claude/hooks/jp-doc-review.py post-tool-use", commands("PostToolUse", "Write|Edit"))
 
     def test_confluence_matcher_catches_only_posting_tools(self):
-        self.assertIn("python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use", commands("PreToolUse", CONFLUENCE_MATCHER))
+        self.assertEqual(commands("PreToolUse", CONFLUENCE_MATCHER),
+                         ["python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-confluence"])
         pattern = re.compile(f"^(?:{CONFLUENCE_MATCHER})$")
         for name in ("createConfluencePage", "updateConfluencePage",
                      "createConfluenceFooterComment", "createConfluenceInlineComment"):
@@ -72,16 +73,31 @@ class WiringTests(unittest.TestCase):
                 self.assertTrue(pattern.match(f"mcp__atlassian-http__{name}"))
         self.assertFalse(pattern.match("mcp__atlassian-http__getConfluencePage"))
 
-    def test_existing_bash_guards_are_kept(self):
-        self.assertIn("~/.claude/hooks/guard-dangerous-bash.sh", commands("PreToolUse", "Bash"))
+    def test_bash_group_asks_for_review_before_commit_and_keeps_existing_hooks(self):
+        self.assertEqual(commands("PreToolUse", "Bash"), [
+            "~/.claude/hooks/guard-dangerous-bash.sh",
+            "rtk hook claude",
+            "~/.claude/hooks/warn-branch-behind-main.sh",
+            "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash",
+        ])
 
-    def test_stop_runs_review_and_read_check(self):
-        stop = commands("Stop")
-        self.assertIn("python3 ~/.claude/hooks/jp-doc-review.py stop", stop)
-        self.assertIn("python3 ~/.claude/hooks/skill-read-check.py stop", stop)
+    def test_stop_runs_only_read_check(self):
+        self.assertEqual(commands("Stop"), ["python3 ~/.claude/hooks/skill-read-check.py stop"])
 
     def test_subagent_stop_runs_read_check(self):
-        self.assertIn("python3 ~/.claude/hooks/skill-read-check.py subagent-stop", commands("SubagentStop"))
+        self.assertEqual(commands("SubagentStop"), ["python3 ~/.claude/hooks/skill-read-check.py subagent-stop"])
+
+    def test_session_start_is_kept(self):
+        self.assertEqual(commands("SessionStart"), ["~/.claude/hooks/detect-parallel-sessions.sh"])
+
+    def test_every_hook_has_a_timeout_except_rtk(self):
+        for event, groups in SETTINGS["hooks"].items():
+            for group in groups:
+                for hook in group["hooks"]:
+                    with self.subTest(event=event, command=hook["command"]):
+                        self.assertEqual(hook["type"], "command")
+                        if hook["command"] != "rtk hook claude":
+                            self.assertIsInstance(hook.get("timeout"), int)
 
     def test_codex_wiring_is_untouched(self):
         codex = (REPO_ROOT / "codex" / "hooks.json").read_text(encoding="utf-8")
