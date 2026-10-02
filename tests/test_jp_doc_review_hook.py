@@ -425,10 +425,14 @@ class CommitTests(HookCase):
 class ConfluenceTests(HookCase):
     TOOL = "mcp__atlassian-http__createConfluencePage"
 
-    def pre(self, body, title="", tool=None, **tool_input):
+    def pre(self, body, title="", tool=None, transcript=None, **tool_input):
         payload = {"session_id": "s1", "tool_name": tool or self.TOOL,
                    "tool_input": {"cloudId": "c", "spaceId": "1", "title": title, "body": body, **tool_input}}
+        if transcript is not None:
+            payload["transcript_path"] = str(transcript)
         return self.run_hook("pre-tool-use-confluence", payload)
+
+    REVIEWED = JP_LONG.replace("テスト用", "確認用")
 
     def test_short_japanese_passes(self):
         self.assertEqual(self.pre("短い本文です。"), (0, {}, ""))
@@ -442,6 +446,16 @@ class ConfluenceTests(HookCase):
         self.assertEqual(drafts[0].suffix, ".html")
         self.assertEqual(drafts[0].read_text(encoding="utf-8"), f"<p>{JP_LONG}</p>")
         self.assertIn(str(drafts[0]), decision["permissionDecisionReason"])
+        self.assertIn("このセッションで書いた箇所だけ", decision["permissionDecisionReason"])
+
+    def test_first_post_records_body_hash_and_transcript_size(self):
+        transcript = self.transcript({"type": "user", "message": {"content": "x"}})
+        self.pre(JP_LONG, pageId="9", transcript=transcript)
+        state = json.loads((self.state / "s1.confluence.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(state), [f"{self.TOOL}:pageId:9"])
+        entry = state[f"{self.TOOL}:pageId:9"]
+        self.assertEqual(entry["transcript_offset"], transcript.stat().st_size)
+        self.assertEqual(len(entry["digest"]), 64)
 
     def test_draft_suffix_follows_content_format(self):
         self.pre(JP_LONG, contentFormat="markdown", pageId="1")
@@ -461,8 +475,23 @@ class ConfluenceTests(HookCase):
         self.assertIn("レビューを通らない", output["systemMessage"])
 
     def test_second_post_with_reviewed_body_is_silent(self):
+        transcript = self.transcript({"type": "user", "message": {"content": "x"}})
+        self.pre(JP_LONG, pageId="9", transcript=transcript)
+        self.transcript(agent_call("jp-doc-reviewer"))
+        self.assertEqual(self.pre(self.REVIEWED, pageId="9", transcript=transcript), (0, {}, ""))
+
+    def test_second_post_warns_when_reviewer_was_not_invoked(self):
+        transcript = self.transcript(agent_call("jp-doc-reviewer"))
+        self.pre(JP_LONG, pageId="9", transcript=transcript)
+        code, output, _ = self.pre(self.REVIEWED, pageId="9", transcript=transcript)
+        self.assertEqual(code, 0)
+        self.assertNotIn("hookSpecificOutput", output)
+        self.assertIn("jp-doc-reviewerが起動されない", output["systemMessage"])
+
+    def test_second_post_reports_when_transcript_cannot_be_checked(self):
         self.pre(JP_LONG, pageId="9")
-        self.assertEqual(self.pre(JP_LONG.replace("テスト用", "確認用"), pageId="9")[1], {})
+        output = self.pre(self.REVIEWED, pageId="9", transcript=self.transcript(agent_call("jp-doc-reviewer")))[1]
+        self.assertIn("確認できなかった", output["systemMessage"])
 
     def test_targets_are_tracked_separately(self):
         self.pre(JP_LONG, pageId="1")
