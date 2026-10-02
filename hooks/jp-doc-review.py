@@ -742,6 +742,18 @@ HANDLERS = {
 }
 
 
+FAIL_CLOSED_EVENTS = {"pre-tool-use-reviewer-bash", "pre-tool-use-reviewer-edit"}
+
+
+def _deny_after_error(event: str, error: Exception) -> None:
+    """制限のフックは、検査できなかったときに通さず、止める側に倒す。終了コード1は止めたことにならない。"""
+    emit({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": f"{REVIEWER_AGENT}の操作を確かめられなかったので止めた（{type(error).__name__}: {error}）",
+    }})
+
+
 def main(argv: List[str]) -> int:
     if len(argv) != 2 or argv[1] not in HANDLERS:
         print(f"使い方: {Path(argv[0]).name} <{'|'.join(HANDLERS)}>", file=sys.stderr)
@@ -756,6 +768,9 @@ def main(argv: List[str]) -> int:
         HANDLERS[argv[1]](payload)
     except Exception as error:  # 検査できなかったことを黙って通さず、フックのエラーとして画面に出す
         print(f"jp-doc-review {argv[1]}: {type(error).__name__}: {error}", file=sys.stderr)
+        if argv[1] in FAIL_CLOSED_EVENTS:
+            _deny_after_error(argv[1], error)
+            return 0
         return 1
     return 0
 
