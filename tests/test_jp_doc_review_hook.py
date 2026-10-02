@@ -507,6 +507,20 @@ class ConfluenceTests(HookCase):
         suffixes = sorted(path.suffix for path in (self.state / "drafts").iterdir())
         self.assertEqual(suffixes, [".html", ".json", ".md"])
 
+    def test_threshold_boundary(self):
+        self.assertEqual(self.pre("あ" * 99, pageId="1"), (0, {}, ""))
+        self.assertEqual(decision_of(self.pre("あ" * 100, pageId="2")), "deny")
+
+    def test_target_key_prefers_page_id_then_parent_comment_then_title(self):
+        # 2回目に同じ投稿先とみなされれば通り、別の投稿先とみなされれば止められる
+        self.pre(JP_LONG, pageId="p", parentCommentId="c1", title="t1")
+        self.assertIsNone(decision_of(self.pre(self.REVIEWED, pageId="p", parentCommentId="c2", title="t2")))
+        self.pre(JP_LONG, parentCommentId="c", title="t1")
+        self.assertIsNone(decision_of(self.pre(self.REVIEWED, parentCommentId="c", title="t2")))
+        self.assertEqual(decision_of(self.pre(JP_LONG, pageId="other", parentCommentId="c", title="t1")), "deny")
+        self.pre(JP_LONG, title="t")
+        self.assertIsNone(decision_of(self.pre(self.REVIEWED, title="t")))
+
     def test_title_counts_toward_threshold(self):
         self.assertEqual(self.pre("本文。", title=JP_LONG)[1]["hookSpecificOutput"]["permissionDecision"], "deny")
 

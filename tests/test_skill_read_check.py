@@ -122,7 +122,8 @@ class SkillReadCheckTests(unittest.TestCase):
         self.assertEqual(self.run_hook()["decision"], "block")
 
     def test_reads_from_earlier_turn_after_compact_count(self):
-        self.transcript(prompt("1"), *self.reads("references/a.md", "references/b.md", "references/domains/x.md"),
+        self.transcript(COMPACT, prompt("1"),
+                        *self.reads("references/a.md", "references/b.md", "references/domains/x.md"),
                         prompt("2"), call("Skill", skill="demo"))
         self.assertEqual(self.run_hook(), {})
 
