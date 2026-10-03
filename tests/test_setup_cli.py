@@ -41,7 +41,9 @@ def make_stub_commands(base: Path) -> Path:
     claude.chmod(0o755)
     codex = bindir / "codex"
     codex.write_text(
-        "#!/bin/sh\nprintf 'codex %s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\nprintf '%s' '{\"installed\":[]}'\n",
+        "#!/bin/sh\nprintf 'codex %s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\n"
+        "if [ -n \"${CODEX_PLUGIN_LIST:-}\" ]; then printf '%s' \"$CODEX_PLUGIN_LIST\"; "
+        "else printf '%s' '{\"installed\":[]}'; fi\n",
         encoding="utf-8",
     )
     codex.chmod(0o755)
@@ -290,6 +292,29 @@ class SetupCliTests(unittest.TestCase):
         self.assertIn("codex plugin list --json", commands)
         self.assertNotIn("codex plugin add", commands)
         self.assertNotIn("codex plugin remove", commands)
+
+    def test_codex_policy_violation_is_reported_apart_from_failures(self):
+        (self.home / ".codex").mkdir()
+        installed = (
+            '{"installed":[{"pluginId":"security-guidance@claude-plugins-official",'
+            '"marketplaceName":"claude-plugins-official","enabled":true}]}'
+        )
+
+        result = run_setup(self.repository, self.home, "--codex", extra_env={"CODEX_PLUGIN_LIST": installed})
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Codex plugin policy violations:", result.stderr)
+        self.assertIn("security-guidance@claude-plugins-official", result.stderr)
+        self.assertNotIn("setup completed with failures", result.stderr)
+
+    def test_codex_audit_error_is_reported_as_failure(self):
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--codex", extra_env={"CODEX_PLUGIN_LIST": "not json"})
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("setup completed with failures", result.stderr)
+        self.assertIn("operation=audit", result.stderr)
 
     def test_codex_setup_preserves_config_when_bitwarden_agent_is_unavailable(self):
         (self.home / ".codex").mkdir()
