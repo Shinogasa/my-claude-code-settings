@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "skills": {
+    "yomiyasu": {
+      "root": "~/.claude/skills/yomiyasu",
+      "alternateRoots": [
+        "~/.claude/skills/yomiyasu/skills/yomiyasu"
+      ],
+      "allOf": [
+        "references/gemini-syntax.md",
+        "references/slop-catalog.md"
+      ],
+      "anyOf": [
+        [
+          "references/domains/tech.md",
+          "references/domains/business.md",
+          "references/domains/essay.md"
+        ]
+      ]
+    }
+  }
+}

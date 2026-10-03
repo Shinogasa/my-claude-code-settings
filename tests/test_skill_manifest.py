@@ -152,5 +152,17 @@ class TestCodexRoutingSkill(unittest.TestCase):
         self.assertIn("上書きしてはならない", self.body)
 
 
+class TestExternalSkillSubmodule(unittest.TestCase):
+    """外部のyomiyasuをcommit固定のsubmoduleとして共有配布しているか。"""
+
+    def test_yomiyasu_is_declared_submodule_listed_as_shared(self):
+        gitmodules = (REPO_ROOT / ".gitmodules").read_text(encoding="utf-8")
+        self.assertIn("path = skills/yomiyasu", gitmodules)
+        self.assertIn("url = https://github.com/nanaism/yomiyasu.git", gitmodules)
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        self.assertIn("yomiyasu", manifest["shared"])
+        self.assertTrue((SKILLS_DIR / "yomiyasu" / "SKILL.md").is_file())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

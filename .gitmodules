@@ -4,3 +4,6 @@
 [submodule "codex-cli-best-practice"]
 	path = codex-cli-best-practice
 	url = git@github.com:shanraisshan/codex-cli-best-practice.git
+[submodule "skills/yomiyasu"]
+	path = skills/yomiyasu
+	url = https://github.com/nanaism/yomiyasu.git

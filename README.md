@@ -434,7 +434,8 @@ provider は起動時に確定するため、警告は次の起動前に直す�
 │   ├── hexagonal-architecture/  #   ヘキサゴナルアーキテクチャ
 │   ├── learning-mode/           #   学習モードの手順と書式
 │   ├── security-review/         #   セキュリティレビュー
-│   └── verification-loop/       #   検証ループ（Iron Law付き）
+│   ├── verification-loop/       #   検証ループ（Iron Law付き）
+│   └── yomiyasu/                #   日本語文書の書き直し（git submodule）
 ├── commands/                    # スラッシュコマンド
 │   ├── aside.md                 #   サイドクエスチョン
 │   ├── build-fix.md             #   ビルドエラー修正
@@ -456,6 +457,7 @@ provider は起動時に確定するため、警告は次の起動前に直す�
 │   ├── refactor-cleaner.md      #   デッドコード除去
 │   ├── security-reviewer.md     #   セキュリティレビュー
 │   ├── build-error-resolver.md  #   ビルドエラー解決
+│   ├── jp-doc-reviewer.md       #   日本語文書のレビュー（opus、yomiyasu）
 │   └── silent-failure-hunter.md #   サイレント障害検出
 ├── codex/                       # Codex固有アダプター
 │   ├── RTK.md                   #   RTK公式のCodex向けシェル指示
@@ -472,7 +474,10 @@ provider は起動時に確定するため、警告は次の起動前に直す�
 │   └── ecc-testing.md           #   テスト要件
 ├── hooks/                       # 危険コマンドブロック等のhooksスクリプト（Claude向けrtkフックはsettings.json.template側で管理）
 │   ├── guard-dangerous-bash.sh  #   PreToolUse(Bash)フックのエントリポイント
-│   └── guard-dangerous-bash.py  #   危険コマンド判定の実処理
+│   ├── guard-dangerous-bash.py  #   危険コマンド判定の実処理
+│   ├── hook_support.py          #   会話記録の読み取りと出力の補助
+│   ├── jp-doc-review.py         #   日本語文書の記録・コミット前のレビュー依頼・Confluenceの事前チェック
+│   └── skill-read-check.py      #   スキルの必読資料の読み漏れ確認
 ├── bin/                         # 起動ラッパー（PATHを通して使う）
 │   ├── ccp                      #   個人Anthropicアカウントで Claude Code を起動する
 │   ├── cxp                      #   個人ChatGPTアカウントで Codex CLI を起動する
@@ -490,6 +495,46 @@ provider は起動時に確定するため、警告は次の起動前に直す�
 ├── setup.sh                     # セットアップスクリプト
 └── README.md
 ```
+
+## 日本語文書のレビュー（Claude Code専用）
+
+Claude Codeが書いた日本語のMarkdownや設定ファイルをコミットするとき、フックが1回だけコミットを止め、
+`jp-doc-reviewer` サブエージェントにyomiyasuの基準でレビューさせる。Confluenceへの日本語の投稿も、
+送る前に1回止めて下書きのレビューを求める。2回目のコミットと投稿は止めない。
+あわせて、スキルを呼んだのに必読資料を読まずに作業を終えようとしたときに、`skill-read-check.py` が差し戻す。
+
+| フック | イベント | 役割 |
+|---|---|---|
+| `jp-doc-review.py post-tool-use` | PostToolUse（Write・Edit） | 書き込んだ日本語の文字数を記録する |
+| `jp-doc-review.py pre-tool-use-bash` | PreToolUse（Bash） | `git commit` の前にレビューを依頼する |
+| `jp-doc-review.py pre-tool-use-confluence` | PreToolUse（Confluenceの投稿） | 投稿の前に下書きのレビューを依頼する |
+| `jp-doc-review.py pre-tool-use-agent` | PreToolUse（Agent・Task） | レビュワーへの依頼文のパスを、Editの許可リストに記録する |
+| `skill-read-check.py` | Stop・SubagentStop | 必読資料の読み漏れを会話記録から見つける |
+
+配線は `settings.json.template` だけにある。`codex/hooks.json` には配線していないので、Codex CLIでは動かない。
+
+記録と下書きは `~/.claude/state/jp-doc-review/` に置く。下書きは社内文書の写しを含みうるので、
+ディレクトリは0700、ファイルは0600で作る。Confluenceの下書きは、2回目の投稿を通したときに消す。
+7日を過ぎた状態ファイルと下書きは、コミットの確認、Confluenceへの投稿、Write・Editの後に消す。走査は1時間に1回までにしている。
+
+`jp-doc-reviewer` が使えるBashは、yomiyasuのリンターだけにしている。レビュワーは社内文書を読むので、
+本文に仕込まれた指示でコマンドを実行されないよう、定義のhooksで `jp-doc-review.py pre-tool-use-reviewer-bash` を呼び、
+リンター以外のコマンドを止める。
+Editは、依頼文に書かれたファイルだけに絞る。`Agent|Task` のPreToolUseフックが、`jp-doc-reviewer` への依頼文からパスを取り出して
+セッションごとの許可リストに記録し、Editのフックは、許可リストにあるファイルだけを通す。
+yomiyasuの置き場、フック、レビュワーの定義、`settings*.json` は、依頼文に書かれていても通さない。
+パスは `/` を含む英数字と `._~-` の連続として取り出すので、日本語やスペースを含むパスは取り出せず、レビュワーは直せない。
+
+yomiyasuはsubmodule（`skills/yomiyasu`）として固定している。npx版のyomiyasuを入れていたPCでは、
+先に `npx skills remove -g yomiyasu` で外してから `bash setup.sh --claude` を実行する。
+npx版を残すと、`npx skills update` がリンクをたどってsubmoduleの中身を上書きするおそれがある。
+既存のリンクが残っていれば、setup.shが衝突として止まるので、中身を確かめてから置き換える。
+
+レビュワーはyomiyasuの `SKILL.md`、`references/`、`scripts/yomiyasu_lint.py` をそのまま読み、実行する。
+固定を上げるとき（`git submodule update --remote skills/yomiyasu` など）は、差分を読んでからコミットする。
+
+設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯と却下した案は
+`docs/adr/0024-jp-doc-review-hook.md` を参照。
 
 ## claude-code-best-practice（submodule）
 
