@@ -305,17 +305,6 @@ setup自体は成功しているので語が実態とずれており、本物の
 
 **完了条件**: Codex向けprompts linkを外し、Claude Codeのcommandsは維持する。
 
-### P1: Codex-onlyマシンでsetupとSessionStartを完結させる
-
-`setup.sh` は `~/.claude` がないと開始時にexitする。またCodexの
-`detect-parallel-sessions.sh` は既定helperを `~/.claude/bin` から読むが、Codex側に
-`bin/`をリンクしていない。現在の両ホスト導入済みマシンでは隠れる故障である。
-
-**決めたこと**: Claude/Codexの検出と設定処理を独立させ、Codex側にも`bin/`を配る。
-
-**完了条件**: 一時HOME相当のfixtureで `~/.codex` だけ存在するsetup testが通り、
-SessionStart helperがClaude pathなしで起動する。
-
 ### P1: Codex設定監査skillを追加する
 
 追加した `codex-cli-best-practice` submoduleは有用だが、0.147.0より古い記述を含む。
@@ -605,13 +594,6 @@ SessionStart 応答として扱われない。`detect-parallel-sessions.sh` の�
 
 **rtk について**: Codex 側では書き換えが効かないまま失敗ログだけが出る状態だった。
 Claude Code 側（`settings.json`）は従来どおり有効で、そちらの挙動は変えていない。
-
-### `setup.sh` が Codex 専用マシンで動かない
-
-`~/.claude` がないと `exit 1` する。現状そのようなマシンはないため見送り。
-
-**着手条件**: Codex CLI だけを入れたマシン（`~/.claude` が無い環境）に
-この設定を展開する必要が出たとき。
 
 ### superpowers の実機発火 → 確認済み（2026-08-18）
 
