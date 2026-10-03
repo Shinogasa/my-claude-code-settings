@@ -14,6 +14,28 @@ PROFILE_NAME="personal"
 PROFILE_FILE="$CODEX_HOME/$PROFILE_NAME.config.toml"
 BASE_CONFIG="$CODEX_HOME/config.toml"
 
+# 下の照合は personal プロファイルと config.toml だけを見る。引数で別のプロファイルを
+# 選んだり、-c で mcp_servers を上書きしたりすると照合をすり抜けるため、起動前に拒否する。
+# `--` より後ろは codex へ渡す本文なので見ない。
+reject_argument() {
+  echo "エラー: cxp では $1 を使えません(個人プロファイルの MCP 照合をすり抜けるため)。" >&2
+  exit 1
+}
+expect_config_value=false
+for argument in "$@"; do
+  if [ "$expect_config_value" = true ]; then
+    case "$argument" in *mcp_servers*) reject_argument "mcp_servers を上書きする -c/--config" ;; esac
+    expect_config_value=false
+    continue
+  fi
+  case "$argument" in
+    --) break ;;
+    -p|-p*|--profile|--profile=*) reject_argument "-p/--profile" ;;
+    -c|--config) expect_config_value=true ;;
+    -c*mcp_servers*|--config=*mcp_servers*) reject_argument "mcp_servers を上書きする -c/--config" ;;
+  esac
+done
+
 # codex は `-p` に存在しないプロファイル名を渡してもエラーにせず、base 設定のまま起動する
 # (実測: exit 0 / provider は会社のまま)。個人アカウントのつもりで会社の gateway へ
 # 繋がる無言の事故になるため、こちらで明示的に落とす。

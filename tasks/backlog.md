@@ -216,15 +216,15 @@ codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**�
 2026-10-03に、allowlist外のサーバを `enabled = true` にしたプロファイルでは、`cxp` が起動前に止まるようにした。
 そのときのセキュリティレビューの指摘のうち、次の2点が残っている。どちらもMediumで、Confidence: insufficientだった。
 
-- `cxp` が照合するのは `config.toml` と個人プロファイルの `mcp_servers` だけ。`cxp -c mcp_servers.X.enabled=true` や
-  `cxp -p other` のような引数、プロジェクトの `.codex/config.toml`、管理者の設定、pluginに同梱されたMCPサーバは見ていない。
-  Codexがどの層からMCPサーバを足せるかは、公式資料で確かめていない
+- `cxp` が照合するのは `config.toml` と個人プロファイルの `mcp_servers` だけ。プロジェクトの `.codex/config.toml`、
+  管理者の設定、pluginに同梱されたMCPサーバは見ていない。Codexがどの層からMCPサーバを足せるかは、公式資料で確かめていない。
+  引数の経路（`-p` / `--profile` と、`mcp_servers` に触れる `-c` / `--config`）は、同日に `cxp` が拒否するようにした
 - `cxp` はallowlistを、symlinkの先にあるリポジトリの作業ツリーから読む。別のセッションがブランチを切り替えると、
   切り替え先のブランチのallowlistで判定する。allowlistを書き換えられる人はプロファイルも書き換えられるので、
   権限の境界の問題ではない。ただし、事故は防げない
 
-**決めること**: `cxp` で `-c` / `--config` / `-p` / `--profile` を拒否するか。プロファイルの生成時にallowlistのdigestを
-書き込み、`cxp` で照合するか。先にCodexの公式資料で、MCPサーバを足せる設定の層を確かめる。
+**決めること**: プロファイルの生成時にallowlistのdigestを書き込み、`cxp` で照合するか。
+先にCodexの公式資料で、MCPサーバを足せる設定の層を確かめる。
 
 ### P2: Codex個人プロファイルで引き継いだ値の変化を表示する
 

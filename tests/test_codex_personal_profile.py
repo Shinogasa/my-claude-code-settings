@@ -570,7 +570,7 @@ class TestCxpArgumentGuard(TestCxpGuard):
 
     def test_unrelated_config_and_prompt_are_passed_through(self):
         self.write_valid_profile()
-        result = self.run_cxp_with("-c", "model_reasoning_effort=high", "-p は使わない")
+        result = self.run_cxp_with("-c", "model_reasoning_effort=high", "本文に -p を含む")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(self.marker.exists(), "codex が起動しなかった")
 
