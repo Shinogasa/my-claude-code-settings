@@ -596,6 +596,24 @@ class TestCxpAllowlistGuard(TestCxpGuard):
         self.assertIn("allowlist", result.stderr)
         self.assertFalse(self.marker.exists(), "codex が起動してしまった")
 
+    def test_undecodable_allowlist_stops_with_guidance(self):
+        self.allowlist.write_bytes(b"\xff\xfe allowed\n")
+        self.write_server("allowed", enabled=True)
+        result = self.run_cxp()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("allowlist", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(self.marker.exists(), "codex が起動してしまった")
+
+    def test_broken_profile_toml_stops_with_guidance(self):
+        self.write_config('[mcp_servers.allowed]\ncommand = "/bin/true"\n')
+        self.write_profile("[mcp_servers.allowed\n")
+        result = self.run_cxp()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("setup.sh", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(self.marker.exists(), "codex が起動してしまった")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
