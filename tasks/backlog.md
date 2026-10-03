@@ -235,22 +235,6 @@ codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**�
 
 **完了条件**: 所有外のキーの値が前回の生成から変わったとき、setup の出力で分かる。
 
-### P2: manifest から外した skill のリンクが残る
-
-`setup.sh` は manifest にある skill のリンクを足すだけで、manifest から外した skill の
-リンクを片付けない。2026-10-01 に `tdd-workflow` を `superpowers:test-driven-development` へ
-畳んだとき、`~/.claude/skills/tdd-workflow` と `~/.agents/skills/tdd-workflow` が
-壊れたリンクとして残った。この2つは2026-10-03の時点で消えていたが、誰が消したかは確かめていない。
-
-skill以外にも同じ問題がある。setupはCodexへ `commands/` を配らなくなった
-（`test_setup_does_not_distribute_codex_custom_prompts`）。それでも2026-10-03の時点で
-`~/.codex/prompts -> <repo>/commands` が残っていた。Codexはdeprecatedなcustom promptsを読み続ける。
-
-**決めること**: 所有の記録（ownership）にリンクも載せて、記録にあるのに manifest に無い
-リンクだけを消すか。リンク先の一致だけで判定すると、利用者が自分で張ったリンクまで消しうる。
-
-**完了条件**: manifest から外した skill のリンクを、利用者が張ったリンクには触れずに片付ける回帰テストがある。
-
 ### P2: `context7` / `serena` のCodex向け候補を個別評価する
 
 両者は有用候補だが、Claude版のimportをそのまま使わない。Codex公式・curated・公開pluginを
@@ -488,6 +472,17 @@ rules 3件、contexts 3件を含む34ファイルを導入した。自前`code-r
 代替機能、発火競合を資産ごとに確認し、keep / replace / removeへ分類する。
 
 **着手条件**: Codex互換性移行の実装とruntime smoke testが完了したとき。
+
+**rules 3ファイルについて分かっていること（2026-10-03）**: `ecc-coding-style.md`・`ecc-testing.md`・
+`ecc-development-workflow.md` は、全ファイルが毎セッション読み込まれている。TypeScriptに依存する記述は4行だけだった
+（`use` プレフィックスのフック、テストのコード例2つ、npmの例）。残りは言語に依存しない内容で、
+不変性、命名、AAAなど、利用者が主に使うKotlinにも合う。問題は言語ではなく、次の2点にある。
+
+- `ecc-testing.md` のTDDの手順が、`superpowers:test-driven-development` と重なっている。
+  `ecc-development-workflow.md` の「planner agentで計画」「PRD等の文書を先に作る」も、今の運用と合っていない
+- 「カバレッジ80%、Unit・Integration・E2Eすべて必須」は、設定リポジトリのような作業には重い
+
+rulesだけを先に削ったり、`paths:` を付けたりはしないと決めた。ほかのECC由来の資産と一緒に、この棚卸しで扱う。
 
 ### superpowers の自動注入をプラグイン同梱フックで賄えるか → 決めること
 
@@ -999,6 +994,9 @@ Python や Markdown だけを触る作業中も常に効いている。
 
 **着手条件**: 指示が守られない事例が実際に出たとき、または CLAUDE.md と rules の
 合計がさらに増えたとき。
+
+2026-10-03に、候補の3ファイルは「ECC由来資産を棚卸しする」で中身と一緒に扱うと決めた。
+`paths:` を付けるかどうかも、そちらで keep / replace / remove を決めた後に判断する。
 
 ### コンテナ環境で PreToolUse フックが fail-open している → `cw-workspace-local` へ移管する（先方への追記待ち）
 

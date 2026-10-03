@@ -946,6 +946,26 @@ setup_codex_agent_defaults() {
   record_failure 'host=codex agents operation=configure-defaults retry: python3 bin/configure_codex_agent_defaults.py ~/.codex/config.toml'
 }
 
+# manifest から外した skill のリンクを片付ける。消すのは、このリポジトリの skills/ を指していて
+# manifest に無いリンクだけ。利用者が別の場所から張ったリンクや、実体のディレクトリには触れない。
+remove_stale_skill_links() {
+  local host="$1" skills_dir="$2" wanted link target
+  [ -d "$skills_dir" ] || return 0
+  wanted="$(read_manifest_skills "$host")" || return 1
+  for link in "$skills_dir"/*; do
+    [ -L "$link" ] || continue
+    target="$(readlink "$link")"
+    case "$target" in
+      "$SCRIPT_DIR/skills/"*) ;;
+      *) continue ;;
+    esac
+    if ! grep -qxF "${link##*/}" <<< "$wanted"; then
+      rm "$link" || return 1
+      yellow "manifest から外した skill のリンクを消しました: $link"
+    fi
+  done
+}
+
 validate_host_directories || exit 1
 build_targets
 validate_sources true || exit 1
@@ -991,6 +1011,14 @@ if [ "${#CONFLICT_DESTINATIONS[@]}" -gt 0 ]; then
   backup_conflicts "$BACKUP_TIMESTAMP" || exit 1
 fi
 apply_targets
+if selected_claude; then
+  remove_stale_skill_links claude "$CLAUDE_DIR/skills" \
+    || record_failure "host=claude skills operation=remove-stale-links retry: bash setup.sh --claude"
+fi
+if selected_codex; then
+  remove_stale_skill_links codex "$AGENTS_DIR/skills" \
+    || record_failure "host=codex skills operation=remove-stale-links retry: bash setup.sh --codex"
+fi
 
 if selected_claude; then
   setup_claude_plugins
