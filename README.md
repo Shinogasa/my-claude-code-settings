@@ -476,7 +476,7 @@ provider は起動時に確定するため、警告は次の起動前に直す�
 │   ├── guard-dangerous-bash.sh  #   PreToolUse(Bash)フックのエントリポイント
 │   ├── guard-dangerous-bash.py  #   危険コマンド判定の実処理
 │   ├── hook_support.py          #   会話記録の読み取りと出力の補助
-│   ├── jp-doc-review.py         #   日本語文書の記録・コミット前のレビュー依頼・Confluenceの事前チェック
+│   ├── jp-doc-review.py         #   PR作成前の日本語文書のレビュー依頼・Confluenceの事前チェック
 │   └── skill-read-check.py      #   スキルの必読資料の読み漏れ確認
 ├── bin/                         # 起動ラッパー（PATHを通して使う）
 │   ├── ccp                      #   個人Anthropicアカウントで Claude Code を起動する
@@ -498,15 +498,17 @@ provider は起動時に確定するため、警告は次の起動前に直す�
 
 ## 日本語文書のレビュー（Claude Code専用）
 
-Claude Codeが書いた日本語のMarkdownや設定ファイルをコミットするとき、フックが1回だけコミットを止め、
-`jp-doc-reviewer` サブエージェントにyomiyasuの基準でレビューさせる。Confluenceへの日本語の投稿も、
-送る前に1回止めて下書きのレビューを求める。2回目のコミットと投稿は止めない。
+Claude Codeが `gh pr create` でPRを作るとき、フックが1回だけ止め、ブランチで変わった日本語のMarkdownや設定ファイルを
+`jp-doc-reviewer` サブエージェントにyomiyasuの基準でレビューさせる。対象は、baseとの分岐点からHEADまでの差分にある文書である。
+`Co-Authored-By: Claude` の行が付いたコミットで変わった文書は自動でレビューを依頼し、それ以外の文書はレビューに含めてよいかをユーザーに確かめる。
+Confluenceへの日本語の投稿も、送る前に1回止めて下書きのレビューを求める。2回目のPR作成と投稿は止めない。
 あわせて、スキルを呼んだのに必読資料を読まずに作業を終えようとしたときに、`skill-read-check.py` が差し戻す。
+
+PRを作らないリポジトリや、Claude Codeの外（ブラウザなど）で作ったPRでは、レビューは動かない。
 
 | フック | イベント | 役割 |
 |---|---|---|
-| `jp-doc-review.py post-tool-use` | PostToolUse（Write・Edit） | 書き込んだ日本語の文字数を記録する |
-| `jp-doc-review.py pre-tool-use-bash` | PreToolUse（Bash） | `git commit` の前にレビューを依頼する |
+| `jp-doc-review.py pre-tool-use-bash` | PreToolUse（Bash） | `gh pr create` の前にレビューを依頼する |
 | `jp-doc-review.py pre-tool-use-confluence` | PreToolUse（Confluenceの投稿） | 投稿の前に下書きのレビューを依頼する |
 | `jp-doc-review.py pre-tool-use-agent` | PreToolUse（Agent・Task） | レビュワーへの依頼文のパスを、Editの許可リストに記録する |
 | `skill-read-check.py` | Stop・SubagentStop | 必読資料の読み漏れを会話記録から見つける |
@@ -515,7 +517,7 @@ Claude Codeが書いた日本語のMarkdownや設定ファイルをコミット�
 
 記録と下書きは `~/.claude/state/jp-doc-review/` に置く。下書きは社内文書の写しを含みうるので、
 ディレクトリは0700、ファイルは0600で作る。Confluenceの下書きは、2回目の投稿を通したときに消す。
-7日を過ぎた状態ファイルと下書きは、コミットの確認、Confluenceへの投稿、Write・Editの後に消す。走査は1時間に1回までにしている。
+7日を過ぎた状態ファイルと下書きは、PR作成の確認とConfluenceへの投稿のときに消す。走査は1時間に1回までにしている。
 
 `jp-doc-reviewer` が使えるBashは、yomiyasuのリンターだけにしている。レビュワーは社内文書を読むので、
 本文に仕込まれた指示でコマンドを実行されないよう、定義のhooksで `jp-doc-review.py pre-tool-use-reviewer-bash` を呼び、
@@ -534,7 +536,7 @@ npx版を残すと、`npx skills update` がリンクをたどってsubmoduleの
 固定を上げるとき（`git submodule update --remote skills/yomiyasu` など）は、差分を読んでからコミットする。
 
 設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯と却下した案は
-`docs/adr/0024-jp-doc-review-hook.md` を参照。
+`docs/adr/0024-jp-doc-review-hook.md` を参照。レビューの時機をPR作成時へ移した経緯は `docs/adr/0025-jp-doc-review-at-pr-creation.md` にある。
 
 ## claude-code-best-practice（submodule）
 
