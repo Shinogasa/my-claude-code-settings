@@ -23,7 +23,7 @@ class ReviewerAgentTests(unittest.TestCase):
 
     def test_name_tools_and_model(self):
         self.assertEqual(self.meta["name"], "jp-doc-reviewer")
-        self.assertEqual(set(codex_agents.parse_tools(self.meta["tools"])), {"Read", "Edit", "Bash"})
+        self.assertEqual(set(codex_agents.parse_tools(self.meta["tools"])), {"Read", "Edit", "Bash", "Grep"})
         self.assertEqual(self.meta["model"], "opus")
 
     def test_bash_is_limited_to_the_linter_by_agent_hook(self):
