@@ -1,0 +1,30 @@
+#!/bin/bash
+# Bash から `claude -p` を起動するときに使う。親のセッションと同じプロファイルで子を動かす。
+#
+# bin/ccp で起動したセッションの中から素の `claude -p` を起動すると、子は ~/.claude/settings.json を
+# 読み直し、会社の LiteLLM の接続情報で動いてしまう。親の --settings はコマンドライン引数なので子に届かない。
+# 一方、設定ファイルの env に書いた値は Bash を通して子まで届き、settings.json に無い変数は上書きされない
+# （2026-10-02に確認）。そこで settings.personal.json の env に目印 CLAUDE_PROFILE=personal を置き、
+# それを見て --settings を付け分ける。目印が無いときは会社のプロファイルとして、そのまま起動する。
+
+set -euo pipefail
+
+PERSONAL_SETTINGS="$HOME/.claude/settings.personal.json"
+
+case "${CLAUDE_PROFILE:-}" in
+  personal)
+    # 個人のつもりで会社の接続情報に繋がる無言の事故を避けるため、設定が無ければ落とす
+    if [ ! -f "$PERSONAL_SETTINGS" ]; then
+      echo "エラー: $PERSONAL_SETTINGS が見つかりません。bash setup.sh を実行してください。" >&2
+      exit 1
+    fi
+    exec claude --settings "$PERSONAL_SETTINGS" "$@"
+    ;;
+  "")
+    exec claude "$@"
+    ;;
+  *)
+    echo "エラー: CLAUDE_PROFILE=${CLAUDE_PROFILE} は未知のプロファイルです（personal か未設定のみ）。" >&2
+    exit 1
+    ;;
+esac

@@ -46,7 +46,7 @@ bash setup.sh --claude
 | `commands/` | `~/.claude/commands/` | カスタムスラッシュコマンド |
 | `rules/` | `~/.claude/rules/` | 条件付きルール |
 | `agents/` | `~/.claude/agents/` | サブエージェント定義 |
-| `bin/` | `~/.claude/bin/` | 起動ラッパー（`ccp` / `cxp` = 個人アカウントでの起動） |
+| `bin/` | `~/.claude/bin/` | 起動ラッパー（`ccp` / `cxp` = 個人アカウントでの起動、`claude-headless` = 親と同じプロファイルでの `claude -p`） |
 | `hooks/` | `~/.claude/hooks/` | 危険コマンドブロック等のhooksスクリプト（Claude向けrtkフックはsettings.json.template側で管理） |
 | `statusline.js` | `~/.claude/statusline.js` | ステータスライン表示スクリプト |
 | `output-styles/` | `~/.claude/output-styles/` | カスタムアウトプットスタイル |
@@ -316,6 +316,12 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 `ccp` では両者が空文字列になるため、そうしたプラグインは**課金先を失って起動しない**
 （security-guidance で実測確認済み）。裏を返すと素の `claude` では会社ゲートウェイに乗るので、
 プラグインが毎ターン LLM を叩く種類のものかどうかは導入時に確認する。
+
+**Bashから起動する `claude -p` は `claude-headless` を使う**: `ccp` で起動したセッションの中から素の `claude -p` を起動すると、
+子は `~/.claude/settings.json` を読み直し、会社の接続情報で動く。`--settings` はコマンドライン引数なので子に届かない。
+`setup.sh` は `settings.personal.json` の `env` に目印 `CLAUDE_PROFILE=personal` を書き、この値はBashを通して子まで届く。
+`bin/claude-headless` は目印があれば `--settings ~/.claude/settings.personal.json` を付けて、無ければそのまま `claude` を起動する。
+サブエージェントやフックから `claude -p` を起動する経路は、まだこのスクリプトに寄せていない。
 
 ### 機密でない機能トグルの置き場
 

@@ -720,7 +720,9 @@ Path(settings_staged).write_text(
 )
 Path(personal_staged).write_text(
     json.dumps(
-        {"env": {key: "" for key in env_template_values}},
+        # CLAUDE_PROFILE は、このプロファイルで起動したセッションの子の claude -p が
+        # 同じプロファイルで動くための目印（bin/claude-headless が読む）。会社の settings.json には入れない
+        {"env": {**{key: "" for key in env_template_values}, "CLAUDE_PROFILE": "personal"}},
         ensure_ascii=False,
         indent=2,
     ) + "\n",
