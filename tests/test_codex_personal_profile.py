@@ -560,6 +560,9 @@ class TestCxpArgumentGuard(TestCxpGuard):
             ("--config", 'mcp_servers.x.command="/bin/sh"'),
             ("--config=mcp_servers.x.enabled=true",),
             ("-cmcp_servers.x.enabled=true",),
+            ("-c", 'profile="other"'),
+            ("-c", 'model_provider="llm_gateway"'),
+            ("--config=model_providers.x.base_url=\"https://example.invalid\"",),
         )
         for args in cases:
             with self.subTest(args=args):

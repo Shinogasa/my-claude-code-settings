@@ -262,6 +262,11 @@ class TestForcePushAmbiguousTarget(unittest.TestCase):
     def test_other_refs_namespace_is_blocked(self):
         self.assertEqual(run_guard("git push --force origin HEAD:refs/remotes/origin/main"), BLOCK)
 
+    def test_matching_push_is_blocked(self):
+        # `:` / `+:` は両側にある全ブランチ（main を含む）を push する
+        self.assertEqual(run_guard("git push -f origin :"), BLOCK)
+        self.assertEqual(run_guard("git push origin +:"), BLOCK)
+
     def test_slash_in_branch_name_is_still_allowed(self):
         self.assertEqual(run_guard("git push --force origin feat/foo"), ALLOW)
 
@@ -1034,6 +1039,19 @@ class TestDestructivePushTarget(TrackingFixture):
     def test_omitted_refspec_with_simple_push_default_is_allowed(self):
         self.git_config(self.feature, "push.default", "simple")
         self.assert_result("git push --force", self.feature, ALLOW)
+
+    def test_matching_push_inside_repository_is_blocked(self):
+        # 現在のブランチを特定できても、`:` / `+:` は main を含む全ブランチへ向かう
+        self.assert_result("git push -f origin :", self.feature, BLOCK)
+        self.assert_result("git push origin +:", self.feature, BLOCK)
+
+    def test_omitted_refspec_with_command_line_config_is_blocked(self):
+        # `git -c` で渡した設定は、フックが読む git config には現れない
+        self.assert_result("git -c push.default=upstream push --force", self.feature, BLOCK)
+
+    def test_omitted_refspec_with_mirror_remote_is_blocked(self):
+        self.git_config(self.feature, "remote.origin.mirror", "true")
+        self.assert_result("git push --force origin", self.feature, BLOCK)
 
     def test_omitted_refspec_with_remote_push_config_is_blocked(self):
         self.git_config(self.feature, "remote.origin.push", "refs/heads/work:refs/heads/main")
