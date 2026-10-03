@@ -218,7 +218,7 @@ codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**�
 
 - `cxp` が照合するのは `config.toml` と個人プロファイルの `mcp_servers` だけ。プロジェクトの `.codex/config.toml`、
   管理者の設定、pluginに同梱されたMCPサーバは見ていない。Codexがどの層からMCPサーバを足せるかは、公式資料で確かめていない。
-  引数の経路（`-p` / `--profile` と、`mcp_servers` に触れる `-c` / `--config`）は、同日に `cxp` が拒否するようにした
+  引数で渡す経路（`-p` / `--profile` と、`mcp_servers` に触れる `-c` / `--config`）は、同日に `cxp` で拒否するようにした
 - `cxp` はallowlistを、symlinkの先にあるリポジトリの作業ツリーから読む。別のセッションがブランチを切り替えると、
   切り替え先のブランチのallowlistで判定する。allowlistを書き換えられる人はプロファイルも書き換えられるので、
   権限の境界の問題ではない。ただし、事故は防げない
@@ -474,15 +474,15 @@ rules 3件、contexts 3件を含む34ファイルを導入した。自前`code-r
 **着手条件**: Codex互換性移行の実装とruntime smoke testが完了したとき。
 
 **rules 3ファイルについて分かっていること（2026-10-03）**: `ecc-coding-style.md`・`ecc-testing.md`・
-`ecc-development-workflow.md` は、全ファイルが毎セッション読み込まれている。TypeScriptに依存する記述は4行だけだった
-（`use` プレフィックスのフック、テストのコード例2つ、npmの例）。残りは言語に依存しない内容で、
-不変性、命名、AAAなど、利用者が主に使うKotlinにも合う。問題は言語ではなく、次の2点にある。
+`ecc-development-workflow.md` は、どれも毎セッション読み込まれている。TypeScriptに依存する記述は4行だけだった
+（`use` プレフィックスのフック、テストのコード例2つ、npmの例）。残りは不変性、命名、AAAなど言語に依存しない内容で、
+利用者が主に使うKotlinにも合う。問題は言語ではなく、次の2点にある。
 
 - `ecc-testing.md` のTDDの手順が、`superpowers:test-driven-development` と重なっている。
   `ecc-development-workflow.md` の「planner agentで計画」「PRD等の文書を先に作る」も、今の運用と合っていない
 - 「カバレッジ80%、Unit・Integration・E2Eすべて必須」は、設定リポジトリのような作業には重い
 
-rulesだけを先に削ったり、`paths:` を付けたりはしないと決めた。ほかのECC由来の資産と一緒に、この棚卸しで扱う。
+rulesだけを先に削ることも、`paths:` を付けることもしないと決めた。ほかのECC由来の資産と一緒に、この棚卸しで扱う。
 
 ### superpowers の自動注入をプラグイン同梱フックで賄えるか → 決めること
 
@@ -995,7 +995,7 @@ Python や Markdown だけを触る作業中も常に効いている。
 **着手条件**: 指示が守られない事例が実際に出たとき、または CLAUDE.md と rules の
 合計がさらに増えたとき。
 
-2026-10-03に、候補の3ファイルは「ECC由来資産を棚卸しする」で中身と一緒に扱うと決めた。
+2026-10-03に、候補の3ファイルは中身ごと「Everything Claude Code由来資産を棚卸しする」の項目で扱うと決めた。
 `paths:` を付けるかどうかも、そちらで keep / replace / remove を決めた後に判断する。
 
 ### コンテナ環境で PreToolUse フックが fail-open している → `cw-workspace-local` へ移管する（先方への追記待ち）
