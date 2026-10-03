@@ -11,6 +11,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -531,6 +532,69 @@ class TestCxpGuard(unittest.TestCase):
         result = self.run_cxp()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(self.marker.exists())
+
+
+class TestCxpAllowlistGuard(TestCxpGuard):
+    """手で `enabled = true` に書き換えた allowlist 外のサーバを、起動前に止める。
+
+    setup の所有判定で気づけるのは次回の setup 実行時だけなので、cxp 自身が照合する。
+    cxp は ~/.codex/bin などの symlink 経由で起動されるため、symlink の先にある
+    リポジトリの allowlist を読むことも確かめる。
+    """
+
+    def setUp(self):
+        super().setUp()
+        repo = self.dir / "repo"
+        (repo / "bin").mkdir(parents=True)
+        (repo / "codex").mkdir()
+        shutil.copy2(CXP, repo / "bin" / "cxp")
+        self.allowlist = repo / "codex" / "personal-mcp-allowlist.txt"
+        self.allowlist.write_text("# コメント\nallowed\n", encoding="utf-8")
+        linked_bin = self.dir / "linked-bin"
+        linked_bin.symlink_to(repo / "bin")
+        self.cxp = linked_bin / "cxp"
+
+    def run_cxp(self) -> subprocess.CompletedProcess:
+        env = dict(os.environ)
+        env["CODEX_HOME"] = str(self.codex_home)
+        env["PATH"] = f"{self.bindir}{os.pathsep}{env['PATH']}"
+        return subprocess.run(
+            [str(self.cxp)], env=env, capture_output=True, text=True, timeout=30
+        )
+
+    def write_server(self, name: str, enabled: bool):
+        definition = f'[mcp_servers.{name}]\ncommand = "/bin/true"\n'
+        self.write_config(definition)
+        self.write_profile(definition + f"enabled = {str(enabled).lower()}\n")
+
+    def test_enabled_server_outside_allowlist_stops_before_launching_codex(self):
+        self.write_server("company_tool", enabled=True)
+        result = self.run_cxp()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("company_tool", result.stderr)
+        self.assertIn("allowlist", result.stderr)
+        self.assertFalse(self.marker.exists(), "codex が起動してしまった")
+
+    def test_enabled_server_in_allowlist_launches_codex(self):
+        self.write_server("allowed", enabled=True)
+        result = self.run_cxp()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.marker.exists(), "codex が起動しなかった")
+
+    def test_disabled_server_outside_allowlist_launches_codex(self):
+        self.write_server("company_tool", enabled=False)
+        result = self.run_cxp()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.marker.exists(), "codex が起動しなかった")
+
+    def test_missing_allowlist_stops_before_launching_codex(self):
+        # allowlist を読めないときは「全部許可」ではなく停止に倒す。
+        self.allowlist.unlink()
+        self.write_server("allowed", enabled=True)
+        result = self.run_cxp()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("allowlist", result.stderr)
+        self.assertFalse(self.marker.exists(), "codex が起動してしまった")
 
 
 if __name__ == "__main__":
