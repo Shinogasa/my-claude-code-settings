@@ -12,6 +12,7 @@ STATE_TOOL="$SCRIPT_DIR/bin/setup-state.py"
 SELECTOR=""
 REPLACE_CONFLICTS=false
 FAILURES=()
+POLICY_VIOLATIONS=()
 # 事前検査の時点で旧形式と判定した skills 親リンク。移行は競合の判定後まで遅らせる。
 PENDING_SKILL_PARENTS=()
 BACKUP_TIMESTAMP=""
@@ -909,10 +910,18 @@ raise SystemExit(0 if any(plugin.get("id") == target for plugin in plugins) else
   done <<< "$wanted"
 }
 
+# 監査ツールは exit 1 で違反、exit 2 で監査自体の失敗を返す。
+# 違反は setup の失敗ではないので、FAILURES とは別に報告する。
 audit_codex_plugins() {
-  if ! python3 "$SCRIPT_DIR/bin/audit-codex-plugins.py"; then
-    record_failure "host=codex plugin=all operation=audit retry: python3 $SCRIPT_DIR/bin/audit-codex-plugins.py"
-  fi
+  local output status=0
+  output="$(python3 "$SCRIPT_DIR/bin/audit-codex-plugins.py")" || status=$?
+  case "$status" in
+    0) [ -n "$output" ] && printf '%s\n' "$output" ;;
+    1) while IFS= read -r plugin_id; do
+         [ -n "$plugin_id" ] && POLICY_VIOLATIONS+=("$plugin_id")
+       done <<< "$output" ;;
+    *) record_failure "host=codex plugin=all operation=audit retry: python3 $SCRIPT_DIR/bin/audit-codex-plugins.py" ;;
+  esac
 }
 
 setup_codex_signing() {
@@ -996,9 +1005,17 @@ if selected_claude; then
   print_claude_path_guidance
 fi
 
+if [ "${#POLICY_VIOLATIONS[@]}" -gt 0 ]; then
+  red 'Codex plugin policy violations:'
+  printf '  %s\n' "${POLICY_VIOLATIONS[@]}" >&2
+  printf '  %s\n' "~/.codex/config.toml で該当 plugin を enabled = false にしてください。" >&2
+fi
 if [ "${#FAILURES[@]}" -gt 0 ]; then
   red 'setup completed with failures:'
   printf '  %s\n' "${FAILURES[@]}" >&2
+  exit 1
+fi
+if [ "${#POLICY_VIOLATIONS[@]}" -gt 0 ]; then
   exit 1
 fi
 

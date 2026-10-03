@@ -251,14 +251,6 @@ skill以外にも同じ問題がある。setupはCodexへ `commands/` を配ら�
 
 **完了条件**: manifest から外した skill のリンクを、利用者が張ったリンクには触れずに片付ける回帰テストがある。
 
-### P2: `setup.sh` の failure と policy violation を別の出口にする
-
-`audit_codex_plugins()` は監査ツールのexit 1を `record_failure` に流すため、
-policy違反の検出が「setup completed with failures」として報告される。
-setup自体は成功しているので語が実態とずれており、本物の失敗と区別できない。
-
-**完了条件**: 違反検出と実行失敗が、終了コードか出力かのどちらかで区別できる。
-
 ### P2: `context7` / `serena` のCodex向け候補を個別評価する
 
 両者は有用候補だが、Claude版のimportをそのまま使わない。Codex公式・curated・公開pluginを
