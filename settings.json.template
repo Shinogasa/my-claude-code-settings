@@ -15,7 +15,9 @@
     "superpowers@claude-plugins-official": true,
     "swift-lsp@claude-plugins-official": true
   },
-  "env": {},
+  "env": {
+    "CLAUDE_PROFILE": "default"
+  },
   "alwaysThinkingEnabled": true,
   "outputStyle": "ReviewAndDesign",
   "theme": "dark-daltonized",
@@ -43,6 +45,11 @@
             "type": "command",
             "command": "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/block-commit-on-merged-pr.py",
+            "timeout": 15
           }
         ]
       },
@@ -62,18 +69,6 @@
           {
             "type": "command",
             "command": "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-confluence",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/jp-doc-review.py post-tool-use",
             "timeout": 10
           }
         ]
