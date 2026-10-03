@@ -705,11 +705,11 @@ fetch 直後でも競合しうる）。フックの層では原理的に見切�
 - プロセス置換 `<(...)` / `>(...)` の中のコマンド
 - リダイレクト直前の数字を fd とみなすため、`cd 2 >/dev/null` の `2` を引数として扱えない
 - `${v/ #/y}` のようにパラメータ展開の中の空白の直後にある `#` を、コメントの始まりとみなす
-- 環境変数による git の設定（`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_PARAMETERS`）。
-  先頭の `NAME=value` を除去するので、refspecを省略したforce pushで `push.default` を差し替えられても見えない。
+- 環境変数で渡すgitの設定（`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_PARAMETERS`）。
+  先頭の `NAME=value` を取り除いて判定するので、refspecを省略したforce pushで `push.default` を差し替えられても検出できない。
   `git -c` で渡す形は、2026-10-03に止めるようにした
-- force pushの宛先の残り（2026-10-03のセキュリティレビュー、Low・未検証）。`refs/heads//main` は `/main` として通る。
-  大文字小文字を区別しない保存先（macOSのローカルbareリポジトリなど）では `Main` が通る。gitがこれらを受け付けるかは確かめていない
+- force pushの宛先の判定に残った穴（2026-10-03のセキュリティレビューの指摘、Low・未検証）。`refs/heads//main` は `/main` とみなされて通る。
+  大文字と小文字を区別しない保存先（macOSのローカルbareリポジトリなど）では `Main` が通る。これらの宛先をgitが受け付けるかは、確かめていない
 
 **決めること**: どこまで追うか。入れ子のシェルの解析はシェル意味論の再実装に近づく。
 追わない範囲は「確定できない」として止めるか、制約として受け入れるか。
