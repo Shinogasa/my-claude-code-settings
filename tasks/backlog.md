@@ -32,6 +32,16 @@ Bashから手で起動する経路はこれで足りるが、サブエージェ�
 **決めること**: 該当する経路が出てきたときに、`claude-headless` を呼ぶよう書き換えるか。
 目印を読めるのは、`ccp` で起動したセッションと、そのBashから起動したプロセスだけである。
 
+### P3: 2026-10-04のセキュリティレビューで残ったLow
+
+PR作成時の日本語レビュー、マージ済みPRの照会、`claude-headless` のレビューで、次のLowが残った。どれも実害の例が出てから直す。
+
+- 個人プロファイルが空にする認証系のenvは5つだけ。`ANTHROPIC_API_KEY`、`CLAUDE_CODE_OAUTH_TOKEN`、`apiKeyHelper` などは空にしない（`ccp` からある挙動）
+- `block-commit-on-merged-pr.py` は `cd <dir> && git commit` で移動先を追わず、`bash -c` の中も見ない。
+  `gh pr list --head` はforkの持ち主を区別しないので、同じ名前のブランチで別人がマージしたPRがあると誤って止める
+- `jp-doc-review.py` の `--base` の取り出しは、コマンド全体から最初の `--base` を拾う。`gh -R x pr create` のように語の並びが違う形は、PR作成とみなさない
+- `gh` の標準エラーを、そのまま画面の表示に出している
+
 ---
 
 ## 日本語文書レビュー（yomiyasu）の続き
