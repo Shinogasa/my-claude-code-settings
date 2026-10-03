@@ -46,7 +46,7 @@ bash setup.sh --claude
 | `commands/` | `~/.claude/commands/` | カスタムスラッシュコマンド |
 | `rules/` | `~/.claude/rules/` | 条件付きルール |
 | `agents/` | `~/.claude/agents/` | サブエージェント定義 |
-| `bin/` | `~/.claude/bin/` | 起動ラッパー（`ccp` / `cxp` = 個人アカウントでの起動、`claude-headless` = 親と同じプロファイルでの `claude -p`） |
+| `bin/` | `~/.claude/bin/` | 起動ラッパー。`ccp` と `cxp` は個人アカウントで起動し、`claude-headless` は親と同じプロファイルで `claude -p` を起動する |
 | `hooks/` | `~/.claude/hooks/` | 危険コマンドブロック等のhooksスクリプト（Claude向けrtkフックはsettings.json.template側で管理） |
 | `statusline.js` | `~/.claude/statusline.js` | ステータスライン表示スクリプト |
 | `output-styles/` | `~/.claude/output-styles/` | カスタムアウトプットスタイル |
@@ -319,7 +319,7 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 
 **Bashから起動する `claude -p` は `claude-headless` を使う**: `ccp` で起動したセッションの中から素の `claude -p` を起動すると、
 子は `~/.claude/settings.json` を読み直し、会社の接続情報で動く。`--settings` はコマンドライン引数なので子に届かない。
-`setup.sh` は `settings.personal.json` の `env` に目印 `CLAUDE_PROFILE=personal` を書き、この値はBashを通して子まで届く。
+`setup.sh` は、`settings.personal.json` の `env` に目印 `CLAUDE_PROFILE=personal` を書く。この値は、Bashを通して子まで届く。
 `settings.json` の `env` にも `CLAUDE_PROFILE=default` を置く。会社のセッションに `personal` が紛れ込んでも、この値で上書きされる。
 `bin/claude-headless` は、`personal` なら `--settings ~/.claude/settings.personal.json` を付け、`default` ならそのまま `claude` を起動する。
 目印が無いとき（`env -i` などで消えたとき）は、どちらのプロファイルか決められないので止まる。
@@ -507,9 +507,9 @@ provider は起動時に確定するため、警告は次の起動前に直す�
 
 ## 日本語文書のレビュー（Claude Code専用）
 
-Claude Codeが `gh pr create` でPRを作るとき、フックが1回だけ止め、ブランチで変わった日本語のMarkdownや設定ファイルを
+Claude Codeが `gh pr create` でPRを作るときに、フックが1回だけ止める。そして、ブランチで変わった日本語のMarkdownや設定ファイルを、
 `jp-doc-reviewer` サブエージェントにyomiyasuの基準でレビューさせる。対象は、baseとの分岐点からHEADまでの差分にある文書である。
-`Co-Authored-By: Claude` の行が付いたコミットで変わった文書は自動でレビューを依頼し、それ以外の文書はレビューに含めてよいかをユーザーに確かめる。
+`Co-Authored-By: Claude` の行が付いたコミットで変わった文書は、自動でレビューを依頼する。それ以外の文書は、レビューに含めてよいかをユーザーに確かめる。
 Confluenceへの日本語の投稿も、送る前に1回止めて下書きのレビューを求める。2回目のPR作成と投稿は止めない。
 あわせて、スキルを呼んだのに必読資料を読まずに作業を終えようとしたときに、`skill-read-check.py` が差し戻す。
 
@@ -526,7 +526,7 @@ PRを作らないリポジトリや、Claude Codeの外（ブラウザなど）�
 
 記録と下書きは `~/.claude/state/jp-doc-review/` に置く。下書きは社内文書の写しを含みうるので、
 ディレクトリは0700、ファイルは0600で作る。Confluenceの下書きは、2回目の投稿を通したときに消す。
-7日を過ぎた状態ファイルと下書きは、PR作成の確認とConfluenceへの投稿のときに消す。走査は1時間に1回までにしている。
+7日を過ぎた状態ファイルと下書きは、PR作成時の確認とConfluenceへの投稿のときに消す。走査は1時間に1回までにしている。
 
 `jp-doc-reviewer` が使えるBashは、yomiyasuのリンターだけにしている。レビュワーは社内文書を読むので、
 本文に仕込まれた指示でコマンドを実行されないよう、定義のhooksで `jp-doc-review.py pre-tool-use-reviewer-bash` を呼び、

@@ -27,20 +27,20 @@
 ### P3: サブエージェントやフックが起動する `claude -p` も、親と同じプロファイルで動かす
 
 2026-10-04に `bin/claude-headless` と、`settings.personal.json` の目印 `CLAUDE_PROFILE=personal` を入れた。
-Bashから手で起動する経路はこれで足りるが、サブエージェントやフックが `claude -p` を起動する経路はまだ寄せていない。
+Bashから手で起動する経路はこれで足りるが、サブエージェントやフックが `claude -p` を起動する経路は、まだ `claude-headless` に寄せていない。
 
 **決めること**: 該当する経路が出てきたときに、`claude-headless` を呼ぶよう書き換えるか。
 目印を読めるのは、`ccp` で起動したセッションと、そのBashから起動したプロセスだけである。
 
 ### P3: 2026-10-04のセキュリティレビューで残ったLow
 
-PR作成時の日本語レビュー、マージ済みPRの照会、`claude-headless` のレビューで、次のLowが残った。どれも実害の例が出てから直す。
+PR作成時の日本語レビュー、マージ済みPRの照会、`claude-headless` をレビューしたところ、次のLowが残った。どれも、実際に困った例が出てから直す。
 
-- 個人プロファイルが空にする認証系のenvは5つだけ。`ANTHROPIC_API_KEY`、`CLAUDE_CODE_OAUTH_TOKEN`、`apiKeyHelper` などは空にしない（`ccp` からある挙動）
+- 個人プロファイルが空にする認証系のenvは5つだけ。`ANTHROPIC_API_KEY`、`CLAUDE_CODE_OAUTH_TOKEN`、`apiKeyHelper` などは空にしない（`ccp` から引き継いだ挙動）
 - `block-commit-on-merged-pr.py` は `cd <dir> && git commit` で移動先を追わず、`bash -c` の中も見ない。
   `gh pr list --head` はforkの持ち主を区別しないので、同じ名前のブランチで別人がマージしたPRがあると誤って止める
 - `jp-doc-review.py` の `--base` の取り出しは、コマンド全体から最初の `--base` を拾う。`gh -R x pr create` のように語の並びが違う形は、PR作成とみなさない
-- `gh` の標準エラーを、そのまま画面の表示に出している
+- `gh` の標準エラーを、そのまま画面に表示している
 
 ---
 
@@ -78,7 +78,7 @@ yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/
 2026-10-02の実機確認（`docs/research/2026-10-02-claude-code-hook-payloads.md`）では、次の点を確かめられなかった。
 
 - 利用者が `/yomiyasu` と打ったときに会話記録に残る `Base directory for this skill:` の行の形（Skillツールからの呼び出しだけ確かめた）
-- サブエージェントの中のPR作成で、PreToolUse の入力に `agent_type` が入るか
+- サブエージェントがPRを作るときに、PreToolUse の入力に `agent_type` が入るか
 - worktreeの中でのsubmoduleの判定
 - 対話のセッションで、SubagentStop の誤った表示が出ないか（利用中に見る）
 
