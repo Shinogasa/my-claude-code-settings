@@ -145,6 +145,31 @@ class SetupCliTests(unittest.TestCase):
         self.assertTrue((self.home / ".codex" / "bin").is_symlink())
         self.assertTrue((self.home / ".codex" / "hooks").is_symlink())
 
+    def test_rerun_removes_only_repository_skill_links_missing_from_manifest(self):
+        (self.home / ".claude").mkdir()
+        (self.home / ".codex").mkdir()
+        self.assertEqual(run_setup(self.repository, self.home, "--all").returncode, 0)
+        elsewhere = self.base / "elsewhere"
+        elsewhere.mkdir()
+        claude_skills = self.home / ".claude" / "skills"
+        agent_skills = self.home / ".agents" / "skills"
+        # manifest から外した skill のリンク（リンク先が消えて壊れている）
+        for skills in (claude_skills, agent_skills):
+            (skills / "removed-skill").symlink_to(self.repository / "skills" / "removed-skill")
+        # 利用者が別の場所から張ったリンクは残す
+        (claude_skills / "user-skill").symlink_to(elsewhere)
+        (claude_skills / "find-skills").symlink_to(agent_skills / "api-design")
+
+        result = run_setup(self.repository, self.home, "--all")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for skills in (claude_skills, agent_skills):
+            with self.subTest(skills=skills):
+                self.assertFalse((skills / "removed-skill").is_symlink())
+                self.assertTrue((skills / "api-design").is_symlink())
+        self.assertTrue((claude_skills / "user-skill").is_symlink())
+        self.assertTrue((claude_skills / "find-skills").is_symlink())
+
     def test_code_learning_skill_is_linked_for_both_hosts(self):
         (self.home / ".claude").mkdir()
         (self.home / ".codex").mkdir()
