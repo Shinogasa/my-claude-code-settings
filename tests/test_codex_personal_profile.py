@@ -292,6 +292,16 @@ class TestGeneratedFileHardening(unittest.TestCase):
         leftovers = [p.name for p in dest.parent.glob("*.tmp")]
         self.assertEqual(leftovers, [])
 
+    def test_preexisting_symlink_at_fixed_temporary_name_is_not_followed(self):
+        # 固定名の一時ファイルだと、先に置かれたsymlinkをたどって別のファイルを上書きする。
+        victim = self.dir / "victim.txt"
+        victim.write_text("original", encoding="utf-8")
+        (self.dir / "personal.config.toml.tmp").symlink_to(victim)
+
+        self.generate('model_provider = "llm_gateway"\n')
+
+        self.assertEqual(victim.read_text(encoding="utf-8"), "original")
+
     def test_quote_in_server_name_survives_round_trip(self):
         # エスケープを忘れると生成物が TOML として壊れる。
         rendered = self.gen.render({'odd"name': {"command": "/bin/true"}}, set())
