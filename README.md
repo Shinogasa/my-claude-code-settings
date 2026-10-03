@@ -473,6 +473,7 @@ provider は起動時に確定するため、警告は次の起動前に直す�
 │   ├── ecc-development-workflow.md  # 開発ワークフロー
 │   └── ecc-testing.md           #   テスト要件
 ├── hooks/                       # 危険コマンドブロック等のhooksスクリプト（Claude向けrtkフックはsettings.json.template側で管理）
+│   ├── block-commit-on-merged-pr.py # マージ済みPRのブランチへのコミットを止める
 │   ├── guard-dangerous-bash.sh  #   PreToolUse(Bash)フックのエントリポイント
 │   ├── guard-dangerous-bash.py  #   危険コマンド判定の実処理
 │   ├── hook_support.py          #   会話記録の読み取りと出力の補助

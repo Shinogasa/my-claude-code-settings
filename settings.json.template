@@ -43,6 +43,11 @@
             "type": "command",
             "command": "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/block-commit-on-merged-pr.py",
+            "timeout": 15
           }
         ]
       },
