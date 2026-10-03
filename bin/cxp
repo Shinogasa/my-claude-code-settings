@@ -25,7 +25,10 @@ fi
 # プロファイルは base に merge される(実測: プロファイル未記載の MCP サーバが起動した)。
 # profile 単体の設定検証を通すため transport も転記するので、サーバの追加・削除だけでなく
 # url / command の変更も検査し、setup.sh を再実行するまで止める。
-python3 - "$BASE_CONFIG" "$PROFILE_FILE" <<'PY'
+# 手で enabled = true に書き換えた allowlist 外のサーバも止める。setup の所有判定で
+# 気づけるのは次回の setup 実行時だけなので、ここで照合する。allowlist は symlink を
+# たどった先のリポジトリから読む(cxp は ~/.codex/bin などのリンク経由で起動される)。
+python3 - "$BASE_CONFIG" "$PROFILE_FILE" "${BASH_SOURCE[0]}" <<'PY'
 import pathlib
 import sys
 import tomllib
@@ -84,7 +87,25 @@ def transport(name: str, definition, source: pathlib.Path) -> tuple[str, str]:
     return key, value
 
 
+def read_allowlist(script: str) -> set[str]:
+    path = (
+        pathlib.Path(script).resolve().parent.parent
+        / "codex"
+        / "personal-mcp-allowlist.txt"
+    )
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        stop(f"MCP サーバの allowlist を読めません: {path} ({error.strerror})")
+    return {
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+
 base_config, profile = (pathlib.Path(p) for p in sys.argv[1:3])
+allowlist = read_allowlist(sys.argv[3])
 base_servers = mcp_servers(base_config)
 profile_servers = mcp_servers(profile)
 
@@ -122,6 +143,17 @@ if mismatched:
     stop(
         "個人プロファイルの transport が古い MCP サーバがあります: "
         + ", ".join(mismatched)
+    )
+
+not_allowed = sorted(
+    name
+    for name, definition in profile_servers.items()
+    if definition["enabled"] and name not in allowlist
+)
+if not_allowed:
+    stop(
+        "allowlist にない MCP サーバが有効になっています: "
+        + ", ".join(not_allowed)
     )
 PY
 
