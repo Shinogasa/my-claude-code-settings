@@ -20,15 +20,6 @@
 
 **着手条件**: Codexのサンドボックス内で全テストを回す必要が出たとき。恒久的な権限設定の変更は別途判断する。
 
-### P3: `FORCE_COLOR` が設定されたシェルでコード学習の契約テストが落ちる
-
-`tests/test_code_learning_contract.py` の `test_host_probe_fixture_has_one_deterministic_external_failure` は、
-子プロセスで動かしたunittestの出力に `FAILED (failures=1)` が含まれるかを照合している。
-`FORCE_COLOR=3` があるとPython 3.14のunittestが出力に色のエスケープコードを入れ、文字列が分断されて落ちる。
-2026-10-01に確認し、`env -u FORCE_COLOR` で実行すると通った。
-
-**決めること**: テスト側で子プロセスの環境から色の指定を外すか、照合の前にエスケープコードを取り除くか。
-
 ---
 
 ## Claude Codeのプロファイル切り替え
