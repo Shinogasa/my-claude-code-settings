@@ -199,10 +199,24 @@ class PrReviewTests(HookCase):
         self.commit_file("docs/a.md", JP_LONG)
         transcript = self.transcript({"type": "user", "message": {"content": "x"}})
         self.assertEqual(decision_of(self.pr(transcript=transcript)), "deny")
+        self.transcript({"type": "assistant", "message": {"content": "直さずに進める"}})
         code, output, _ = self.pr(transcript=transcript)
         self.assertEqual(code, 0)
         self.assertIsNone(decision_of((code, output, "")))
         self.assertIn("レビューされていない", output.get("systemMessage", ""))
+        # 報告は1回だけ。その後のPR作成も通す
+        self.transcript({"type": "assistant", "message": {"content": "もう一度"}})
+        self.assertEqual(self.pr(transcript=transcript), (0, {}, ""))
+
+    def test_duplicate_invocation_for_the_same_call_does_not_flip_the_decision(self):
+        # 1回のBashでフックが2回呼ばれても、止めた直後の呼び出しは黙って通し、次の呼び出しも止め直さない
+        self.commit_file("docs/a.md", JP_LONG)
+        transcript = self.transcript({"type": "user", "message": {"content": "x"}})
+        self.assertEqual(decision_of(self.pr(transcript=transcript)), "deny")
+        self.assertEqual(self.pr(transcript=transcript), (0, {}, ""))
+        self.transcript(agent_call("jp-doc-reviewer"))
+        self.assertEqual(self.pr(transcript=transcript), (0, {}, ""))
+        self.assertEqual(self.pr(transcript=transcript), (0, {}, ""))
 
     def test_second_pr_create_after_review_passes_silently(self):
         self.commit_file("docs/a.md", JP_LONG)
@@ -223,6 +237,24 @@ class PrReviewTests(HookCase):
         result = self.pr("gh pr create --base nope")
         self.assertEqual(decision_of(result), "deny")
         self.assertIn("nope", self.reason(result))
+
+    def test_pr_create_inside_quoted_text_is_not_detected(self):
+        # コミットメッセージや echo の文字列に書いただけのものは、PRの作成ではない
+        self.commit_file("docs/a.md", JP_LONG)
+        for command in ('git commit -m "gh pr create を説明する"',
+                        "printf '%s\\n' 'gh pr create' > msg.txt",
+                        "echo gh pr create"):
+            with self.subTest(command=command):
+                self.assertEqual(self.pr(command), (0, {}, ""))
+        self.assertEqual(decision_of(self.pr()), "deny")
+
+    def test_pr_create_after_separator_or_prefix_is_detected(self):
+        self.commit_file("docs/a.md", JP_LONG)
+        for index, command in enumerate(("git push && gh pr create --fill",
+                                         "GH_TOKEN=x gh pr create --fill",
+                                         "cd . ; command gh pr create")):
+            with self.subTest(command=command):
+                self.assertEqual(decision_of(self.pr(command, session=f"s{index}")), "deny")
 
     def test_wrapped_pr_create_is_detected(self):
         self.commit_file("docs/a.md", JP_LONG)
@@ -740,10 +772,12 @@ class ErrorTests(HookCase):
                 self.assertEqual((code, output), (1, {}))
                 self.assertIn("入力が空", stderr)
 
-    def test_post_tool_use_event_is_gone(self):
-        code, _, stderr = self.run_hook("post-tool-use", {})
-        self.assertEqual(code, 1)
-        self.assertIn("使い方", stderr)
+    def test_post_tool_use_from_old_settings_is_a_no_op(self):
+        # setup.sh をやり直すまで、古い settings.json は Write・Edit のたびにこのイベントを呼ぶ
+        payload = {"session_id": "s1", "cwd": str(self.repo), "tool_name": "Write",
+                   "tool_input": {"file_path": str(self.repo / "a.md"), "content": JP_LONG}}
+        self.assertEqual(self.run_hook("post-tool-use", payload), (0, {}, ""))
+        self.assertFalse(self.state.exists())
 
     def test_unknown_event_fails(self):
         code, _, stderr = self.run_hook("unknown", {})
