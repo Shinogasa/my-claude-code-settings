@@ -23,7 +23,7 @@ class ReviewerAgentTests(unittest.TestCase):
 
     def test_name_tools_and_model(self):
         self.assertEqual(self.meta["name"], "jp-doc-reviewer")
-        self.assertEqual(set(codex_agents.parse_tools(self.meta["tools"])), {"Read", "Edit", "Bash"})
+        self.assertEqual(set(codex_agents.parse_tools(self.meta["tools"])), {"Read", "Edit", "Bash", "Grep"})
         self.assertEqual(self.meta["model"], "opus")
 
     def test_bash_is_limited_to_the_linter_by_agent_hook(self):
@@ -58,7 +58,7 @@ class ReviewerAgentTests(unittest.TestCase):
 
     def test_body_makes_reading_and_editing_instructions_explicit(self):
         for marker in ("`SKILL.md` をReadツールで全文読む", "次の資料をReadツールで全文読む", "その場で書き換える",
-                       "読めなかった資料を報告する", "grepして確かめる"):
+                       "読めなかった資料を報告する", "Grepツールで検索して確かめる"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.body)
 

@@ -534,6 +534,55 @@ class TestCxpGuard(unittest.TestCase):
         self.assertTrue(self.marker.exists())
 
 
+class TestCxpArgumentGuard(TestCxpGuard):
+    """照合をすり抜ける引数（別プロファイル、MCP サーバの上書き）を起動前に拒否する。"""
+
+    def run_cxp_with(self, *args: str) -> subprocess.CompletedProcess:
+        env = dict(os.environ)
+        env["CODEX_HOME"] = str(self.codex_home)
+        env["PATH"] = f"{self.bindir}{os.pathsep}{env['PATH']}"
+        return subprocess.run(
+            [str(CXP), *args], env=env, capture_output=True, text=True, timeout=30
+        )
+
+    def write_valid_profile(self):
+        self.write_config('model_provider = "llm_gateway"\n')
+        self.write_profile('model_provider = "openai"\n')
+
+    def test_profile_and_mcp_override_arguments_stop_before_launching_codex(self):
+        self.write_valid_profile()
+        cases = (
+            ("-p", "other"),
+            ("--profile", "other"),
+            ("--profile=other",),
+            ("-pother",),
+            ("-c", "mcp_servers.company_tool.enabled=true"),
+            ("--config", 'mcp_servers.x.command="/bin/sh"'),
+            ("--config=mcp_servers.x.enabled=true",),
+            ("-cmcp_servers.x.enabled=true",),
+            ("-c", 'profile="other"'),
+            ("-c", 'model_provider="llm_gateway"'),
+            ("--config=model_providers.x.base_url=\"https://example.invalid\"",),
+        )
+        for args in cases:
+            with self.subTest(args=args):
+                result = self.run_cxp_with(*args)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("cxp", result.stderr)
+                self.assertFalse(self.marker.exists(), "codex が起動してしまった")
+
+    def test_unrelated_config_and_prompt_are_passed_through(self):
+        self.write_valid_profile()
+        result = self.run_cxp_with("-c", "model_reasoning_effort=high", "本文に -p を含む")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.marker.exists(), "codex が起動しなかった")
+
+    def test_arguments_after_double_dash_are_not_inspected(self):
+        self.write_valid_profile()
+        result = self.run_cxp_with("exec", "--", "-p other という文字列")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.marker.exists(), "codex が起動しなかった")
+
 class TestCxpAllowlistGuard(TestCxpGuard):
     """手で `enabled = true` に書き換えた allowlist 外のサーバを、起動前に止める。
 
