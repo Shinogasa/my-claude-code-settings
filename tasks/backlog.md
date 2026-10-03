@@ -718,21 +718,6 @@ fetch 直後でも競合しうる）。フックの層では原理的に見切�
 
 ---
 
-### force push の宛先の表記ゆれと設定由来の宛先を見落とす
-
-2026-10-01 のセキュリティレビューの指摘（以前からある穴）。`push_target_branches` は
-宛先の `HEAD` と `refs/heads/` だけを正規化する。
-
-- `git push -f origin @`、`heads/main`、`'refs/heads/*:refs/heads/*'` のような glob の宛先を
-  保護ブランチと判定できない
-- refspec を省略したときは同名のブランチを宛先とみなすため、`push.default=upstream` /
-  `matching` や `remote.<name>.push` で main へ push される設定を見落とす
-
-**決めること**: 表記ゆれを正規化するか、`@`・glob を「確定できない」として止めるか。
-refspec 省略の force push / 削除を一律に止めるか、`branch.<name>.merge` まで見るか。
-
-**着手条件**: 即時着手できる。
-
 ---
 
 ## マージ済み PR のブランチに作業を積み続ける事故

@@ -650,22 +650,31 @@ def push_target_branches(args: list, cwd: str) -> list:
     if any(a in GIT_PUSH_BROADCAST_FLAGS for a in args):
         return None
 
-    refspecs = push_positional_args(args)[1:]
+    positional = push_positional_args(args)
+    refspecs = positional[1:]
     if not refspecs:
         # refspec 省略時の宛先は push.default 依存だが、既定 (simple/current) では
         # 同名のブランチ。detached HEAD や git 管理外では特定できない。
         if cwd is UNRESOLVED:
+            return None
+        if not implicit_push_targets_current_branch(cwd, positional[:1]):
             return None
         branch = run_git(cwd, "symbolic-ref", "--short", "HEAD")
         return [branch] if branch else None
 
     targets = []
     for spec in refspecs:
+        # glob は複数のブランチへ展開されるため、名前の一致では判定できない
+        if "*" in spec:
+            return None
         dst = spec.lstrip("+")
         if ":" in dst:
             dst = dst.split(":", 1)[1]
         if dst.startswith("refs/heads/"):
             dst = dst[len("refs/heads/"):]
+        elif dst == "@" or dst.startswith(("refs/", "heads/")):
+            # `@` や `heads/main` は保護ブランチを指しうる。正規化はせず、確定できない形として止める
+            return None
         if dst in ("", "HEAD"):
             if cwd is UNRESOLVED:
                 return None
@@ -675,6 +684,22 @@ def push_target_branches(args: list, cwd: str) -> list:
             dst = branch
         targets.append(dst)
     return targets
+
+
+def implicit_push_targets_current_branch(cwd: str, remote: list) -> bool:
+    """refspec を省略した push が、現在のブランチと同名の宛先だけへ向かうと言えるか。
+
+    push.default が upstream / matching / tracking のときや、remote.<name>.push があるときは、
+    同名でないブランチ（保護ブランチを含む）へ push されうる。
+    """
+    if run_git(cwd, "config", "--get", "push.default") not in ("", "simple", "current"):
+        return False
+    if remote:
+        pattern = rf"^remote\.{re.escape(remote[0])}\.push$"
+    else:
+        # remote を省略すると、どの remote へ向かうかは branch の設定次第なので、全 remote を見る
+        pattern = r"^remote\..*\.push$"
+    return not run_git(cwd, "config", "--get-regexp", pattern)
 
 
 def is_ref_deletion(args: list) -> bool:
