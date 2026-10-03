@@ -5,5 +5,6 @@
 
 - Codex設定の変更・レビューでは codex-cli-best-practice skillを読む
 - 根拠はOpenAI公式資料、ローカルCLI実測、固定submoduleの順で採る
+- 資産ごとのCodex互換性と判断根拠は docs/codex-compatibility-audit.md を参照する
 - Claude由来資産は docs/adr/0003-codex-native-first-activation-policy.md に従う
 - runtimeの強制境界は docs/adr/0004-codex-runtime-enforcement-policy.md に従う

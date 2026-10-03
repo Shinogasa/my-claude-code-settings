@@ -143,33 +143,22 @@ yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/
 - ラッパーを置く場合、`cxp` の「素の `codex` は会社設定のまま」という向きとどう両立させるか
   （PATH 上の優先順位と、シェル統合が読み込まれないときの倒れ方）
 
-### P0: `security-guidance` を Codex 側だけ無効化する
+### P1: Codexで無効にしたClaudeのpluginが、`enabled = true` に戻る
 
-`security-guidance@claude-plugins-official` 2.0.7 は SessionStart で最初に
-`{"async": true, "asyncTimeout": 180000}` を返し、Codex 0.147.0 では
-`invalid session start JSON output` になる。`asyncRewake`、rewake message、Claude固有の
-Stop outputにも依存するため、フィールド1個の置換では直らない。
+2026-08-26に、`~/.codex/config.toml` で `security-guidance` などを `enabled = false` にした。
+ところが2026-10-03に確かめると、policyが `deny` / `review` の8件
+（`@claude-plugins-official` の asana、claude-md-management、code-review、context7、
+learning-output-style、security-guidance、serena、superpowers）が、すべて `enabled = true` に戻っていた。
+`bin/audit-codex-plugins.py` はexit 1で8件を報告した。同日に8件を `false` へ戻し、監査が通ることを確認した。
 
-**決めたこと**: Claude Code側は維持し、Codex側のpluginだけ無効化する。cacheは直接patchしない。
-明示的レビューは当面 `security-review` skillと`security-reviewer` agentで代替する。
+`security-guidance` は、CodexのSessionStartで `invalid session start JSON output` を起こす。
+非同期hookの契約がClaude固有だからだ。`enabled = true` に戻るたびに、この失敗がまた起きる。
 
-**完了条件**:
+誰が書き換えたかは未確認。候補は、Codexのplugin導入・更新、GUIアプリ、Claudeのpluginを取り込む機能。
+`model_provider` が外部ツールの書き換えで消えた件（上の「base provider 検査」）と同じ経路かもしれない。
 
-- [x] Codex plugin policyで`deny`になっている
-- [ ] Codexの新規SessionStartで同エラーが出ない
-      （2026-08-26に`config.toml`で`enabled = false`へ変更済み。次回のCodex起動時に確認する）
-- [x] Claude Code側のenabled状態が変わっていない
-
-### P0: 直下 `AGENTS.md` の誤った複製を解消する
-
-現在の `AGENTS.md` は `CLAUDE.md` の機械置換版で、存在しない `~/.Codex` と
-`/Codex-best-practice`、既に解消済みの「Codex hooks未配線」を含む。Codexでは
-グローバル `~/.codex/AGENTS.md`（正本は`CLAUDE.md`）の後にこのファイルも読まれるため、
-単なるREADMEの誤記ではなく、矛盾した実行指示になる。
-
-**決めたこと**: 共通指示を複製せず、このリポジトリ固有のCodex差分だけに縮める。
-
-**完了条件**: 2 KiB未満、`~/.Codex`を含まない、Codex設定監査skillと互換性監査を参照する。
+**決めること**: 監査で気づくだけにするか、setupで `false` に戻すか、起動前に止めるか。
+その前に、`config.toml` の変更時刻とCodexの操作記録を照らし合わせて、誰が書き換えたかを特定する。
 
 ### P1: `gpt-5.6-sol` で全ターンが失敗する回避設定を `setup.sh` で恒久化する
 
@@ -252,7 +241,11 @@ codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**�
 `setup.sh` は manifest にある skill のリンクを足すだけで、manifest から外した skill の
 リンクを片付けない。2026-10-01 に `tdd-workflow` を `superpowers:test-driven-development` へ
 畳んだとき、`~/.claude/skills/tdd-workflow` と `~/.agents/skills/tdd-workflow` が
-壊れたリンクとして残った。
+壊れたリンクとして残った。この2つは2026-10-03の時点で消えていたが、誰が消したかは確かめていない。
+
+skill以外にも同じ問題がある。setupはCodexへ `commands/` を配らなくなった
+（`test_setup_does_not_distribute_codex_custom_prompts`）。それでも2026-10-03の時点で
+`~/.codex/prompts -> <repo>/commands` が残っていた。Codexはdeprecatedなcustom promptsを読み続ける。
 
 **決めること**: 所有の記録（ownership）にリンクも載せて、記録にあるのに manifest に無い
 リンクだけを消すか。リンク先の一致だけで判定すると、利用者が自分で張ったリンクまで消しうる。
@@ -267,53 +260,6 @@ setup自体は成功しているので語が実態とずれており、本物の
 
 **完了条件**: 違反検出と実行失敗が、終了コードか出力かのどちらかで区別できる。
 
-### P1: コード参加を自前学習モードへ統合する
-
-**履歴（2026-09-17に置換）**: 当時の「Predictの代替イベント」は
-`docs/adr/0012-code-learning-mode.md` による独立した `code-learning` skillへ置き換えた。
-以下は旧判断の記録であり、現在の運用仕様ではない。
-
-`learning-output-style`のSessionStart注入は動くが、人間にコードを書かせる発火はモデル判断で、
-回数上限・OFF条件・記録がない。既存`learning-mode.md`はこれらを持つため、pluginを二重で
-動かさず、意味のある5〜10行の実装参加だけを共有ruleへ取り込む。
-
-**決めたこと**: コード参加は通常の★ Predictへ追加で重ねず、1回分を消費する代替学習イベントに
-する。実装タスクで周辺コード、関数シグネチャ、目的コメント、TODOを準備してから依頼し、
-設定・ボイラープレート・明白な実装・単純CRUDでは発火させない。`★ Insight`は追加しない。
-
-**完了条件**:
-
-- 学習モードOFF条件と1タスク最大2回がコード参加にも適用される
-- ユーザーがスキップでき、スキップ後はエージェントが実装を完了する
-- `learning-output-style`がClaudeとCodexの両方で無効になっている
-- 実装タスクで1回発火し、設定タスクでは発火しないことを会話上で確認する
-
-### P1: deprecated custom promptsをskillsへ移し切る
-
-`commands/ → ~/.codex/prompts/` は現在動くが、Codex公式ではcustom promptsがdeprecated。
-12 commands中8件は `source-command-*` skillへ変換済み。
-
-残りの扱い:
-
-- `code-review`: Codex組み込み`/review`へ寄せる
-- `quality-gate` / `verify`: `verification-loop`へ統合する
-- `tdd`: `tdd-workflow`へ統合する
-
-`code-review`はEverything Claude Code由来で、PRP成果物、検証、GitHub投稿を一体化した
-289行の外部テンプレートである。Codex側には移植せず、意味レビュー、決定的検査、PR投稿を
-それぞれ標準`/review`、`verification-loop`、公式GitHub連携へ分ける。
-
-**完了条件**: Codex向けprompts linkを外し、Claude Codeのcommandsは維持する。
-
-### P1: Codex設定監査skillを追加する
-
-追加した `codex-cli-best-practice` submoduleは有用だが、0.147.0より古い記述を含む。
-具体的には `codex_hooks`、`[profiles.*]`、marketplace `list`、`type: shell`、
-`/skill-name` などが現行仕様とずれている。
-
-**決めたこと**: Codex設定作業用skillを追加し、公式資料、ローカル`--help`、submoduleの順で
-根拠を採る。submoduleの例を無検証で転記しない。
-
 ### P2: `context7` / `serena` のCodex向け候補を個別評価する
 
 両者は有用候補だが、Claude版のimportをそのまま使わない。Codex公式・curated・公開pluginを
@@ -326,7 +272,16 @@ setup自体は成功しているので語が実態とずれており、本物の
 
 生成ドリフトとschemaのテストは通っている。read-onlyの`code-explorer`、write可能な
 `code-simplifier`、高reasoningの`planner`を実際にspawnし、modelとsandboxを確認する。
-静的TOML検査だけで完了扱いにしない。
+静的TOML検査だけで完了扱いにしない。read-onlyの確認では、ファイルを1つ作らせて失敗するところまで見る。
+
+2026-08-18に `codex exec` で1回試したが、結論は出ていない。`agent_type` を指定したspawnは、
+「Full-history forked agents inherit the parent agent type」というメッセージで拒否された。この文面はforkの使い方についてのもので、
+定義が読まれていない証拠にはならない。指定を外して再試行した直後に、ゲートウェイが高負荷で落ちた。
+`~/.codex/agents/*.toml` が適用されない不具合（openai/codex#26868）は2026-06-09にclosedになったが、手元では確かめていない。
+
+Codexのモデルには別名が無い（`codex debug models` の `alias` が全件null）。そのため、モデルの世代交代のたびに
+`bin/generate-codex-agents.py` の `CODEX_AGENT_PROFILES` などを書き換える必要がある。
+更新箇所の集約は下の「P2 TODO」で扱う。
 
 ### P2: `codex/agents/*.toml`のモデル・推論ペアを公式基準で再評価する
 
@@ -542,75 +497,6 @@ rules 3件、contexts 3件を含む34ファイルを導入した。自前`code-r
 代替機能、発火競合を資産ごとに確認し、keep / replace / removeへ分類する。
 
 **着手条件**: Codex互換性移行の実装とruntime smoke testが完了したとき。
-
-### `agents/` の Codex 移植 → 完了（2026-08-18）
-
-**この項目は closed。** `agents/*.md` から `codex/agents/*.toml` を生成し、
-`setup.sh` が `~/.codex/agents` へリンクする。
-
-写像で失われたもの（Codex 側に対応物が無い）。
-
-| Claude Code | Codex | 扱い |
-|---|---|---|
-| `tools: [Read, Write, ...]` | `sandbox_mode`（2値のみ） | 書き込み系ツールの有無で read-only / workspace-write に粗く写す |
-| `model: sonnet / opus` | 世代名のみ（別名が無い） | 現在は`gpt-6-luna` / `gpt-6-sol`に固定。**新世代が出たら表を更新する** |
-| `effort` | `model_reasoning_effort` | そのまま |
-| `color` | 無し | 捨てる |
-
-**モデル別名が無いことは実測済み**（`codex debug models` の `alias` が全件 null）。
-Claude 側は `sonnet` / `opus` が別名なので世代交代で壊れないが、
-**Codex 側だけ世代交代のたびに書き換えが要る**。更新箇所は
-`bin/generate-codex-agents.py` の `CODEX_AGENT_PROFILES` を含む複数箇所。
-更新箇所の集約は上記TODOで扱う。
-
-**未検証**: 実機で spawn して定義が実際に適用されるか。
-`~/.codex/agents/*.toml` が適用されない不具合（openai/codex#26868）は
-2026-06-09 に closed だが、手元の 0.147.0 で確認したわけではない。
-
-**2026-08-18 の試行**: `codex exec` で spawn を1回試したが**結論は出ていない**。
-`agent_type` を指定した spawn は「Full-history forked agents inherit the parent
-agent type」で拒否され、指定を外して再試行した直後に**ゲートウェイが高負荷で落ちた**。
-拒否の文面はエージェント定義の不在ではなく fork の使い方に関するものなので、
-「定義が読まれていない」証拠にはならない。**再試行が必要**。
-
-**着手条件**: Codex でサブエージェントを実際に使うとき。1回 spawn して
-`sandbox_mode` と `model` が効いているかを見る。read-only の確認は
-「ファイルを1つ作らせて失敗すること」まで見ると確実。
-
-### Codex 実行時のフック失敗 → SessionStart の空出力契約を修正（2026-08-18）
-
-`PreToolUse hook returned updatedInput without permissionDecision:allow` は、
-`rtk hook claude` の出力が Codex の契約に合わないことが原因で、`codex/hooks.json`
-から rtk を外した対応を維持する。
-
-`hook returned invalid session start JSON output` は、いったん「無出力が invalid」と
-誤診して `{}` を返す修正を入れたが、Codex 0.147.0 で再現した。公式の Hooks 契約では
-SessionStart は**終了コード0 + 無出力が成功**であり、空オブジェクト `{}` は有効な
-SessionStart 応答として扱われない。`detect-parallel-sessions.sh` の早期 return を
-無出力へ戻し、回帰テスト6件で固定した。
-
-**教訓**: Claude Code と Codex で共通化するフックは、イベントごとの出力契約を
-推測せず、対象ホストの公式仕様と実機の最小再現で確認する。
-
-**rtk について**: Codex 側では書き換えが効かないまま失敗ログだけが出る状態だった。
-Claude Code 側（`settings.json`）は従来どおり有効で、そちらの挙動は変えていない。
-
-### superpowers の実機発火 → 確認済み（2026-08-18）
-
-**この項目は closed。** `codex exec` の1ターンで、Codex が応答前に
-`using-superpowers` の SKILL.md を自分で読みに行くことを観測した。
-
-```
-codex
-`superpowers:using-superpowers` を先に確認し、このセッションのスキル適用ルールに従います。
-exec /bin/zsh -lc "sed -n '1,240p' .../superpowers/1e285826/skills/using-superpowers/SKILL.md"
-```
-
-`AGENTS.md` の `## superpowers` 節（「応答を始める前に自分で読むこと」）だけで
-発火が成立している。指示の強度を上げる必要は現時点では無い。
-
-**限界**: 観測は1ターンのみ。毎ターン・毎セッション成立するかは未確認。
-散文指示に依存している以上、**守られなかったことを検知する手段が無い**。
 
 ### superpowers の自動注入をプラグイン同梱フックで賄えるか → 決めること
 
