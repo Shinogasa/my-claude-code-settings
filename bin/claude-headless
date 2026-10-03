@@ -4,8 +4,11 @@
 # bin/ccp で起動したセッションの中から素の `claude -p` を起動すると、子は ~/.claude/settings.json を
 # 読み直し、会社の LiteLLM の接続情報で動いてしまう。親の --settings はコマンドライン引数なので子に届かない。
 # 一方、設定ファイルの env に書いた値は Bash を通して子まで届き、settings.json に無い変数は上書きされない
-# （2026-10-02に確認）。そこで settings.personal.json の env に目印 CLAUDE_PROFILE=personal を置き、
-# それを見て --settings を付け分ける。目印が無いときは会社のプロファイルとして、そのまま起動する。
+# （2026-10-02に確認）。そこで settings.personal.json の env に目印 CLAUDE_PROFILE=personal を、
+# settings.json の env に CLAUDE_PROFILE=default を置き、それを見て --settings を付け分ける。
+# 既定のプロファイルにも目印を置くのは、次の2つを防ぐため。
+#   - 会社のセッションに personal が紛れ込んでも、settings.json の env が default で上書きする
+#   - env -i などで目印が消えたときに、個人のつもりで会社の接続へ黙って落ちず、止まる
 
 set -euo pipefail
 
@@ -20,11 +23,16 @@ case "${CLAUDE_PROFILE:-}" in
     fi
     exec claude --settings "$PERSONAL_SETTINGS" "$@"
     ;;
-  "")
+  default)
     exec claude "$@"
     ;;
+  "")
+    echo "エラー: CLAUDE_PROFILE が未設定です。どのプロファイルで起動するか決められません。" >&2
+    echo "       bash setup.sh を実行したか、環境変数を消す経路（env -i など）を通っていないか確かめてください。" >&2
+    exit 1
+    ;;
   *)
-    echo "エラー: CLAUDE_PROFILE=${CLAUDE_PROFILE} は未知のプロファイルです（personal か未設定のみ）。" >&2
+    echo "エラー: CLAUDE_PROFILE=${CLAUDE_PROFILE} は未知のプロファイルです（personal か default のみ）。" >&2
     exit 1
     ;;
 esac

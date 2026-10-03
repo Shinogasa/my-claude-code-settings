@@ -320,7 +320,9 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 **Bashから起動する `claude -p` は `claude-headless` を使う**: `ccp` で起動したセッションの中から素の `claude -p` を起動すると、
 子は `~/.claude/settings.json` を読み直し、会社の接続情報で動く。`--settings` はコマンドライン引数なので子に届かない。
 `setup.sh` は `settings.personal.json` の `env` に目印 `CLAUDE_PROFILE=personal` を書き、この値はBashを通して子まで届く。
-`bin/claude-headless` は目印があれば `--settings ~/.claude/settings.personal.json` を付けて、無ければそのまま `claude` を起動する。
+`settings.json` の `env` にも `CLAUDE_PROFILE=default` を置く。会社のセッションに `personal` が紛れ込んでも、この値で上書きされる。
+`bin/claude-headless` は、`personal` なら `--settings ~/.claude/settings.personal.json` を付け、`default` ならそのまま `claude` を起動する。
+目印が無いとき（`env -i` などで消えたとき）は、どちらのプロファイルか決められないので止まる。
 サブエージェントやフックから `claude -p` を起動する経路は、まだこのスクリプトに寄せていない。
 
 ### 機密でない機能トグルの置き場

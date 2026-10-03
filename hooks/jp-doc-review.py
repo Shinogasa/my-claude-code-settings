@@ -48,6 +48,7 @@ PR_CREATE_WORDS = ["gh", "pr", "create"]
 SHELLS = {"bash", "sh", "zsh"}
 CLAUDE_TRAILER = re.compile(r"^Co-Authored-By:\s*Claude\b", re.IGNORECASE | re.MULTILINE)
 GIT_TIMEOUT_SECONDS = 10
+CONTROL_CHAR = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def state_dir() -> Path:
@@ -259,7 +260,11 @@ class GitError(Exception):
 
 
 def _git(root: Path, *args: str) -> str:
-    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS)
+    try:
+        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+                                timeout=GIT_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise GitError(f"git {' '.join(args)}: {type(error).__name__}") from error
     if result.returncode != 0:
         raise GitError(f"git {' '.join(args)}: {result.stderr.strip() or result.returncode}")
     return result.stdout
@@ -347,13 +352,20 @@ def _added_text(root: Path, merge_base: str, relative: str) -> str:
     return "\n".join(line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
 
 
-def pr_candidates(root: Path, base_ref: str) -> Tuple[List[str], List[str]]:
-    """ブランチで変わった日本語の文書を、Claudeが書いたものとそれ以外に分けて返す（絶対パス）。"""
+def pr_candidates(root: Path, base_ref: str) -> Tuple[List[str], List[str], int]:
+    """ブランチで変わった日本語の文書を、Claudeが書いたものとそれ以外に分けて返す（絶対パス）。
+
+    3つ目は、制御文字を含むために外したパスの数。パスは止める理由の文面にそのまま並ぶので、
+    ファイル名の改行で偽の指示を書き込めないよう、候補にしない。
+    """
     merge_base = _git(root, "merge-base", base_ref, "HEAD").strip()
     changed = [name for name in _git(root, "diff", "--name-only", "--diff-filter=AMR", "-z", merge_base, "HEAD").split("\0") if name]
     claude = _claude_authored(root, merge_base)
-    authored, others = [], []
+    authored, others, unsafe = [], [], 0
     for relative in sorted(changed):
+        if CONTROL_CHAR.search(relative):
+            unsafe += 1
+            continue
         path = Path(os.path.realpath(root / relative))
         if not path.is_file() or not is_target(path):
             continue
@@ -362,7 +374,7 @@ def pr_candidates(root: Path, base_ref: str) -> Tuple[List[str], List[str]]:
         if not KANA.search(path.read_text(encoding="utf-8", errors="replace")):
             continue
         (authored if relative in claude else others).append(str(path))
-    return authored, others
+    return authored, others, unsafe
 
 
 def _pr_reason(base_ref: str, authored: List[str], others: List[str]) -> str:
@@ -439,7 +451,7 @@ def _handle_pr_create(key: str, payload: dict, root: Path, command: str) -> None
     base = _pr_base(command)
     try:
         base_ref = _resolve_base(root, base)
-        authored, others = pr_candidates(root, base_ref)
+        authored, others, unsafe = pr_candidates(root, base_ref)
     except GitError as error:
         # 検査できなかったことを「問題なし」に畳まない。1回だけ止めて、理由を伝える
         if is_subagent:
@@ -453,8 +465,10 @@ def _handle_pr_create(key: str, payload: dict, root: Path, command: str) -> None
                                         "--base の指定を確かめて、もう一度 gh pr create を実行して。2回目は止めない。",
         }})
         return
+    messages = [f"制御文字を含むパスの{unsafe}件は、日本語の文書のレビュー対象から外した。名前を確かめてほしい"] if unsafe else []
     candidates = authored + others
     if not candidates:
+        emit(with_messages({}, messages))
         return
     if not yomiyasu_skill().is_file() or not reviewer_definition().is_file():
         if _mark_once(key, "missing-reviewer"):
@@ -468,11 +482,11 @@ def _handle_pr_create(key: str, payload: dict, root: Path, command: str) -> None
                                f"次の日本語の文書は、レビューしないままPRになる: {names}"})
         return
     write_json(_pr_state_path(key), {**state, state_id: {"paths": candidates, "transcript_offset": _transcript_size(payload)}})
-    emit({"hookSpecificOutput": {
+    emit(with_messages({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
         "permissionDecisionReason": _pr_reason(base or base_ref, authored, others),
-    }})
+    }}, messages))
 
 
 def _confluence_path(key: str) -> Path:
