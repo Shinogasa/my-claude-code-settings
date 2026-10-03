@@ -170,6 +170,16 @@ class SetupCliTests(unittest.TestCase):
         self.assertTrue((claude_skills / "user-skill").is_symlink())
         self.assertTrue((claude_skills / "find-skills").is_symlink())
 
+    def test_personal_settings_carry_profile_marker_only_there(self):
+        # 個人プロファイルで起動したセッションから claude -p を起動するとき、目印で --settings を付け分ける
+        (self.home / ".claude").mkdir()
+        result = run_setup(self.repository, self.home, "--claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        personal = json.loads((self.home / ".claude" / "settings.personal.json").read_text(encoding="utf-8"))
+        settings = json.loads((self.home / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(personal["env"]["CLAUDE_PROFILE"], "personal")
+        self.assertNotIn("CLAUDE_PROFILE", settings.get("env", {}))
+
     def test_code_learning_skill_is_linked_for_both_hosts(self):
         (self.home / ".claude").mkdir()
         (self.home / ".codex").mkdir()
