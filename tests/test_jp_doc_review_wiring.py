@@ -93,8 +93,10 @@ def commands(event, matcher=None):
 
 
 class WiringTests(unittest.TestCase):
-    def test_post_tool_use_records_writes_and_edits(self):
-        self.assertIn("python3 ~/.claude/hooks/jp-doc-review.py post-tool-use", commands("PostToolUse", "Write|Edit"))
+    def test_writes_are_no_longer_recorded(self):
+        # レビューの候補はPR作成時にブランチの差分から決めるので、書き込みの記録は要らない
+        all_commands = [command for event in SETTINGS["hooks"] for command in commands(event)]
+        self.assertNotIn("python3 ~/.claude/hooks/jp-doc-review.py post-tool-use", all_commands)
 
     def test_confluence_matcher_catches_only_posting_tools(self):
         self.assertEqual(commands("PreToolUse", CONFLUENCE_MATCHER),
@@ -106,7 +108,7 @@ class WiringTests(unittest.TestCase):
                 self.assertTrue(pattern.match(f"mcp__atlassian-http__{name}"))
         self.assertFalse(pattern.match("mcp__atlassian-http__getConfluencePage"))
 
-    def test_bash_group_asks_for_review_before_commit_and_keeps_existing_hooks(self):
+    def test_bash_group_asks_for_review_before_pr_and_keeps_existing_hooks(self):
         self.assertEqual(commands("PreToolUse", "Bash"), [
             "~/.claude/hooks/guard-dangerous-bash.sh",
             "rtk hook claude",
