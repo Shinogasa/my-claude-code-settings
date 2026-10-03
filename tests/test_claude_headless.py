@@ -45,10 +45,17 @@ class ClaudeHeadlessTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.args(), ["--settings", str(self.personal), "-p", "hello"])
 
-    def test_without_marker_runs_with_default_settings(self):
-        result = self.run_script(None, "-p", "hello")
+    def test_default_marker_runs_with_default_settings(self):
+        result = self.run_script("default", "-p", "hello")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.args(), ["-p", "hello"])
+
+    def test_missing_marker_stops(self):
+        # env -i などで目印が消えたときに、個人のつもりで会社の接続へ黙って落ちないようにする
+        result = self.run_script(None, "-p", "hello")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("CLAUDE_PROFILE", result.stderr)
+        self.assertFalse(self.log.exists())
 
     def test_personal_profile_without_settings_file_stops(self):
         # 個人のつもりで会社の接続情報に繋がる無言の事故を避ける
