@@ -641,7 +641,7 @@ def is_force_push(args: list) -> bool:
     return any(spec.startswith("+") for spec in push_positional_args(args)[1:])
 
 
-def push_target_branches(args: list, cwd: str) -> list:
+def push_target_branches(args: list, cwd: str, has_command_line_config: bool = False) -> list:
     """push が書き換えるリモート側のブランチ名を返す。特定できなければ None。
 
     None は「安全」ではなく「検査できなかった」を表す。呼び出し側でブロックへ倒す。
@@ -655,7 +655,8 @@ def push_target_branches(args: list, cwd: str) -> list:
     if not refspecs:
         # refspec 省略時の宛先は push.default 依存だが、既定 (simple/current) では
         # 同名のブランチ。detached HEAD や git 管理外では特定できない。
-        if cwd is UNRESOLVED:
+        # `git -c push.default=...` のような設定は、フックが照会する git config に現れない
+        if cwd is UNRESOLVED or has_command_line_config:
             return None
         if not implicit_push_targets_current_branch(cwd, positional[:1]):
             return None
@@ -670,6 +671,9 @@ def push_target_branches(args: list, cwd: str) -> list:
         dst = spec.lstrip("+")
         if ":" in dst:
             dst = dst.split(":", 1)[1]
+            # `:` / `+:` は matching push で、両側にある全ブランチへ向かう。`src:` も宛先を確定できない
+            if not dst:
+                return None
         if dst.startswith("refs/heads/"):
             dst = dst[len("refs/heads/"):]
         elif dst == "@" or dst.startswith(("refs/", "heads/")):
@@ -686,20 +690,43 @@ def push_target_branches(args: list, cwd: str) -> list:
     return targets
 
 
+def git_config_lookup(cwd: str, *args: str):
+    """git config の照会結果を返す。未設定は ""、照会できなかったときは None。
+
+    run_git は失敗を "" に畳むため、未設定（exit 1）と照会の失敗を区別できない。
+    失敗を未設定として扱うと「検査できなかった」を「問題なし」に畳むことになる。
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, "config", *args],
+            capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode == 0:
+        return result.stdout.strip()
+    if result.returncode == 1:
+        return ""
+    return None
+
+
 def implicit_push_targets_current_branch(cwd: str, remote: list) -> bool:
     """refspec を省略した push が、現在のブランチと同名の宛先だけへ向かうと言えるか。
 
-    push.default が upstream / matching / tracking のときや、remote.<name>.push があるときは、
-    同名でないブランチ（保護ブランチを含む）へ push されうる。
+    push.default が upstream / matching / tracking のとき、remote.<name>.push があるとき、
+    remote.<name>.mirror が有効なときは、同名でないブランチ（保護ブランチを含む）へ push されうる。
+    設定を照会できなかったときも、言えないものとして扱う。
     """
-    if run_git(cwd, "config", "--get", "push.default") not in ("", "simple", "current"):
+    push_default = git_config_lookup(cwd, "--get", "push.default")
+    if push_default is None or push_default not in ("", "simple", "current"):
         return False
-    if remote:
-        pattern = rf"^remote\.{re.escape(remote[0])}\.push$"
-    else:
-        # remote を省略すると、どの remote へ向かうかは branch の設定次第なので、全 remote を見る
-        pattern = r"^remote\..*\.push$"
-    return not run_git(cwd, "config", "--get-regexp", pattern)
+    # remote を省略すると、どの remote へ向かうかは branch の設定次第なので、全 remote を見る
+    name = re.escape(remote[0]) if remote else ".*"
+    for key in ("push", "mirror"):
+        found = git_config_lookup(cwd, "--get-regexp", rf"^remote\.{name}\.{key}$")
+        if found is None or found:
+            return False
+    return True
 
 
 def is_ref_deletion(args: list) -> bool:
@@ -708,6 +735,19 @@ def is_ref_deletion(args: list) -> bool:
         return True
     # 位置引数の先頭は remote。refspec はその後ろ。
     return any(spec.startswith(":") for spec in push_positional_args(args)[1:])
+
+
+def has_git_config_option(tokens: list) -> bool:
+    """サブコマンドより前に `-c` / `--config-env` があるか。値の中身は問わない。"""
+    i = 1
+    while i < len(tokens):
+        token = tokens[i]
+        if not token.startswith("-"):
+            return False
+        if token.startswith(("-c", "--config-env")):
+            return True
+        i += 2 if token in GIT_GLOBAL_OPTS_WITH_VALUE else 1
+    return False
 
 
 def destructive_push(tokens: list, candidates: set) -> tuple:
@@ -741,7 +781,7 @@ def destructive_push(tokens: list, candidates: set) -> tuple:
     # commit と同じく、シェルがいる可能性のあるディレクトリすべてで宛先を求める
     protected = set()
     for directory in git_target_dirs(tokens, candidates):
-        targets = push_target_branches(args, directory)
+        targets = push_target_branches(args, directory, has_git_config_option(tokens))
         if targets is None:
             return kind, "対象のブランチを特定できません"
         protected |= {t for t in targets if t in PROTECTED_BRANCHES}

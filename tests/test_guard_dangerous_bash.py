@@ -1048,6 +1048,7 @@ class TestDestructivePushTarget(TrackingFixture):
     def test_omitted_refspec_with_command_line_config_is_blocked(self):
         # `git -c` で渡した設定は、フックが読む git config には現れない
         self.assert_result("git -c push.default=upstream push --force", self.feature, BLOCK)
+        self.assert_result(f"git -C {self.feature} -c push.default=upstream push --force", self.feature, BLOCK)
 
     def test_omitted_refspec_with_mirror_remote_is_blocked(self):
         self.git_config(self.feature, "remote.origin.mirror", "true")
