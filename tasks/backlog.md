@@ -20,15 +20,6 @@
 
 **着手条件**: Codexのサンドボックス内で全テストを回す必要が出たとき。恒久的な権限設定の変更は別途判断する。
 
-### P3: `FORCE_COLOR` が設定されたシェルでコード学習の契約テストが落ちる
-
-`tests/test_code_learning_contract.py` の `test_host_probe_fixture_has_one_deterministic_external_failure` は、
-子プロセスで動かしたunittestの出力に `FAILED (failures=1)` が含まれるかを照合している。
-`FORCE_COLOR=3` があるとPython 3.14のunittestが出力に色のエスケープコードを入れ、文字列が分断されて落ちる。
-2026-10-01に確認し、`env -u FORCE_COLOR` で実行すると通った。
-
-**決めること**: テスト側で子プロセスの環境から色の指定を外すか、照合の前にエスケープコードを取り除くか。
-
 ---
 
 ## Claude Codeのプロファイル切り替え
@@ -152,33 +143,22 @@ yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/
 - ラッパーを置く場合、`cxp` の「素の `codex` は会社設定のまま」という向きとどう両立させるか
   （PATH 上の優先順位と、シェル統合が読み込まれないときの倒れ方）
 
-### P0: `security-guidance` を Codex 側だけ無効化する
+### P1: Codexで無効にしたClaudeのpluginが、`enabled = true` に戻る
 
-`security-guidance@claude-plugins-official` 2.0.7 は SessionStart で最初に
-`{"async": true, "asyncTimeout": 180000}` を返し、Codex 0.147.0 では
-`invalid session start JSON output` になる。`asyncRewake`、rewake message、Claude固有の
-Stop outputにも依存するため、フィールド1個の置換では直らない。
+2026-08-26に、`~/.codex/config.toml` で `security-guidance` などを `enabled = false` にした。
+ところが2026-10-03に確かめると、policyが `deny` / `review` の8件
+（`@claude-plugins-official` の asana、claude-md-management、code-review、context7、
+learning-output-style、security-guidance、serena、superpowers）が、すべて `enabled = true` に戻っていた。
+`bin/audit-codex-plugins.py` はexit 1で8件を報告した。同日に8件を `false` へ戻し、監査が通ることを確認した。
 
-**決めたこと**: Claude Code側は維持し、Codex側のpluginだけ無効化する。cacheは直接patchしない。
-明示的レビューは当面 `security-review` skillと`security-reviewer` agentで代替する。
+`security-guidance` は、CodexのSessionStartで `invalid session start JSON output` を起こす。
+非同期hookの契約がClaude固有だからだ。`enabled = true` に戻るたびに、この失敗がまた起きる。
 
-**完了条件**:
+誰が書き換えたかは未確認。候補は、Codexのplugin導入・更新、GUIアプリ、Claudeのpluginを取り込む機能。
+`model_provider` が外部ツールの書き換えで消えた件（上の「base provider 検査」）と同じ経路かもしれない。
 
-- [x] Codex plugin policyで`deny`になっている
-- [ ] Codexの新規SessionStartで同エラーが出ない
-      （2026-08-26に`config.toml`で`enabled = false`へ変更済み。次回のCodex起動時に確認する）
-- [x] Claude Code側のenabled状態が変わっていない
-
-### P0: 直下 `AGENTS.md` の誤った複製を解消する
-
-現在の `AGENTS.md` は `CLAUDE.md` の機械置換版で、存在しない `~/.Codex` と
-`/Codex-best-practice`、既に解消済みの「Codex hooks未配線」を含む。Codexでは
-グローバル `~/.codex/AGENTS.md`（正本は`CLAUDE.md`）の後にこのファイルも読まれるため、
-単なるREADMEの誤記ではなく、矛盾した実行指示になる。
-
-**決めたこと**: 共通指示を複製せず、このリポジトリ固有のCodex差分だけに縮める。
-
-**完了条件**: 2 KiB未満、`~/.Codex`を含まない、Codex設定監査skillと互換性監査を参照する。
+**決めること**: 監査で気づくだけにするか、setupで `false` に戻すか、起動前に止めるか。
+その前に、`config.toml` の変更時刻とCodexの操作記録を照らし合わせて、誰が書き換えたかを特定する。
 
 ### P1: `gpt-5.6-sol` で全ターンが失敗する回避設定を `setup.sh` で恒久化する
 
@@ -239,13 +219,20 @@ codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**�
 **完了条件**: 配布先の分類（missing / linked / managed-update / conflict）とplugin導入予定を、
 副作用なしで列挙できる。
 
-### P1: `cxp` で MCP の有効・無効を allowlist と照合する
+### P2: `cxp` のallowlist照合が見ていない経路
 
-2026-10-01 のセキュリティレビュー（ADR 0023）の指摘。`cxp` は個人プロファイルの
-`enabled` が boolean であることしか検査しないため、会社の MCP サーバを手で `enabled = true` に
-すると起動できてしまう。setup の所有判定で検知できるのは次回の setup 実行時だけ。
+2026-10-03に、allowlist外のサーバを `enabled = true` にしたプロファイルでは、`cxp` が起動前に止まるようにした。
+そのときのセキュリティレビューの指摘のうち、次の2点が残っている。どちらもMediumで、Confidence: insufficientだった。
 
-**完了条件**: allowlist 外のサーバが `enabled = true` のプロファイルで、`cxp` が起動前に止まる回帰テストがある。
+- `cxp` が照合するのは `config.toml` と個人プロファイルの `mcp_servers` だけ。`cxp -c mcp_servers.X.enabled=true` や
+  `cxp -p other` のような引数、プロジェクトの `.codex/config.toml`、管理者の設定、pluginに同梱されたMCPサーバは見ていない。
+  Codexがどの層からMCPサーバを足せるかは、公式資料で確かめていない
+- `cxp` はallowlistを、symlinkの先にあるリポジトリの作業ツリーから読む。別のセッションがブランチを切り替えると、
+  切り替え先のブランチのallowlistで判定する。allowlistを書き換えられる人はプロファイルも書き換えられるので、
+  権限の境界の問題ではない。ただし、事故は防げない
+
+**決めること**: `cxp` で `-c` / `--config` / `-p` / `--profile` を拒否するか。プロファイルの生成時にallowlistのdigestを
+書き込み、`cxp` で照合するか。先にCodexの公式資料で、MCPサーバを足せる設定の層を確かめる。
 
 ### P2: Codex個人プロファイルで引き継いだ値の変化を表示する
 
@@ -256,17 +243,16 @@ codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**�
 
 **完了条件**: 所有外のキーの値が前回の生成から変わったとき、setup の出力で分かる。
 
-### P3: 個人プロファイル生成の一時ファイルを `mkstemp` にする
-
-同じレビューの指摘（Low）。`write_profile` は固定名の `<dest>.tmp` を使う。setup からは
-`mktemp` の宛先で呼ぶため実害は無いが、手動実行時の固定名は避けたい。
-
 ### P2: manifest から外した skill のリンクが残る
 
 `setup.sh` は manifest にある skill のリンクを足すだけで、manifest から外した skill の
 リンクを片付けない。2026-10-01 に `tdd-workflow` を `superpowers:test-driven-development` へ
 畳んだとき、`~/.claude/skills/tdd-workflow` と `~/.agents/skills/tdd-workflow` が
-壊れたリンクとして残った。
+壊れたリンクとして残った。この2つは2026-10-03の時点で消えていたが、誰が消したかは確かめていない。
+
+skill以外にも同じ問題がある。setupはCodexへ `commands/` を配らなくなった
+（`test_setup_does_not_distribute_codex_custom_prompts`）。それでも2026-10-03の時点で
+`~/.codex/prompts -> <repo>/commands` が残っていた。Codexはdeprecatedなcustom promptsを読み続ける。
 
 **決めること**: 所有の記録（ownership）にリンクも載せて、記録にあるのに manifest に無い
 リンクだけを消すか。リンク先の一致だけで判定すると、利用者が自分で張ったリンクまで消しうる。
@@ -281,64 +267,6 @@ setup自体は成功しているので語が実態とずれており、本物の
 
 **完了条件**: 違反検出と実行失敗が、終了コードか出力かのどちらかで区別できる。
 
-### P1: コード参加を自前学習モードへ統合する
-
-**履歴（2026-09-17に置換）**: 当時の「Predictの代替イベント」は
-`docs/adr/0012-code-learning-mode.md` による独立した `code-learning` skillへ置き換えた。
-以下は旧判断の記録であり、現在の運用仕様ではない。
-
-`learning-output-style`のSessionStart注入は動くが、人間にコードを書かせる発火はモデル判断で、
-回数上限・OFF条件・記録がない。既存`learning-mode.md`はこれらを持つため、pluginを二重で
-動かさず、意味のある5〜10行の実装参加だけを共有ruleへ取り込む。
-
-**決めたこと**: コード参加は通常の★ Predictへ追加で重ねず、1回分を消費する代替学習イベントに
-する。実装タスクで周辺コード、関数シグネチャ、目的コメント、TODOを準備してから依頼し、
-設定・ボイラープレート・明白な実装・単純CRUDでは発火させない。`★ Insight`は追加しない。
-
-**完了条件**:
-
-- 学習モードOFF条件と1タスク最大2回がコード参加にも適用される
-- ユーザーがスキップでき、スキップ後はエージェントが実装を完了する
-- `learning-output-style`がClaudeとCodexの両方で無効になっている
-- 実装タスクで1回発火し、設定タスクでは発火しないことを会話上で確認する
-
-### P1: deprecated custom promptsをskillsへ移し切る
-
-`commands/ → ~/.codex/prompts/` は現在動くが、Codex公式ではcustom promptsがdeprecated。
-12 commands中8件は `source-command-*` skillへ変換済み。
-
-残りの扱い:
-
-- `code-review`: Codex組み込み`/review`へ寄せる
-- `quality-gate` / `verify`: `verification-loop`へ統合する
-- `tdd`: `tdd-workflow`へ統合する
-
-`code-review`はEverything Claude Code由来で、PRP成果物、検証、GitHub投稿を一体化した
-289行の外部テンプレートである。Codex側には移植せず、意味レビュー、決定的検査、PR投稿を
-それぞれ標準`/review`、`verification-loop`、公式GitHub連携へ分ける。
-
-**完了条件**: Codex向けprompts linkを外し、Claude Codeのcommandsは維持する。
-
-### P1: Codex-onlyマシンでsetupとSessionStartを完結させる
-
-`setup.sh` は `~/.claude` がないと開始時にexitする。またCodexの
-`detect-parallel-sessions.sh` は既定helperを `~/.claude/bin` から読むが、Codex側に
-`bin/`をリンクしていない。現在の両ホスト導入済みマシンでは隠れる故障である。
-
-**決めたこと**: Claude/Codexの検出と設定処理を独立させ、Codex側にも`bin/`を配る。
-
-**完了条件**: 一時HOME相当のfixtureで `~/.codex` だけ存在するsetup testが通り、
-SessionStart helperがClaude pathなしで起動する。
-
-### P1: Codex設定監査skillを追加する
-
-追加した `codex-cli-best-practice` submoduleは有用だが、0.147.0より古い記述を含む。
-具体的には `codex_hooks`、`[profiles.*]`、marketplace `list`、`type: shell`、
-`/skill-name` などが現行仕様とずれている。
-
-**決めたこと**: Codex設定作業用skillを追加し、公式資料、ローカル`--help`、submoduleの順で
-根拠を採る。submoduleの例を無検証で転記しない。
-
 ### P2: `context7` / `serena` のCodex向け候補を個別評価する
 
 両者は有用候補だが、Claude版のimportをそのまま使わない。Codex公式・curated・公開pluginを
@@ -351,7 +279,16 @@ SessionStart helperがClaude pathなしで起動する。
 
 生成ドリフトとschemaのテストは通っている。read-onlyの`code-explorer`、write可能な
 `code-simplifier`、高reasoningの`planner`を実際にspawnし、modelとsandboxを確認する。
-静的TOML検査だけで完了扱いにしない。
+静的TOML検査だけで完了扱いにしない。read-onlyの確認では、ファイルを1つ作らせて失敗するところまで見る。
+
+2026-08-18に `codex exec` で1回試したが、結論は出ていない。`agent_type` を指定したspawnは、
+「Full-history forked agents inherit the parent agent type」というメッセージで拒否された。この文面はforkの使い方についてのもので、
+定義が読まれていない証拠にはならない。指定を外して再試行した直後に、ゲートウェイが高負荷で落ちた。
+`~/.codex/agents/*.toml` が適用されない不具合（openai/codex#26868）は2026-06-09にclosedになったが、手元では確かめていない。
+
+Codexのモデルには別名が無い（`codex debug models` の `alias` が全件null）。そのため、モデルの世代交代のたびに
+`bin/generate-codex-agents.py` の `CODEX_AGENT_PROFILES` などを書き換える必要がある。
+更新箇所の集約は下の「P2 TODO」で扱う。
 
 ### P2: `codex/agents/*.toml`のモデル・推論ペアを公式基準で再評価する
 
@@ -568,83 +505,11 @@ rules 3件、contexts 3件を含む34ファイルを導入した。自前`code-r
 
 **着手条件**: Codex互換性移行の実装とruntime smoke testが完了したとき。
 
-### `agents/` の Codex 移植 → 完了（2026-08-18）
-
-**この項目は closed。** `agents/*.md` から `codex/agents/*.toml` を生成し、
-`setup.sh` が `~/.codex/agents` へリンクする。
-
-写像で失われたもの（Codex 側に対応物が無い）。
-
-| Claude Code | Codex | 扱い |
-|---|---|---|
-| `tools: [Read, Write, ...]` | `sandbox_mode`（2値のみ） | 書き込み系ツールの有無で read-only / workspace-write に粗く写す |
-| `model: sonnet / opus` | 世代名のみ（別名が無い） | 現在は`gpt-6-luna` / `gpt-6-sol`に固定。**新世代が出たら表を更新する** |
-| `effort` | `model_reasoning_effort` | そのまま |
-| `color` | 無し | 捨てる |
-
-**モデル別名が無いことは実測済み**（`codex debug models` の `alias` が全件 null）。
-Claude 側は `sonnet` / `opus` が別名なので世代交代で壊れないが、
-**Codex 側だけ世代交代のたびに書き換えが要る**。更新箇所は
-`bin/generate-codex-agents.py` の `CODEX_AGENT_PROFILES` を含む複数箇所。
-更新箇所の集約は上記TODOで扱う。
-
-**未検証**: 実機で spawn して定義が実際に適用されるか。
-`~/.codex/agents/*.toml` が適用されない不具合（openai/codex#26868）は
-2026-06-09 に closed だが、手元の 0.147.0 で確認したわけではない。
-
-**2026-08-18 の試行**: `codex exec` で spawn を1回試したが**結論は出ていない**。
-`agent_type` を指定した spawn は「Full-history forked agents inherit the parent
-agent type」で拒否され、指定を外して再試行した直後に**ゲートウェイが高負荷で落ちた**。
-拒否の文面はエージェント定義の不在ではなく fork の使い方に関するものなので、
-「定義が読まれていない」証拠にはならない。**再試行が必要**。
-
-**着手条件**: Codex でサブエージェントを実際に使うとき。1回 spawn して
-`sandbox_mode` と `model` が効いているかを見る。read-only の確認は
-「ファイルを1つ作らせて失敗すること」まで見ると確実。
-
-### Codex 実行時のフック失敗 → SessionStart の空出力契約を修正（2026-08-18）
-
-`PreToolUse hook returned updatedInput without permissionDecision:allow` は、
-`rtk hook claude` の出力が Codex の契約に合わないことが原因で、`codex/hooks.json`
-から rtk を外した対応を維持する。
-
-`hook returned invalid session start JSON output` は、いったん「無出力が invalid」と
-誤診して `{}` を返す修正を入れたが、Codex 0.147.0 で再現した。公式の Hooks 契約では
-SessionStart は**終了コード0 + 無出力が成功**であり、空オブジェクト `{}` は有効な
-SessionStart 応答として扱われない。`detect-parallel-sessions.sh` の早期 return を
-無出力へ戻し、回帰テスト6件で固定した。
-
-**教訓**: Claude Code と Codex で共通化するフックは、イベントごとの出力契約を
-推測せず、対象ホストの公式仕様と実機の最小再現で確認する。
-
-**rtk について**: Codex 側では書き換えが効かないまま失敗ログだけが出る状態だった。
-Claude Code 側（`settings.json`）は従来どおり有効で、そちらの挙動は変えていない。
-
-### `setup.sh` が Codex 専用マシンで動かない
-
-`~/.claude` がないと `exit 1` する。現状そのようなマシンはないため見送り。
-
-**着手条件**: Codex CLI だけを入れたマシン（`~/.claude` が無い環境）に
-この設定を展開する必要が出たとき。
-
-### superpowers の実機発火 → 確認済み（2026-08-18）
-
-**この項目は closed。** `codex exec` の1ターンで、Codex が応答前に
-`using-superpowers` の SKILL.md を自分で読みに行くことを観測した。
-
-```
-codex
-`superpowers:using-superpowers` を先に確認し、このセッションのスキル適用ルールに従います。
-exec /bin/zsh -lc "sed -n '1,240p' .../superpowers/1e285826/skills/using-superpowers/SKILL.md"
-```
-
-`AGENTS.md` の `## superpowers` 節（「応答を始める前に自分で読むこと」）だけで
-発火が成立している。指示の強度を上げる必要は現時点では無い。
-
-**限界**: 観測は1ターンのみ。毎ターン・毎セッション成立するかは未確認。
-散文指示に依存している以上、**守られなかったことを検知する手段が無い**。
-
 ### superpowers の自動注入をプラグイン同梱フックで賄えるか → 決めること
+
+今は、`AGENTS.md` に「応答の前に `using-superpowers` を読む」と散文で書いて発火させている。
+2026-08-18に、`codex exec` の1ターンでCodexがSKILL.mdを自分で読みに行くことを確かめた。
+観測したのはその1ターンだけで、毎セッション同じように読むかは確かめていない。散文指示が守られなかったことに気づく手段も無い。
 
 Codex は**プラグイン同梱の `hooks/hooks.json` を読む**（実測: `[hooks.state]` に
 `security-guidance@claude-plugins-official:hooks/hooks.json` と
@@ -672,76 +537,12 @@ Codex を主ホストとして使う頻度が上がったとき。
 
 ## 学習モード
 
-### 段階2（間隔反復出題）→ 却下済み（2026-08-14）
-
-**この項目は closed。** SessionStart hook で `miss` エントリを再出題する機構は
-**却下**した（見送りではない）。判断と根拠は
-`docs/adr/0001-learning-mode-prediction-format.md` の A5。
-
-理由は「前提が未整備」ではなく**単位が合わない**こと。代替として、
-★ Delta を書く時点で同型の過去エントリの判断原則だけを接続する形を採用した。
-
-**再検討するなら新しい ADR を書くこと。** ここには積み直さない。
-
-### レビュー訓練モードの導入 → 決めること（検証待ち）
-
-**履歴（2026-09-17に統合）**: 以下は2026-08-14時点の保留案。
-レビュー訓練は `docs/adr/0012-code-learning-mode.md` の `Review` 形式として
-独立した `code-learning` skillへ統合した。旧着手条件・日付は現在の導入ゲートではない。
-
-AI が書いたコードを判断できるようになるための訓練形式。
-2026-08-14 のセッションで設計まで固めたが、**導入は保留**した。
-
-**設計（合意済み）**
-
-```
-1. 実装する。★ Review を出さない
-2. ユーザーがレビューを書く → こちらはメッセージを終える
-3. ★ Review を開示
-4. ★ Delta（レビュー版）で3分類: 見つけた / 見逃した / 的外れ
-```
-
-- **教材はレビュー前の初稿**を使う。レビュー済みのコードには見つけるべき欠陥が
-  残っておらず、「何も見つからない」を練習することになるため
-- **わざとバグを仕込まない**（出荷事故と信頼の破壊が同時に起きる）
-- 実務リポジトリで動く形にする（スキルとして切り出す）
-- 波及: `output-styles/review-and-design.md` の ★ Review を、ユーザーの指摘の**後**へ回す
-
-**保留理由**: 今日改訂した予測フェーズ（D1/D4/D5）が**まだ一度も実装タスクで
-発火していない**。その上に第二の未検証機構を積むと、効かなかったときに
-どちらの層が原因か切り分けられなくなる。
-
-**決めること**: 検証タスクの結果を見て、レビュー訓練モードを導入するか。
-
-**着手条件**: バックエンド実装を含むタスクで D1/D4 が1回以上発火し、
-下記の判定基準を満たしたとき。
-
-**判定基準（タスクの前に固定した。後から変えない）**
-
-「判断基準を自分の言葉で書けているか」を見る。ただし**この判定は
-機構を設計した側（AI）が下すため、効いていると判定する動機を構造的に持つ**。
-自己申告のヘルスチェックと同じ構造なので、裁量の入らない代理指標を併用する。
-
-- **主指標**: ★ Delta で埋まった軸の数（`axis` フィールドから機械的に数えられる）。
-  改訂前は選択肢に判断基準が書かれていたため軸が構造的に埋まっていた。
-  改訂後に**ユーザーの自由記述だけで**軸が埋まるかを見る
-- **補助**: 予測本文の長さ（改訂前は 52〜168字＝選択肢ラベルの転記だった）
-
-**条件が来なかった場合のフォールバック**: 2026-09-14 までに実装タスクが
-発生しなければ、**検証を待たずに判断する**。その時点で「実務タスクが無い」こと自体が
-確定した事実になるため、待ち続ける意味が無い。この日付を過ぎたら、
-検証なしで導入するか破棄するかをここで決め直す。
-
-**関連**: 検証タスクでは `output-styles` の ★ Review が現状のまま
-（ユーザーがレビューする前に自動で出る）。同じ1タスクで
-「予測フェーズが効いているか」と「★ Review が答えを先渡ししているか」の
-**両方が観測できる**ので、意識して見ること。
-
 ### 書籍・一次資料の提示を検証付きで解禁する → 着手条件待ち
 
-`rules/learning-mode.md` は書籍名・記事名・URL の提示を禁止している（捏造防止）。
+捏造を防ぐため、`skills/learning-mode/references/delta-supplements.md` は書籍名・記事名・URLを出すことを禁止している。
 2026-08-14 に**検証を通したものだけ解禁する**方針で合意したが、
 レビュー訓練モードと同時に入れるとスコープが膨らむため保留。
+レビュー訓練は、2026-09-17に `code-learning` skillの `Review` 形式として導入した（ADR 0012）。
 
 **運用方針（合意済み）**
 
@@ -750,8 +551,10 @@ AI が書いたコードを判断できるようになるための訓練形式�
   （「◯◯を読め」ではなく「今回の見逃しの背景はこの考え方で、出典はこれ」）。
   紐付いていない推薦は読まれないまま消える
 
-**着手条件**: レビュー訓練モードの導入を決めたとき（見逃しの背景説明で
-必要になるため、単独で入れても使いどころが無い）。
+**着手条件**: `code-learning` の `Review` で、見逃しの背景を説明するために出典を示したくなったとき。
+単独で入れても使いどころが無い。
+
+**決めること**: 解禁するか。解禁するなら、`code-learning` の解説だけに限るか、★ Delta の `概念` 欄にも広げるか。
 
 ### 確信度（1〜5）の追加 → 決めること
 
@@ -1041,21 +844,6 @@ refspec 省略の force push / 削除を一律に止めるか、`branch.<name>.m
 
 ---
 
-## エージェント生成物の git 管理
-
-### 個人導入プラグインの生成物を無視する仕組み → dotfiles へ移管済み
-
-superpowers の生成物（`docs/superpowers/` `.superpowers/`）を `~/project/` 配下で
-コミットさせない件。グローバル無視の実体は dotfiles リポジトリが持っているため
-（`config/git/ignore` → `~/.config/git/ignore`）、**このリポジトリの管轄ではない**。
-
-調査結果・選択肢・検証済みの制約は dotfiles 側の `tasks/backlog.md` に記載した。
-
-**このリポジトリ自身は対象外**: `docs/superpowers/` の5ファイルは設計履歴として意図的に
-tracked にしてある。gitignore は tracked ファイルに効かないため、無視設定を足しても影響はない。
-
----
-
 ## 並列セッション検出フックの残課題
 
 ### 対象外リポジトリでも「衝突している」ことだけは伝えたい
@@ -1174,8 +962,8 @@ macOS の `pgrep` は呼び出し元の祖先プロセスを返さない（実�
 `docs/superpowers/specs/2026-08-05-codex-superpowers-design.md:131` — 未確認のまま。
 **全体停止のリスク**があると spec 自身が書いている。
 
-**着手条件**: 上記「superpowers が Codex 実機で発火するか未確認」と同時に確認する
-（同じ実行経路なので分けても2度手間になる）。
+**着手条件**: 同じ実行経路なので、「superpowers の自動注入をプラグイン同梱フックで賄えるか」に着手するときに一緒に確認する。
+分けると2度手間になる。superpowersがCodexで発火することは、2026-08-18に1ターンだけ確かめた。
 
 ---
 
@@ -1242,15 +1030,6 @@ Python や Markdown だけを触る作業中も常に効いている。
 
 **着手条件**: 指示が守られない事例が実際に出たとき、または CLAUDE.md と rules の
 合計がさらに増えたとき。
-
-### ホスト実ファイルの掃除 → `cw-workspace-local` へ移管済み
-
-`~/.claude/settings.json` に残る `askUserQuestionTimeout` の掃除は、ホスト実ファイルの
-管理範囲のため `cw-workspace-local/tasks/backlog.md` へ移した。本リポジトリ側の
-テンプレート修正は完了しており、ここでは追跡しない（二重管理を避ける）。
-
-なお `setup.sh` の「テンプレートに無いキーは温存する」マージ方式は、`/model` などが
-書き込んだ値を保護するための意図的な設計であり、**変更しない**。
 
 ### コンテナ環境で PreToolUse フックが fail-open している → `cw-workspace-local` へ移管する（先方への追記待ち）
 

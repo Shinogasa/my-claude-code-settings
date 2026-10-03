@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """コード学習skillの配布可能な構造を検査する。教育効果は別途実測する。"""
 
+import os
 import unittest
 from pathlib import Path
 import subprocess
@@ -189,6 +190,9 @@ class CodeLearningSkillContract(unittest.TestCase):
             text=True,
             capture_output=True,
             check=False,
+            # 親のFORCE_COLORを受けると、3.14のunittestが色のエスケープコードで照合文字列を分断する。
+            # PYTHON_COLORSはFORCE_COLORより優先される
+            env={**os.environ, "PYTHON_COLORS": "0"},
         )
 
         self.assertEqual(result.returncode, 1, result.stderr)
