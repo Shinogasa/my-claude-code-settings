@@ -92,25 +92,25 @@ yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/
 `docs/adr/0003-codex-native-first-activation-policy.md`、実装手順は
 `docs/superpowers/plans/2026-08-18-codex-compatibility-migration.md` を参照。
 
-### P1: base provider 検査を起動前に止める経路が無い
+### P1: 個人用の `CODEX_HOME` を分ける（ADR 0026の実装）
 
-`hooks/check-codex-base-provider.py` は SessionStart で `~/.codex/config.toml` の
-`model_provider` 欠落を警告する。ただし provider は起動時に確定するため、警告時点で
-そのセッションは既に既定の openai（`auth.json` の個人アカウント）で動いている。
-さらに Codex の hook は `/hooks` で承認されるまで黙ってスキップされ、未承認でも何も出ない。
+2026-09-21に外部ツールの書き換えで `~/.codex/config.toml` の `model_provider` が消え、9/28まで素の `codex` が
+既定の openai（同じ場所にある `auth.json` の個人アカウント）で動いた（`state_5.sqlite` の threads で
+`llm_gateway` の最終利用は 9/20）。SessionStartの `hooks/check-codex-base-provider.py` は起動後の警告なので間に合わない。
 
-2026-09-21 に外部ツールの書き換えで `model_provider` が消え、9/28 まで素の `codex` が
-個人アカウントで動いていた（`state_5.sqlite` の threads で `llm_gateway` の最終利用は 9/20）。
+2026-10-04に、起動前ラッパーではなく `CODEX_HOME` を分けると決めた（ADR 0026）。個人ログインの `auth.json` を
+`~/.codex/` から無くせば、providerが消えても401で失敗し、黙って個人アカウントで動くことはなくなる。
 
-**対策の候補**:
+**実装で決めること**:
 
-- 素の `codex` を包むラッパーで起動前に検査し、欠落時は exec しない
-- `setup.sh --codex` でも同じ検査を走らせ、`FAILURES` に積む
+- 個人用の場所（例: `~/.codex-personal/`）と、既存の個人ログイン・セッションの移し方
+- `setup.sh` で共有資産のリンクを両方へ張る形（リンク先の一覧を1つに保つ）
+- `~/.codex/auth.json` が再び作られたときの検知の場所と方法
+- 個人プロファイルの生成器（`bin/generate-codex-personal-profile.py`）、allowlist、`cxp` の照合のうち、何を消すか
+- GUIアプリが `CODEX_HOME` を尊重するか（未確認）
 
-**決めること**:
-
-- ラッパーを置く場合、`cxp` の「素の `codex` は会社設定のまま」という向きとどう両立させるか
-  （PATH 上の優先順位と、シェル統合が読み込まれないときの倒れ方）
+**この実装で不要になる項目**: 下の「`cxp` のallowlist照合が見ていない経路」と
+「Codex個人プロファイルで引き継いだ値の変化を表示する」。どちらも、個人プロファイルが会社設定を引き継ぐことから生じている。
 
 ### P1: Codexで無効にしたClaudeのpluginが、`enabled = true` に戻る
 
@@ -124,60 +124,14 @@ learning-output-style、security-guidance、serena、superpowers）が、すべ�
 非同期hookの契約がClaude固有だからだ。`enabled = true` に戻るたびに、この失敗がまた起きる。
 
 誰が書き換えたかは未確認。候補は、Codexのplugin導入・更新、GUIアプリ、Claudeのpluginを取り込む機能。
-`model_provider` が外部ツールの書き換えで消えた件（上の「base provider 検査」）と同じ経路かもしれない。
+`model_provider` が外部ツールの書き換えで消えた件（上の「個人用の `CODEX_HOME` を分ける」）と同じ経路かもしれない。
 
-**決めること**: 監査で気づくだけにするか、setupで `false` に戻すか、起動前に止めるか。
-その前に、`config.toml` の変更時刻とCodexの操作記録を照らし合わせて、誰が書き換えたかを特定する。
+**決めたこと（2026-10-04）**: 起動前に `false` へ戻す。8件はどれもClaude用に入れたpluginで、Codexでは使わない。
+誰が書き換えたかの特定は、上の `CODEX_HOME` 分離と同じ経路の可能性があるので一緒に調べる
+（`config.toml` の変更時刻とCodexの操作記録を照らし合わせる）。
 
-### P1: `gpt-5.6-sol` で全ターンが失敗する回避設定を `setup.sh` で恒久化する
-
-`~/.codex/config.toml` に次が無いと、`gpt-5.6-sol` を使う**全ターン**がモデルの推論前に失敗する。
-
-```toml
-[features.multi_agent_v2]
-tool_namespace = "agents"
-```
-
-codex の MultiAgentV2 は自前生成した `spawn_agent` を既定で `collaboration` 名前空間に置くが、
-このモデルは `collaboration.spawn_agent` を予約済みとして扱い、送られたスキーマが
-モデル側の設定と完全一致しないと HTTP 500 で拒否する。上流は
-[openai/codex#31864](https://github.com/openai/codex/issues/31864)（2026-09-02 時点 Open、修正PRなし）。
-codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**バージョンを上げても下げても回避できない**。
-
-**調査コストが高い理由**（次に踏む人がここで溶かさないために残す）:
-
-拒否は SSE の `error` イベントで返り、**ストリーム自体は正常に閉じる**。codex はこのエラー本文を
-表示せず `stream disconnected before completion: stream closed before response.completed`
-に畳むため、原因が見えないまま5回リトライして毎回12〜17秒で失敗する。
-この「約13秒」はタイムアウトではなく**リトライ予算の枯渇時間**であり、
-ネットワーク・プロキシ・DNS・アイドルタイムアウトの調査へ強く誘導される。
-2026-09-02 に1セッション丸ごと費やして特定した。特定の決め手は、
-リクエストとレスポンスを中継プロキシで丸ごと記録して SSE の生バイト列を見ることだった。
-上位レイヤのエラー文言からは辿れない。
-
-**なぜこのリポジトリの管轄か**:
-
-障害は作業ディレクトリに依存しない（ワークスペース外でも同一の失敗を実測済み）ため、
-特定プロジェクトの設定ではなくホストの codex 全体の性質。`config.toml` は認証ヘッダを
-平文で持つためリポジトリ管理下に置けないが、このキーは非機密なので、既存方針の
-「リポジトリが状態を持つのではなく、冪等なコマンドを `setup.sh` が叩く」
-（Codex プラグイン導入と同じ形）に収まる。方針の例外にはならない。
-
-**決めること**:
-
-- 既に `tool_namespace` が別の値で存在する場合、上書きするか、警告して残すか
-- 適用を無条件にするか、`model` が該当モデルのときだけにするか
-  （無条件でもローカルのツール名前空間が変わるだけで他モデルには無害と考えられるが**未確認**）
-- 上流が #31864 を修正してキー名または既定値が変わったとき、この上書きは**黙って無効になり**
-  再び不透明な13秒失敗へ戻る。検知手段を持つか（`codex features list` の値を検査する等）
-
-**完了条件**:
-
-- [ ] `bash setup.sh` の実行で `~/.codex/config.toml` に該当キーが入る（冪等）
-- [ ] `codex` 自身（`codex features enable/disable`）と GUI アプリも同じファイルへ書き込むため、
-      それらによる書き換えの後でも壊れない。素朴な追記だとキー重複やコメント消失が起きうる
-- [ ] 未設定のマシンで `codex exec "..."` が成功する
-      （設定前は12〜17秒で失敗することを再現できる。成功/失敗が判別できる検査であること）
+**残る判断**: 素の `codex` には起動前に処理を挟む入口が無い（ADR 0026でラッパーを採らなかった）。
+どこで `false` に戻すかを、書き換えの原因が分かってから決める。
 
 ### P2: `setup.sh` に dry-run を追加する
 
@@ -200,17 +154,16 @@ codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**�
   切り替え先のブランチのallowlistで判定する。allowlistを書き換えられる人はプロファイルも書き換えられるので、
   権限の境界の問題ではない。ただし、事故は防げない
 
-**決めること**: プロファイルの生成時にallowlistのdigestを書き込み、`cxp` で照合するか。
-先にCodexの公式資料で、MCPサーバを足せる設定の層を確かめる。
+**2026-10-04**: ADR 0026で個人用の `CODEX_HOME` を分けると決めたので、その実装が終われば項目ごと不要になる。
+それまでは着手しない。
 
 ### P2: Codex個人プロファイルで引き継いだ値の変化を表示する
 
 同じレビューの指摘。setup は所有外のキー名しか表示しないため、`[projects]` の信頼設定や
 `[hooks.state]` の `trusted_hash`、`[plugins]` の有効化（plugin同梱のMCPを含む）が変わっても気づけない。
 
-**決めること**: 前回生成時との差分を表示するか、所有外キーの digest を別に記録して変化時に警告するか。
-
-**完了条件**: 所有外のキーの値が前回の生成から変わったとき、setup の出力で分かる。
+**決めたこと（2026-10-04）**: 作るなら前回生成時との差分を表示する。ただし、ADR 0026の実装で個人プロファイルが
+会社設定を引き継がなくなるので、この項目自体が不要になる。0026の実装が終わったら消す。
 
 ### P2: `context7` / `serena` のCodex向け候補を個別評価する
 
@@ -1009,8 +962,8 @@ UserPromptSubmit hook [cmux_cli=... hooks enqueue claude prompt-submit ...] time
 - 打ち切られても出力が捨てられるだけで、Claude Code の動作は止まらない。cmux 側の通知や
   プロンプト連携が欠ける可能性がある（未確認）
 
-**決めること**: どこで直すか。cmux の設定で timeout を変えられるか、cmux への報告で直してもらうか、
-`CMUX_CLAUDE_HOOKS_DISABLED=1` で連携を切るか。先に、どの段階で 5 秒かかっているかを計測する。
-管轄がこのリポジトリか（ホストのツール設定なので dotfiles 側か）も決める。
+**決めたこと（2026-10-04）**: cmuxのhook連携は使っていないので、`CMUX_CLAUDE_HOOKS_DISABLED=1` で切る。
+5秒かかっている段階の計測はしない。
 
-**着手条件**: 即時着手できる。再現頻度を数えるところから始める。
+**残る判断**: 変数をどこで設定するか。cmuxが起動時に読む環境変数なので、このリポジトリの `settings.json` ではなく
+シェルの設定（dotfiles側）になる見込み。cmuxが参照するタイミングは未確認。
