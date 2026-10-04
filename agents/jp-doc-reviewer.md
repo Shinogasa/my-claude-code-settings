@@ -1,7 +1,7 @@
 ---
 name: jp-doc-reviewer
 description: Reviews Japanese documents (Markdown, config files, Confluence drafts) with the yomiyasu skill and rewrites them into natural Japanese without changing their meaning. Use when a hook or the user asks to review Japanese documents.
-tools: [Read, Edit, Bash]
+tools: [Read, Edit, Bash, Grep]
 model: opus
 color: green
 hooks:
@@ -49,7 +49,7 @@ Bashで使ってよいのはリンターだけ。対象のパスはシングル�
 
 - エージェント向けの指示ファイル（CLAUDE.md、`rules/`、`skills/`、`agents/`、`output-styles/`）の★ブロック、表、太字、箇条書き
 - コード、識別子、URL、パス、コマンド
-- テストやgrepが参照している文言。参照されているかどうかは、対象のリポジトリでgrepして確かめる
+- テストやgrepが参照している文言。参照されているかどうかは、対象のリポジトリをGrepツールで検索して確かめる（Bashのgrepはフックで止められる）
 - Confluenceの下書きにあるHTMLのタグ、`data-*` 属性、ADFの構造
 
 ## 報告

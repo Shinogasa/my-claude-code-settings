@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """日本語文書のレビューをjp-doc-reviewerへ依頼するClaude Codeフック。
 
-使い方: jp-doc-review.py <post-tool-use|pre-tool-use-bash|pre-tool-use-confluence|pre-tool-use-agent|pre-tool-use-reviewer-bash|pre-tool-use-reviewer-edit>（入力はstdinのJSON）
+使い方: jp-doc-review.py <pre-tool-use-bash|pre-tool-use-confluence|pre-tool-use-agent|pre-tool-use-reviewer-bash|pre-tool-use-reviewer-edit>（入力はstdinのJSON）
 設計: docs/superpowers/specs/2026-10-01-jp-doc-review-design.md
 判断の経緯: docs/adr/0024-jp-doc-review-hook.md
 """
@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 import tempfile
 import time
@@ -39,10 +40,15 @@ JP_CHAR = re.compile(r"[ぁ-ゖァ-ヺー々一-鿿]")
 SUBMODULE_GITDIR = re.compile(r"\.git/modules/")
 PATH_LIKE = re.compile(r"[A-Za-z0-9_~./\-]+")
 UNSAFE_ID_CHARS = re.compile(r"[^A-Za-z0-9_-]")
-# git commit の判定に使う。区切りの文字だけでできた語を、コマンドの区切りとみなす
+# PR作成の判定に使う。区切りの文字だけでできた語を、コマンドの区切りとみなす
 SEPARATOR_CHARS = ";&|()<>\n"
 ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-GIT_OPTIONS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--attr-source"}
+COMMAND_PREFIXES = {"command", "builtin", "exec", "env", "time", "nohup", "noglob"}
+PR_CREATE_WORDS = ["gh", "pr", "create"]
+SHELLS = {"bash", "sh", "zsh"}
+CLAUDE_TRAILER = re.compile(r"^Co-Authored-By:\s*Claude\b", re.IGNORECASE | re.MULTILINE)
+GIT_TIMEOUT_SECONDS = 10
+CONTROL_CHAR = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def state_dir() -> Path:
@@ -142,26 +148,6 @@ def is_target(path: Path) -> bool:
     return not any(part in EXCLUDED_DIR_NAMES for part in inner[:-1])
 
 
-WRITTEN_TEXT_KEYS = {"Write": "content", "Edit": "new_string"}
-
-
-def _written_text(tool_name: str, tool_input: object) -> Tuple[str, str]:
-    """書き込み先のパスと、書き込んだ文字列を返す。入力の形が想定と違えば ValueError を投げる。
-
-    何も知らせずに終えると、全リポジトリで記録が止まっても気づけない。そのため、形の違いはエラーにする。
-    Editのnew_stringが空文字列なのは削除として正当なので、キーの有無と型で判定する。
-    """
-    text_key = WRITTEN_TEXT_KEYS[tool_name]
-    if not isinstance(tool_input, dict):
-        raise ValueError(f"{tool_name}の入力の形が想定と違う（tool_inputがオブジェクトではない）")
-    file_path, text = tool_input.get("file_path"), tool_input.get(text_key)
-    if not isinstance(file_path, str) or not file_path:
-        raise ValueError(f"{tool_name}の入力の形が想定と違う（file_pathが文字列ではない）")
-    if not isinstance(text, str):
-        raise ValueError(f"{tool_name}の入力の形が想定と違う（{text_key}が文字列ではない）")
-    return file_path, text
-
-
 def _ensure_private_dir(path: Path) -> None:
     """状態ファイルと下書きは社内文書の写しを含みうるので、ディレクトリを0700にする。"""
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -199,55 +185,6 @@ def _write_private(path: Path, text: str) -> None:
         raise
 
 
-def _log_path(key: str) -> Path:
-    return state_dir() / f"{key}.jsonl"
-
-
-def _append_record(key: str, record: dict) -> None:
-    """記録を1行追記する。呼び出し側でsession_lockを取る。"""
-    _ensure_private_dir(state_dir())
-    line = (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8")
-    fd = os.open(_log_path(key), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    try:
-        os.write(fd, line)
-    finally:
-        os.close(fd)
-
-
-def _read_log_lines(key: str) -> List[str]:
-    """記録の行を返す。行の数は、依頼した時点までの行を数えるのに使う。"""
-    path = _log_path(key)
-    if not path.exists():
-        return []
-    return [line for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
-
-
-def _parse_record(line: str) -> Optional[dict]:
-    """記録の1行を読む。形式が合わない行は None を返す。"""
-    try:
-        value = json.loads(line)
-    except json.JSONDecodeError:
-        return None
-    if isinstance(value, dict) and isinstance(value.get("path"), str) and isinstance(value.get("jp_chars"), int):
-        return value
-    return None
-
-
-def read_records(key: str) -> Tuple[List[dict], int]:
-    """記録と、形式が合わずに飛ばした行の数を返す。"""
-    parsed = [_parse_record(line) for line in _read_log_lines(key)]
-    records = [record for record in parsed if record is not None]
-    return records, len(parsed) - len(records)
-
-
-def _write_log_lines(key: str, lines: List[str]) -> None:
-    path = _log_path(key)
-    if not lines:
-        path.unlink(missing_ok=True)
-        return
-    _write_private(path, "".join(line + "\n" for line in lines))
-
-
 def read_json(path: Path) -> dict:
     if not path.exists():
         return {}
@@ -257,30 +194,6 @@ def read_json(path: Path) -> dict:
 
 def write_json(path: Path, value: dict) -> None:
     _write_private(path, json.dumps(value, ensure_ascii=False))
-
-
-def handle_post_tool_use(payload: dict) -> None:
-    tool_name = payload.get("tool_name")
-    if tool_name not in WRITTEN_TEXT_KEYS or payload.get("agent_type") == REVIEWER_AGENT:
-        return
-    key = session_key(payload)
-    cleanup_old_state()
-    raw_path, text = _written_text(tool_name, payload.get("tool_input"))
-    path = Path(raw_path)
-    if not path.is_absolute():
-        path = Path(str(payload.get("cwd") or ".")) / path
-    path = Path(os.path.realpath(path))
-    if not is_target(path):
-        return
-    jp_chars = count_jp_chars(text)
-    if jp_chars == 0:
-        return
-    with session_lock(key):
-        _append_record(key, {"path": str(path), "jp_chars": jp_chars})
-
-
-def _dispatched_path(key: str) -> Path:
-    return state_dir() / f"{key}.dispatched.json"
 
 
 def _flags_path(key: str) -> Path:
@@ -320,92 +233,6 @@ def cleanup_old_state() -> None:
     _write_private(stamp, "")
 
 
-def _shell_tokens(command: str) -> List[str]:
-    """コマンドを語と区切りに分ける。shlexで最後まで分けられないときは、分けられたところまでを返す。"""
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=SEPARATOR_CHARS)
-    lexer.whitespace = " \t\r"  # 改行は区切りとして返させる
-    tokens: List[str] = []
-    try:
-        for token in lexer:
-            tokens.append(token)
-    except ValueError:
-        pass  # 閉じていない引用符など。コミットのメッセージの中で起きやすいので、それより前の語で判定する
-    return tokens
-
-
-def _segments(tokens: List[str]) -> List[List[str]]:
-    segments: List[List[str]] = [[]]
-    for token in tokens:
-        if token and all(char in SEPARATOR_CHARS for char in token):
-            segments.append([])
-        else:
-            segments[-1].append(token)
-    return segments
-
-
-def _commit_dash_c(words: List[str]) -> Optional[List[str]]:
-    """1つの部分が git commit なら、-C の値の一覧を返す。そうでなければ None。"""
-    index = 0
-    while index < len(words) and ENV_ASSIGNMENT.match(words[index]):
-        index += 1
-    if index >= len(words) or os.path.basename(words[index]) != "git":
-        return None
-    dash_c: List[str] = []
-    index += 1
-    while index < len(words):
-        word = words[index]
-        if word in GIT_OPTIONS_WITH_VALUE:
-            if word == "-C" and index + 1 < len(words):
-                dash_c.append(words[index + 1])
-            index += 2
-        elif word.startswith("-"):
-            index += 1
-        else:
-            return dash_c if word == "commit" else None
-    return None
-
-
-def find_commit(command: str) -> Optional[List[str]]:
-    """コマンドに git commit があれば、最初のものの -C の値の一覧を返す。無ければ None。"""
-    for words in _segments(_shell_tokens(command)):
-        dash_c = _commit_dash_c(words)
-        if dash_c is not None:
-            return dash_c
-    return None
-
-
-def _commit_directory(payload: dict, dash_c: List[str]) -> Path:
-    """コミット先のディレクトリ。-C があればそのパス（相対なら cwd 基準）、無ければ cwd。"""
-    cwd = payload.get("cwd")
-    directory = Path(cwd) if isinstance(cwd, str) and cwd else None
-    for value in dash_c:
-        candidate = Path(os.path.expanduser(value))
-        if candidate.is_absolute():
-            directory = candidate
-        elif directory is not None:
-            directory = directory / candidate
-    if directory is None:
-        raise ValueError("入力にcwdが無く、コミット先のリポジトリを決められない")
-    return Path(os.path.realpath(directory))
-
-
-def _review_candidates(records: List[dict], root: Optional[Path]) -> List[str]:
-    """コミット先のリポジトリの中で、レビューを依頼するファイルを返す。"""
-    if root is None:
-        return []
-    totals: Dict[str, int] = {}
-    for record in records:
-        totals[record["path"]] = totals.get(record["path"], 0) + record["jp_chars"]
-    candidates = []
-    for path, total in sorted(totals.items()):
-        file = Path(path)
-        if total < MIN_JP_CHARS or not file.is_file() or _find_git_root(file.parent)[0] != root:
-            continue
-        if KANA.search(file.read_text(encoding="utf-8", errors="replace")):
-            candidates.append(path)
-    return candidates
-
-
 def _transcript_size(payload: dict) -> Optional[int]:
     """会話記録の今の大きさ。分からないときは None。"""
     path = payload.get("transcript_path")
@@ -428,37 +255,160 @@ def reviewer_invoked_after(transcript_path: object, offset: object) -> bool:
     )
 
 
-def _commit_reason(paths: List[str]) -> str:
-    listed = "\n".join(f"- {path}" for path in paths)
-    return (
-        "日本語の文書をコミットする前に、レビューが要る。このコミットはまだ実行していない。\n"
-        f"Agentツールで、subagent_typeを{REVIEWER_AGENT}にしたサブエージェントを1回起動し、次のファイルを渡して。\n"
-        f"{listed}\n"
-        "依頼文には、対象のパスを絶対パスでそのまま書く。書かれていないファイルは、レビュワーが直せない。\n"
-        "レビュワーには、このセッションで書いた箇所をファイルごとに伝え、その範囲だけを直させること。\n"
-        "直したファイルをgit addし直してから、もう一度コミットして。2回目のコミットは止めない。\n"
-        "レビュワーの報告を受けたら、変えた点と書き手に確かめたい点をユーザーに伝えて。"
-    )
+class GitError(Exception):
+    """レビューの候補を決めるためのgitの操作に失敗した。"""
 
 
-def _finish_dispatch(key: str, payload: dict) -> None:
-    """依頼した後のコミット。通したうえで、依頼した記録を消し、レビュワーが起動したかを確かめる。"""
-    dispatched = read_json(_dispatched_path(key))
-    paths = {path for path in dispatched.get("paths", []) if isinstance(path, str)}
-    limit = int(dispatched.get("record_lines", 0))
-    lines = _read_log_lines(key)
-    # 依頼した時点までの行から、依頼したパスの行を消す。依頼の後に書き足した行は、次のコミットのために残す
-    kept = [line for line in lines[:limit] if (record := _parse_record(line)) and record["path"] not in paths]
-    _write_log_lines(key, kept + lines[limit:])
-    _dispatched_path(key).unlink(missing_ok=True)
+def _git(root: Path, *args: str) -> str:
     try:
-        invoked = reviewer_invoked_after(payload.get("transcript_path"), dispatched.get("transcript_offset"))
+        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+                                timeout=GIT_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise GitError(f"git {' '.join(args)}: {type(error).__name__}") from error
+    if result.returncode != 0:
+        raise GitError(f"git {' '.join(args)}: {result.stderr.strip() or result.returncode}")
+    return result.stdout
+
+
+def _shell_words(command: str) -> List[str]:
+    """コマンドを語と区切りに分ける。最後まで分けられないときは、分けられたところまでを返す。"""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=SEPARATOR_CHARS)
+    lexer.whitespace = " \t\r"  # 改行は区切りとして返させる
+    words: List[str] = []
+    try:
+        for word in lexer:
+            words.append(word)
+    except ValueError:
+        pass
+    return words
+
+
+def is_pr_create(command: str, depth: int = 0) -> bool:
+    """コマンドの位置に PR_CREATE_WORDS があるか。bash -c などの文字列の中も1段だけ調べる。
+
+    引用符の中（コミットメッセージや echo の文字列）は1語として扱うので、PRの作成とみなさない。
+    """
+    segment: List[str] = []
+    for word in [*_shell_words(command), ";"]:
+        if word and all(char in SEPARATOR_CHARS for char in word):
+            words = segment
+            segment = []
+            while words and (ENV_ASSIGNMENT.match(words[0]) or words[0] in COMMAND_PREFIXES):
+                words = words[1:]
+            if words[:3] == PR_CREATE_WORDS:
+                return True
+            if depth == 0 and words and Path(words[0]).name in SHELLS and "-c" in words[1:-1]:
+                if is_pr_create(words[words.index("-c", 1) + 1], depth + 1):
+                    return True
+            continue
+        segment.append(word)
+    return False
+
+
+def _pr_base(command: str) -> Optional[str]:
+    """gh pr create の --base / -B の値。指定が無ければ None。"""
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        words = command.split()
+    for index, word in enumerate(words):
+        if word in ("--base", "-B") and index + 1 < len(words):
+            return words[index + 1]
+        if word.startswith("--base="):
+            return word.split("=", 1)[1]
+    return None
+
+
+def _resolve_base(root: Path, base: Optional[str]) -> str:
+    """比べる相手のref。指定があれば origin/<base> か <base>、無ければ既定のブランチ。"""
+    if base:
+        candidates = [f"origin/{base}", base]
+    else:
+        try:
+            candidates = [_git(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").strip()]
+        except GitError:
+            candidates = []
+        candidates += ["origin/main", "origin/master", "main", "master"]
+    for ref in candidates:
+        try:
+            _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+            return ref
+        except GitError:
+            continue
+    raise GitError(f"比べる相手のブランチを決められない（候補: {', '.join(candidates)}）")
+
+
+def _claude_authored(root: Path, merge_base: str) -> set:
+    """merge_base より後で、Co-Authored-By: Claude の行が付いたコミットが触ったファイル（リポジトリからの相対パス）。"""
+    files: set = set()
+    for sha in _git(root, "rev-list", f"{merge_base}..HEAD").split():
+        if CLAUDE_TRAILER.search(_git(root, "log", "-1", "--format=%B", sha)):
+            files.update(name for name in _git(root, "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", sha).split("\0") if name)
+    return files
+
+
+def _added_text(root: Path, merge_base: str, relative: str) -> str:
+    diff = _git(root, "diff", "--no-color", "--unified=0", merge_base, "HEAD", "--", relative)
+    return "\n".join(line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
+
+
+def pr_candidates(root: Path, base_ref: str) -> Tuple[List[str], List[str], int]:
+    """ブランチで変わった日本語の文書を、Claudeが書いたものとそれ以外に分けて返す（絶対パス）。
+
+    3つ目は、制御文字を含むために外したパスの数。パスは止める理由の文面にそのまま並ぶので、
+    ファイル名の改行で偽の指示を書き込めないよう、候補にしない。
+    """
+    merge_base = _git(root, "merge-base", base_ref, "HEAD").strip()
+    changed = [name for name in _git(root, "diff", "--name-only", "--diff-filter=AMR", "-z", merge_base, "HEAD").split("\0") if name]
+    claude = _claude_authored(root, merge_base)
+    authored, others, unsafe = [], [], 0
+    for relative in sorted(changed):
+        if CONTROL_CHAR.search(relative):
+            unsafe += 1
+            continue
+        path = Path(os.path.realpath(root / relative))
+        if not path.is_file() or not is_target(path):
+            continue
+        if count_jp_chars(_added_text(root, merge_base, relative)) < MIN_JP_CHARS:
+            continue
+        if not KANA.search(path.read_text(encoding="utf-8", errors="replace")):
+            continue
+        (authored if relative in claude else others).append(str(path))
+    return authored, others, unsafe
+
+
+def _pr_reason(base_ref: str, authored: List[str], others: List[str]) -> str:
+    lines = ["日本語の文書を含むPRを作る前に、レビューが要る。このPRはまだ作っていない。"]
+    if authored:
+        lines += [f"Agentツールで、subagent_typeを{REVIEWER_AGENT}にしたサブエージェントを1回起動し、次のファイルを渡して。",
+                  *(f"- {path}" for path in authored)]
+    if others:
+        lines += ["次のファイルは、Claudeのコミット（Co-Authored-By: Claude）では変わっていない。"
+                  "レビューに含めてよいかを、AskUserQuestionでユーザーに確かめて。",
+                  *(f"- {path}" for path in others)]
+    lines += [
+        "依頼文には、対象のパスを絶対パスでそのまま書く。書かれていないファイルは、レビュワーが直せない。",
+        f"レビュワーには、ブランチで変わった行（git diff {base_ref}...HEAD -- <ファイル>）だけを直させること。",
+        "直したらコミットしてpushし、もう一度 gh pr create を実行して。2回目は止めない。",
+        "レビュワーの報告を受けたら、変えた点と書き手に確かめたい点をユーザーに伝えて。",
+    ]
+    return "\n".join(lines)
+
+
+def _pr_state_path(key: str) -> Path:
+    return state_dir() / f"{key}.pr-dispatched.json"
+
+
+def _finish_pr_dispatch(key: str, payload: dict, entry: dict) -> None:
+    """止めた後の2回目。通したうえで、レビュワーが起動したかを確かめる。"""
+    try:
+        invoked = reviewer_invoked_after(payload.get("transcript_path"), entry.get("transcript_offset"))
     except TranscriptError as error:
         emit({"systemMessage": f"{REVIEWER_AGENT}が起動したかを確認できなかった（{error}）"})
         return
     if not invoked:
-        names = "、".join(sorted(Path(path).name for path in paths))
-        emit({"systemMessage": f"{REVIEWER_AGENT}が起動されないまま、2回目のコミットを通した。レビューされていない文書: {names}"})
+        names = "、".join(sorted(Path(path).name for path in entry.get("paths", [])))
+        emit({"systemMessage": f"{REVIEWER_AGENT}が起動されないまま、2回目のPR作成を通した。レビューされていない文書: {names}"})
 
 
 def handle_pre_tool_use_bash(payload: dict) -> None:
@@ -466,51 +416,76 @@ def handle_pre_tool_use_bash(payload: dict) -> None:
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
     if not isinstance(command, str):
         raise ValueError("Bashの入力にcommand（文字列）が無い")
-    dash_c = find_commit(command)
-    if dash_c is None:
+    if not is_pr_create(command):
         return
     key = session_key(payload)
-    root, _ = _find_git_root(_commit_directory(payload, dash_c))
     cleanup_old_state()
-    with session_lock(key):
-        _handle_commit(key, payload, root)
-
-
-def _handle_commit(key: str, payload: dict, root: Optional[Path]) -> None:
-    is_subagent = bool(payload.get("agent_type"))
-    if not is_subagent and _dispatched_path(key).exists():
-        _finish_dispatch(key, payload)
+    cwd = payload.get("cwd")
+    if not isinstance(cwd, str) or not cwd:
+        raise ValueError("入力にcwdが無く、PRを作るリポジトリを決められない")
+    root, kind = _find_git_root(Path(os.path.realpath(cwd)))
+    if root is None or kind == "submodule":
         return
-    lines = _read_log_lines(key)
-    records, skipped = read_records(key)
-    messages = [f"日本語文書レビューの記録で、読めない行を{skipped}件飛ばした"] if skipped else []
-    candidates = _review_candidates(records, root)
+    with session_lock(key):
+        _handle_pr_create(key, payload, root, command)
+
+
+def _handle_pr_create(key: str, payload: dict, root: Path, command: str) -> None:
+    state = read_json(_pr_state_path(key))
+    try:
+        branch = _git(root, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    except GitError:
+        branch = "HEAD"
+    state_id = f"{root}\0{branch}"
+    is_subagent = bool(payload.get("agent_type"))
+    entry = state.get(state_id)
+    if not is_subagent and isinstance(entry, dict):
+        # 止めた記録は消さずに残し、以降は通す。1回のBashでフックが2回呼ばれる環境があり、
+        # 記録を消すと止める・通すが交互になる。レビュワーが起動したかは、会話記録が伸びた後に1回だけ確かめる
+        size, offset = _transcript_size(payload), entry.get("transcript_offset")
+        grown = size is None or not isinstance(offset, int) or size > offset
+        if grown and not entry.get("reported"):
+            write_json(_pr_state_path(key), {**state, state_id: {**entry, "reported": True}})
+            _finish_pr_dispatch(key, payload, entry)
+        return
+    base = _pr_base(command)
+    try:
+        base_ref = _resolve_base(root, base)
+        authored, others, unsafe = pr_candidates(root, base_ref)
+    except GitError as error:
+        # 検査できなかったことを「問題なし」に畳まない。1回だけ止めて、理由を伝える
+        if is_subagent:
+            emit({"systemMessage": f"日本語の文書のレビュー対象を決められなかった（{error}）"})
+            return
+        write_json(_pr_state_path(key), {**state, state_id: {"paths": [], "transcript_offset": _transcript_size(payload)}})
+        emit({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": f"日本語の文書のレビュー対象を決められなかった（{error}）。"
+                                        "--base の指定を確かめて、もう一度 gh pr create を実行して。2回目は止めない。",
+        }})
+        return
+    messages = [f"制御文字を含むパスの{unsafe}件は、日本語の文書のレビュー対象から外した。名前を確かめてほしい"] if unsafe else []
+    candidates = authored + others
     if not candidates:
         emit(with_messages({}, messages))
         return
     if not yomiyasu_skill().is_file() or not reviewer_definition().is_file():
         if _mark_once(key, "missing-reviewer"):
-            messages.append(
-                f"yomiyasuのSKILL.mdか、{REVIEWER_AGENT}の定義が見つからないので、日本語の文書のレビューを省略した。"
-                "skills/yomiyasuのsubmoduleと、setup.shを実行したかを確かめてほしい。"
-            )
-        emit(with_messages({}, messages))
+            emit({"systemMessage":
+                  f"yomiyasuのSKILL.mdか、{REVIEWER_AGENT}の定義が見つからないので、日本語の文書のレビューを省略した。"
+                  "skills/yomiyasuのsubmoduleと、setup.shを実行したかを確かめてほしい。"})
         return
     if is_subagent:
         names = "、".join(Path(path).name for path in candidates)
-        messages.append(
-            f"サブエージェントは{REVIEWER_AGENT}を起動できないので、このコミットは止めない。"
-            f"次の日本語の文書は、レビューしないままコミットされる: {names}"
-        )
-        emit(with_messages({}, messages))
+        emit({"systemMessage": f"サブエージェントは{REVIEWER_AGENT}を起動できないので、このPR作成は止めない。"
+                               f"次の日本語の文書は、レビューしないままPRになる: {names}"})
         return
-    write_json(_dispatched_path(key), {
-        "paths": candidates, "record_lines": len(lines), "transcript_offset": _transcript_size(payload),
-    })
+    write_json(_pr_state_path(key), {**state, state_id: {"paths": candidates, "transcript_offset": _transcript_size(payload)}})
     emit(with_messages({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
-        "permissionDecisionReason": _commit_reason(candidates),
+        "permissionDecisionReason": _pr_reason(base or base_ref, authored, others),
     }}, messages))
 
 
@@ -732,6 +707,10 @@ def handle_pre_tool_use_reviewer_edit(payload: dict) -> None:
             "yomiyasuの置き場、フック、自身の定義、設定ファイルは、依頼文に書かれていても直せない。"
         ),
     }})
+
+
+def handle_post_tool_use(payload: dict) -> None:
+    """何もしない。書き込みの記録はやめた（ADR 0025）。setup.sh をやり直す前の古い settings.json が呼ぶので、入口だけ残す。"""
 
 
 HANDLERS = {

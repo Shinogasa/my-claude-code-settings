@@ -24,28 +24,29 @@
 
 ## Claude Codeのプロファイル切り替え
 
-### P1: Bashから起動する `claude -p` を、親のセッションと同じプロファイルで動かす
+### P3: サブエージェントやフックが起動する `claude -p` も、親と同じプロファイルで動かす
 
-`bin/ccp`（個人のアカウント）で起動したセッションの中で、Bashから `claude -p` を起動すると、
-子のプロセスは `~/.claude/settings.json` を読み直し、会社のLiteLLMの接続情報で動いてしまう。
-親が `--settings` で上書きした接続情報は、コマンドライン引数なので子に引き継がれない。
-2026-10-02に、日本語文書レビューの実機確認で実際に会社のLiteLLMを経由した
-（`docs/research/2026-10-02-claude-code-hook-payloads.md`）。
+2026-10-04に `bin/claude-headless` と、`settings.personal.json` の目印 `CLAUDE_PROFILE=personal` を入れた。
+Bashから手で起動する経路はこれで足りるが、サブエージェントやフックが `claude -p` を起動する経路は、まだ `claude-headless` に寄せていない。
 
-実現の見込みは立っている。設定ファイルの `env` に書いた値はBashを通して子まで届き、
-子が読み直す `~/.claude/settings.json` に無い変数は上書きされずに残る（どちらも同日に確認）。
+**決めること**: 該当する経路が出てきたときに、`claude-headless` を呼ぶよう書き換えるか。
+目印を読めるのは、`ccp` で起動したセッションと、そのBashから起動したプロセスだけである。
 
-- `settings.personal.json` の `env` に、プロファイルの目印（例: `CLAUDE_PROFILE=personal`）を足す
-- ヘッドレス起動用のスクリプトを `bin/` に足し、目印を見て `--settings` を付け分ける
+### P3: 2026-10-04のセキュリティレビューで残ったLow
 
-**決めること**: 目印の変数名と、目印が無いとき（会社のプロファイル）の振る舞い。
-サブエージェントやフックが `claude -p` を起動する経路まで、このスクリプトに寄せるかどうか。
+PR作成時の日本語レビュー、マージ済みPRの照会、`claude-headless` をレビューしたところ、次のLowが残った。どれも、実際に困った例が出てから直す。
+
+- 個人プロファイルが空にする認証系のenvは5つだけ。`ANTHROPIC_API_KEY`、`CLAUDE_CODE_OAUTH_TOKEN`、`apiKeyHelper` などは空にしない（`ccp` から引き継いだ挙動）
+- `block-commit-on-merged-pr.py` は `cd <dir> && git commit` で移動先を追わず、`bash -c` の中も見ない。
+  `gh pr list --head` はforkの持ち主を区別しないので、同じ名前のブランチで別人がマージしたPRがあると誤って止める
+- `jp-doc-review.py` の `--base` の取り出しは、コマンド全体から最初の `--base` を拾う。`gh -R x pr create` のように語の並びが違う形は、PR作成とみなさない
+- `gh` の標準エラーを、そのまま画面に表示している
 
 ---
 
 ## 日本語文書レビュー（yomiyasu）の続き
 
-設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯はADR 0024。
+設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯はADR 0024と0025。
 最初の実装はClaude Codeだけを対象にした。
 
 ### P2: Codexでも日本語文書のレビューを動かす
@@ -57,49 +58,17 @@ Stopの `decision: block` で作業を続けさせられる。ただし0.159.2�
 **決めること**: Claude Code用の `hooks/jp-doc-review.py` を共有するか、Codex用の入口を分けるか。
 `/hooks` で信頼されていないフックが通知なくスキップされる問題を、どう利用者に知らせるか。
 
-### P3: Bash経由の書き込みをレビューの対象にするか
-
-Write・Edit・NotebookEditを通らない書き込み（`cat > file` やスクリプト）は記録されない。
-更新時刻で拾う案は、ユーザーがエディタで直した文書まで対象に入るため見送った。
-
-**決めること**: 実際にレビューされずに残った文書が見つかったときに、対象にする方法を選ぶ。
-
-2026-10-02に実例が出た。実装を頼んだサブエージェントが、設計書とADRをBashから動かしたPythonで書き換えた。
-そのため、この2つの文書はコミットのときにレビューの対象に入らなかった。
-
-### P2: jp-doc-reviewerが、テストの参照する文言をgrepで確かめられない
-
-レビュワーの定義では、テストやgrepが参照している文言を変えないものに挙げ、参照されているかどうかをgrepで確かめるよう求めている。
-しかし、PreToolUseでBashはリンターしか通らないため、レビュワーはgrepを実行できない。
-2026-10-02のレビューで、レビュワー自身がこの点を報告した。
-
-**決めること**: 読み取り専用の `Grep` ツールを `tools` に足すか、定義からこの確認を外してメインのエージェントに任せるか。
-
 ### P3: スキル一覧に `yomiyasu:yomiyasu` が重複して出る
 
 yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/` に入っている。
 
 **決めること**: 上流に報告するか、こちらで重複を読み込まない設定にするか。
 
-### P2: コミットの見分けで、取りこぼしと取り違えがある
-
-`pre-tool-use-bash` は、区切りで分けた各部分の先頭が `git commit` かどうかだけを見る。次の場合は正しく扱えない。
-
-- 包んだコミット（`bash -c "git commit ..."`、`env A=b git commit`、`command git commit`、`if` の中）を見分けない。レビューされずにコミットされる
-- `cd <別のリポジトリ> && git commit` では、入力の `cwd` のリポジトリをコミット先とみなすため、実際のコミット先とずれる
-- `dispatched.json` がセッションごとにあり、リポジトリごとではない。リポジトリXで止めた後にリポジトリYでコミットすると、Yのコミットが2回目として通る
-- ヒアドキュメントの本文に `git commit` の行があると、コミットとみなして1回止める
-
-**決めること**: 取りこぼし（止めない）と止めすぎのどちらを減らすか。包んだ形を追うほど、判定のコードが大きくなる。
-実際にレビューされずに残ったコミットが見つかってから決めてもよい。
-
 ### P3: 日本語文書レビューの細かい残り
 
 - 状態ファイルを開くときに `O_NOFOLLOW` を使っていない。出力の中のパスをエスケープしていない
 - 依頼文から取り出せるパスは英数字と記号だけ。日本語やスペースを含むパスのファイルは、レビュワーが直せない（止める扱いになる）
-- バックグラウンドで動くサブエージェントの書き込みは、依頼した時点の後の記録として残り、次のコミットでもう一度レビューの候補になる
 - Confluenceの投稿は本文だけを見る。タイトルだけが長い投稿は、タイトルをレビューしない
-- gitignore 済みや未追跡のファイルも、記録に残ればレビューの候補になる
 - `pre-tool-use-bash` はBashを使うたびにPythonを起動する
 
 **決めること**: どれも、実際に困った例が出てから個別に直す。それまでは着手しない。
@@ -109,7 +78,7 @@ yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/
 2026-10-02の実機確認（`docs/research/2026-10-02-claude-code-hook-payloads.md`）では、次の点を確かめられなかった。
 
 - 利用者が `/yomiyasu` と打ったときに会話記録に残る `Base directory for this skill:` の行の形（Skillツールからの呼び出しだけ確かめた）
-- サブエージェントの中のコミットで、PreToolUse の入力に `agent_type` が入るか
+- サブエージェントがPRを作るときに、PreToolUse の入力に `agent_type` が入るか
 - worktreeの中でのsubmoduleの判定
 - 対話のセッションで、SubagentStop の誤った表示が出ないか（利用中に見る）
 
@@ -224,15 +193,15 @@ codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**�
 2026-10-03に、allowlist外のサーバを `enabled = true` にしたプロファイルでは、`cxp` が起動前に止まるようにした。
 そのときのセキュリティレビューの指摘のうち、次の2点が残っている。どちらもMediumで、Confidence: insufficientだった。
 
-- `cxp` が照合するのは `config.toml` と個人プロファイルの `mcp_servers` だけ。`cxp -c mcp_servers.X.enabled=true` や
-  `cxp -p other` のような引数、プロジェクトの `.codex/config.toml`、管理者の設定、pluginに同梱されたMCPサーバは見ていない。
-  Codexがどの層からMCPサーバを足せるかは、公式資料で確かめていない
+- `cxp` が照合するのは `config.toml` と個人プロファイルの `mcp_servers` だけ。プロジェクトの `.codex/config.toml`、
+  管理者の設定、pluginに同梱されたMCPサーバは見ていない。Codexがどの層からMCPサーバを足せるかは、公式資料で確かめていない。
+  引数で渡す経路（`-p` / `--profile` と、`mcp_servers` に触れる `-c` / `--config`）は、同日に `cxp` で拒否するようにした
 - `cxp` はallowlistを、symlinkの先にあるリポジトリの作業ツリーから読む。別のセッションがブランチを切り替えると、
   切り替え先のブランチのallowlistで判定する。allowlistを書き換えられる人はプロファイルも書き換えられるので、
   権限の境界の問題ではない。ただし、事故は防げない
 
-**決めること**: `cxp` で `-c` / `--config` / `-p` / `--profile` を拒否するか。プロファイルの生成時にallowlistのdigestを
-書き込み、`cxp` で照合するか。先にCodexの公式資料で、MCPサーバを足せる設定の層を確かめる。
+**決めること**: プロファイルの生成時にallowlistのdigestを書き込み、`cxp` で照合するか。
+先にCodexの公式資料で、MCPサーバを足せる設定の層を確かめる。
 
 ### P2: Codex個人プロファイルで引き継いだ値の変化を表示する
 
@@ -242,30 +211,6 @@ codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**�
 **決めること**: 前回生成時との差分を表示するか、所有外キーの digest を別に記録して変化時に警告するか。
 
 **完了条件**: 所有外のキーの値が前回の生成から変わったとき、setup の出力で分かる。
-
-### P2: manifest から外した skill のリンクが残る
-
-`setup.sh` は manifest にある skill のリンクを足すだけで、manifest から外した skill の
-リンクを片付けない。2026-10-01 に `tdd-workflow` を `superpowers:test-driven-development` へ
-畳んだとき、`~/.claude/skills/tdd-workflow` と `~/.agents/skills/tdd-workflow` が
-壊れたリンクとして残った。この2つは2026-10-03の時点で消えていたが、誰が消したかは確かめていない。
-
-skill以外にも同じ問題がある。setupはCodexへ `commands/` を配らなくなった
-（`test_setup_does_not_distribute_codex_custom_prompts`）。それでも2026-10-03の時点で
-`~/.codex/prompts -> <repo>/commands` が残っていた。Codexはdeprecatedなcustom promptsを読み続ける。
-
-**決めること**: 所有の記録（ownership）にリンクも載せて、記録にあるのに manifest に無い
-リンクだけを消すか。リンク先の一致だけで判定すると、利用者が自分で張ったリンクまで消しうる。
-
-**完了条件**: manifest から外した skill のリンクを、利用者が張ったリンクには触れずに片付ける回帰テストがある。
-
-### P2: `setup.sh` の failure と policy violation を別の出口にする
-
-`audit_codex_plugins()` は監査ツールのexit 1を `record_failure` に流すため、
-policy違反の検出が「setup completed with failures」として報告される。
-setup自体は成功しているので語が実態とずれており、本物の失敗と区別できない。
-
-**完了条件**: 違反検出と実行失敗が、終了コードか出力かのどちらかで区別できる。
 
 ### P2: `context7` / `serena` のCodex向け候補を個別評価する
 
@@ -505,6 +450,17 @@ rules 3件、contexts 3件を含む34ファイルを導入した。自前`code-r
 
 **着手条件**: Codex互換性移行の実装とruntime smoke testが完了したとき。
 
+**rules 3ファイルについて分かっていること（2026-10-03）**: `ecc-coding-style.md`・`ecc-testing.md`・
+`ecc-development-workflow.md` は、どれも毎セッション読み込まれている。TypeScriptに依存する記述は4行だけだった
+（`use` プレフィックスのフック、テストのコード例2つ、npmの例）。残りは不変性、命名、AAAなど言語に依存しない内容で、
+利用者が主に使うKotlinにも合う。問題は言語ではなく、次の2点にある。
+
+- `ecc-testing.md` のTDDの手順が、`superpowers:test-driven-development` と重なっている。
+  `ecc-development-workflow.md` の「planner agentで計画」「PRD等の文書を先に作る」も、今の運用と合っていない
+- 「カバレッジ80%、Unit・Integration・E2Eすべて必須」は、設定リポジトリのような作業には重い
+
+rulesだけを先に削ることも、`paths:` を付けることもしないと決めた。ほかのECC由来の資産と一緒に、この棚卸しで扱う。
+
 ### superpowers の自動注入をプラグイン同梱フックで賄えるか → 決めること
 
 今は、`AGENTS.md` に「応答の前に `using-superpowers` を読む」と散文で書いて発火させている。
@@ -726,6 +682,11 @@ fetch 直後でも競合しうる）。フックの層では原理的に見切�
 - プロセス置換 `<(...)` / `>(...)` の中のコマンド
 - リダイレクト直前の数字を fd とみなすため、`cd 2 >/dev/null` の `2` を引数として扱えない
 - `${v/ #/y}` のようにパラメータ展開の中の空白の直後にある `#` を、コメントの始まりとみなす
+- 環境変数で渡すgitの設定（`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_PARAMETERS`）。
+  先頭の `NAME=value` を取り除いて判定するので、refspecを省略したforce pushで `push.default` を差し替えられても検出できない。
+  `git -c` で渡す形は、2026-10-03に止めるようにした
+- force pushの宛先の判定に残った穴（2026-10-03のセキュリティレビューの指摘、Low・未検証）。`refs/heads//main` は `/main` とみなされて通る。
+  大文字と小文字を区別しない保存先（macOSのローカルbareリポジトリなど）では `Main` が通る。これらの宛先をgitが受け付けるかは、確かめていない
 
 **決めること**: どこまで追うか。入れ子のシェルの解析はシェル意味論の再実装に近づく。
 追わない範囲は「確定できない」として止めるか、制約として受け入れるか。
@@ -733,54 +694,6 @@ fetch 直後でも競合しうる）。フックの層では原理的に見切�
 **着手条件**: この経路での取りこぼしを観測したとき。
 
 ---
-
-### force push の宛先の表記ゆれと設定由来の宛先を見落とす
-
-2026-10-01 のセキュリティレビューの指摘（以前からある穴）。`push_target_branches` は
-宛先の `HEAD` と `refs/heads/` だけを正規化する。
-
-- `git push -f origin @`、`heads/main`、`'refs/heads/*:refs/heads/*'` のような glob の宛先を
-  保護ブランチと判定できない
-- refspec を省略したときは同名のブランチを宛先とみなすため、`push.default=upstream` /
-  `matching` や `remote.<name>.push` で main へ push される設定を見落とす
-
-**決めること**: 表記ゆれを正規化するか、`@`・glob を「確定できない」として止めるか。
-refspec 省略の force push / 削除を一律に止めるか、`branch.<name>.merge` まで見るか。
-
-**着手条件**: 即時着手できる。
-
----
-
-## マージ済み PR のブランチに作業を積み続ける事故
-
-### 現在のブランチの PR が閉じていることを知る手段が無い → 決めること
-
-**2回観測済み**（推測ではなく実測）。
-
-| 回 | 経緯 |
-|---|---|
-| PR #22（2026-08-13） | マージ後に1コミット追加。2026-08-16 の棚卸しまで宙に浮いたまま |
-| PR #28（2026-08-16） | マージ直後に6コミット追加。push は成功するが PR には載らない |
-
-**原因は手順ではなく可観測性。** どのツールも「この PR はもう閉じている」を教えない。
-
-- `git status` — ブランチが origin と同期していれば何も言わない
-- `git push` — 成功する。ref は正しく更新される
-- `gh pr view` — マージ済み PR の head は凍結され、**古い状態を正常に返す**
-
-2回目は「GitHub の反映が遅れている」と誤診し、実際にはマージ済みだったことに
-気づくまで数往復かかった。**症状が正常系と区別できない**のがこの事故の本質。
-
-**決めること**: どの層で気づかせるか。
-
-- (a) SessionStart hook で、現在のブランチの PR 状態を照会して警告する。
-  ネットワーク越しの `gh` 呼び出しがセッション開始時に毎回入る
-- (b) PreToolUse で `git commit` 時に照会する。コミットのたびに遅延が乗る
-- (c) 散文ルールとして CLAUDE.md に書く。
-  このリポジトリは既に「散文だけでは守られない」前提で作られている
-- (d) 受け入れる。棚卸しのたびに拾い直す
-
-**着手条件**: 満たしている（2回観測済み）。次のタスクとして着手してよい。
 
 ---
 
@@ -1030,6 +943,9 @@ Python や Markdown だけを触る作業中も常に効いている。
 
 **着手条件**: 指示が守られない事例が実際に出たとき、または CLAUDE.md と rules の
 合計がさらに増えたとき。
+
+2026-10-03に、候補の3ファイルは中身ごと「Everything Claude Code由来資産を棚卸しする」の項目で扱うと決めた。
+`paths:` を付けるかどうかも、そちらで keep / replace / remove を決めた後に判断する。
 
 ### コンテナ環境で PreToolUse フックが fail-open している → `cw-workspace-local` へ移管する（先方への追記待ち）
 

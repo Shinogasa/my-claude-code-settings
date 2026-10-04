@@ -12,6 +12,7 @@ STATE_TOOL="$SCRIPT_DIR/bin/setup-state.py"
 SELECTOR=""
 REPLACE_CONFLICTS=false
 FAILURES=()
+POLICY_VIOLATIONS=()
 # 事前検査の時点で旧形式と判定した skills 親リンク。移行は競合の判定後まで遅らせる。
 PENDING_SKILL_PARENTS=()
 BACKUP_TIMESTAMP=""
@@ -719,7 +720,9 @@ Path(settings_staged).write_text(
 )
 Path(personal_staged).write_text(
     json.dumps(
-        {"env": {key: "" for key in env_template_values}},
+        # CLAUDE_PROFILE は、このプロファイルで起動したセッションの子の claude -p が
+        # 同じプロファイルで動くための目印（bin/claude-headless が読む）。会社の settings.json には入れない
+        {"env": {**{key: "" for key in env_template_values}, "CLAUDE_PROFILE": "personal"}},
         ensure_ascii=False,
         indent=2,
     ) + "\n",
@@ -909,10 +912,18 @@ raise SystemExit(0 if any(plugin.get("id") == target for plugin in plugins) else
   done <<< "$wanted"
 }
 
+# 監査ツールは exit 1 で違反、exit 2 で監査自体の失敗を返す。
+# 違反は setup の失敗ではないので、FAILURES とは別に報告する。
 audit_codex_plugins() {
-  if ! python3 "$SCRIPT_DIR/bin/audit-codex-plugins.py"; then
-    record_failure "host=codex plugin=all operation=audit retry: python3 $SCRIPT_DIR/bin/audit-codex-plugins.py"
-  fi
+  local output status=0
+  output="$(python3 "$SCRIPT_DIR/bin/audit-codex-plugins.py")" || status=$?
+  case "$status" in
+    0) [ -n "$output" ] && printf '%s\n' "$output" ;;
+    1) while IFS= read -r plugin_id; do
+         [ -n "$plugin_id" ] && POLICY_VIOLATIONS+=("$plugin_id")
+       done <<< "$output" ;;
+    *) record_failure "host=codex plugin=all operation=audit retry: python3 $SCRIPT_DIR/bin/audit-codex-plugins.py" ;;
+  esac
 }
 
 setup_codex_signing() {
@@ -935,6 +946,26 @@ setup_codex_agent_defaults() {
     return
   fi
   record_failure 'host=codex agents operation=configure-defaults retry: python3 bin/configure_codex_agent_defaults.py ~/.codex/config.toml'
+}
+
+# manifest から外した skill のリンクを片付ける。消すのは、このリポジトリの skills/ を指していて
+# manifest に無いリンクだけ。利用者が別の場所から張ったリンクや、実体のディレクトリには触れない。
+remove_stale_skill_links() {
+  local host="$1" skills_dir="$2" wanted link target
+  [ -d "$skills_dir" ] || return 0
+  wanted="$(read_manifest_skills "$host")" || return 1
+  for link in "$skills_dir"/*; do
+    [ -L "$link" ] || continue
+    target="$(readlink "$link")"
+    case "$target" in
+      "$SCRIPT_DIR/skills/"*) ;;
+      *) continue ;;
+    esac
+    if ! grep -qxF "${link##*/}" <<< "$wanted"; then
+      rm "$link" || return 1
+      yellow "manifest から外した skill のリンクを消しました: $link"
+    fi
+  done
 }
 
 validate_host_directories || exit 1
@@ -982,6 +1013,14 @@ if [ "${#CONFLICT_DESTINATIONS[@]}" -gt 0 ]; then
   backup_conflicts "$BACKUP_TIMESTAMP" || exit 1
 fi
 apply_targets
+if selected_claude; then
+  remove_stale_skill_links claude "$CLAUDE_DIR/skills" \
+    || record_failure "host=claude skills operation=remove-stale-links retry: bash setup.sh --claude"
+fi
+if selected_codex; then
+  remove_stale_skill_links codex "$AGENTS_DIR/skills" \
+    || record_failure "host=codex skills operation=remove-stale-links retry: bash setup.sh --codex"
+fi
 
 if selected_claude; then
   setup_claude_plugins
@@ -996,9 +1035,17 @@ if selected_claude; then
   print_claude_path_guidance
 fi
 
+if [ "${#POLICY_VIOLATIONS[@]}" -gt 0 ]; then
+  red 'Codex plugin policy violations:'
+  printf '  %s\n' "${POLICY_VIOLATIONS[@]}" >&2
+  printf '  %s\n' "~/.codex/config.toml で該当 plugin を enabled = false にしてください。" >&2
+fi
 if [ "${#FAILURES[@]}" -gt 0 ]; then
   red 'setup completed with failures:'
   printf '  %s\n' "${FAILURES[@]}" >&2
+  exit 1
+fi
+if [ "${#POLICY_VIOLATIONS[@]}" -gt 0 ]; then
   exit 1
 fi
 

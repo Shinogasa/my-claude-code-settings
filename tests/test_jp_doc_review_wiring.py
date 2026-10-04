@@ -23,7 +23,7 @@ class ReviewerAgentTests(unittest.TestCase):
 
     def test_name_tools_and_model(self):
         self.assertEqual(self.meta["name"], "jp-doc-reviewer")
-        self.assertEqual(set(codex_agents.parse_tools(self.meta["tools"])), {"Read", "Edit", "Bash"})
+        self.assertEqual(set(codex_agents.parse_tools(self.meta["tools"])), {"Read", "Edit", "Bash", "Grep"})
         self.assertEqual(self.meta["model"], "opus")
 
     def test_bash_is_limited_to_the_linter_by_agent_hook(self):
@@ -58,7 +58,7 @@ class ReviewerAgentTests(unittest.TestCase):
 
     def test_body_makes_reading_and_editing_instructions_explicit(self):
         for marker in ("`SKILL.md` をReadツールで全文読む", "次の資料をReadツールで全文読む", "その場で書き換える",
-                       "読めなかった資料を報告する", "grepして確かめる"):
+                       "読めなかった資料を報告する", "Grepツールで検索して確かめる"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.body)
 
@@ -93,8 +93,10 @@ def commands(event, matcher=None):
 
 
 class WiringTests(unittest.TestCase):
-    def test_post_tool_use_records_writes_and_edits(self):
-        self.assertIn("python3 ~/.claude/hooks/jp-doc-review.py post-tool-use", commands("PostToolUse", "Write|Edit"))
+    def test_writes_are_no_longer_recorded(self):
+        # レビューの候補はPR作成時にブランチの差分から決めるので、書き込みの記録は要らない
+        all_commands = [command for event in SETTINGS["hooks"] for command in commands(event)]
+        self.assertNotIn("python3 ~/.claude/hooks/jp-doc-review.py post-tool-use", all_commands)
 
     def test_confluence_matcher_catches_only_posting_tools(self):
         self.assertEqual(commands("PreToolUse", CONFLUENCE_MATCHER),
@@ -106,12 +108,13 @@ class WiringTests(unittest.TestCase):
                 self.assertTrue(pattern.match(f"mcp__atlassian-http__{name}"))
         self.assertFalse(pattern.match("mcp__atlassian-http__getConfluencePage"))
 
-    def test_bash_group_asks_for_review_before_commit_and_keeps_existing_hooks(self):
+    def test_bash_group_asks_for_review_before_pr_and_keeps_existing_hooks(self):
         self.assertEqual(commands("PreToolUse", "Bash"), [
             "~/.claude/hooks/guard-dangerous-bash.sh",
             "rtk hook claude",
             "~/.claude/hooks/warn-branch-behind-main.sh",
             "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash",
+            "python3 ~/.claude/hooks/block-commit-on-merged-pr.py",
         ])
 
     def test_agent_calls_are_recorded_and_existing_hooks_remain(self):

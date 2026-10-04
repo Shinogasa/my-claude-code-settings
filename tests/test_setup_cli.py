@@ -41,7 +41,9 @@ def make_stub_commands(base: Path) -> Path:
     claude.chmod(0o755)
     codex = bindir / "codex"
     codex.write_text(
-        "#!/bin/sh\nprintf 'codex %s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\nprintf '%s' '{\"installed\":[]}'\n",
+        "#!/bin/sh\nprintf 'codex %s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\n"
+        "if [ -n \"${CODEX_PLUGIN_LIST:-}\" ]; then printf '%s' \"$CODEX_PLUGIN_LIST\"; "
+        "else printf '%s' '{\"installed\":[]}'; fi\n",
         encoding="utf-8",
     )
     codex.chmod(0o755)
@@ -142,6 +144,42 @@ class SetupCliTests(unittest.TestCase):
         self.assertTrue((self.home / ".codex" / "AGENTS.md").is_symlink())
         self.assertTrue((self.home / ".codex" / "bin").is_symlink())
         self.assertTrue((self.home / ".codex" / "hooks").is_symlink())
+
+    def test_rerun_removes_only_repository_skill_links_missing_from_manifest(self):
+        (self.home / ".claude").mkdir()
+        (self.home / ".codex").mkdir()
+        self.assertEqual(run_setup(self.repository, self.home, "--all").returncode, 0)
+        elsewhere = self.base / "elsewhere"
+        elsewhere.mkdir()
+        claude_skills = self.home / ".claude" / "skills"
+        agent_skills = self.home / ".agents" / "skills"
+        # manifest から外した skill のリンク（リンク先が消えて壊れている）
+        for skills in (claude_skills, agent_skills):
+            (skills / "removed-skill").symlink_to(self.repository / "skills" / "removed-skill")
+        # 利用者が別の場所から張ったリンクは残す
+        (claude_skills / "user-skill").symlink_to(elsewhere)
+        (claude_skills / "find-skills").symlink_to(agent_skills / "api-design")
+
+        result = run_setup(self.repository, self.home, "--all")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for skills in (claude_skills, agent_skills):
+            with self.subTest(skills=skills):
+                self.assertFalse((skills / "removed-skill").is_symlink())
+                self.assertTrue((skills / "api-design").is_symlink())
+        self.assertTrue((claude_skills / "user-skill").is_symlink())
+        self.assertTrue((claude_skills / "find-skills").is_symlink())
+
+    def test_both_profiles_carry_explicit_markers(self):
+        # 個人プロファイルで起動したセッションから claude -p を起動するとき、目印で --settings を付け分ける
+        (self.home / ".claude").mkdir()
+        result = run_setup(self.repository, self.home, "--claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        personal = json.loads((self.home / ".claude" / "settings.personal.json").read_text(encoding="utf-8"))
+        settings = json.loads((self.home / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(personal["env"]["CLAUDE_PROFILE"], "personal")
+        # 既定のプロファイルにも明示の目印を置く。引き継いだ personal を上書きし、目印の脱落も検出できるようにする
+        self.assertEqual(settings["env"]["CLAUDE_PROFILE"], "default")
 
     def test_code_learning_skill_is_linked_for_both_hosts(self):
         (self.home / ".claude").mkdir()
@@ -290,6 +328,29 @@ class SetupCliTests(unittest.TestCase):
         self.assertIn("codex plugin list --json", commands)
         self.assertNotIn("codex plugin add", commands)
         self.assertNotIn("codex plugin remove", commands)
+
+    def test_codex_policy_violation_is_reported_apart_from_failures(self):
+        (self.home / ".codex").mkdir()
+        installed = (
+            '{"installed":[{"pluginId":"security-guidance@claude-plugins-official",'
+            '"marketplaceName":"claude-plugins-official","enabled":true}]}'
+        )
+
+        result = run_setup(self.repository, self.home, "--codex", extra_env={"CODEX_PLUGIN_LIST": installed})
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Codex plugin policy violations:", result.stderr)
+        self.assertIn("security-guidance@claude-plugins-official", result.stderr)
+        self.assertNotIn("setup completed with failures", result.stderr)
+
+    def test_codex_audit_error_is_reported_as_failure(self):
+        (self.home / ".codex").mkdir()
+
+        result = run_setup(self.repository, self.home, "--codex", extra_env={"CODEX_PLUGIN_LIST": "not json"})
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("setup completed with failures", result.stderr)
+        self.assertIn("operation=audit", result.stderr)
 
     def test_codex_setup_preserves_config_when_bitwarden_agent_is_unavailable(self):
         (self.home / ".codex").mkdir()
