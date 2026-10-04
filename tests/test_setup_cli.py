@@ -133,6 +133,16 @@ class SetupCliTests(unittest.TestCase):
         self.assertFalse((self.home / ".codex" / "prompts").exists())
         self.assertFalse((self.home / ".claude" / "CLAUDE.md").exists())
 
+    def test_codex_setup_completes_without_claude_directory(self):
+        # Codexだけを入れたマシンでは ~/.claude が無い。
+        (self.home / ".codex").mkdir()
+        result = run_setup(self.repository, self.home, "--codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.home / ".claude").exists())
+        self.assertTrue((self.home / ".codex" / "AGENTS.md").is_symlink())
+        self.assertTrue((self.home / ".codex" / "bin").is_symlink())
+        self.assertTrue((self.home / ".codex" / "hooks").is_symlink())
+
     def test_code_learning_skill_is_linked_for_both_hosts(self):
         (self.home / ".claude").mkdir()
         (self.home / ".codex").mkdir()

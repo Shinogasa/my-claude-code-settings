@@ -21,6 +21,7 @@ import math
 import os
 import re
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -215,12 +216,19 @@ def write_profile(dest: Path, content: str) -> None:
     含まれるため、共有マシンで他ユーザーへ見せる理由がない。
 
     途中で落ちた生成物が残ると cxp が tomllib で落ちる(fail closed)ため実害は無いが、
-    原因が読みにくいので一時ファイル経由で置き換える。
+    原因が読みにくいので一時ファイル経由で置き換える。一時ファイルは mkstemp で作る。
+    固定名だと、先に置かれた symlink をたどって別のファイルを上書きする。
+    mkstemp は O_EXCL かつ 600 で作るので、chmod までの間も他ユーザーに読ませない。
     """
-    tmp = dest.with_name(dest.name + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, dest)
+    fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=dest.name + ".", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
+            tmp_file.write(content)
+        os.replace(tmp, dest)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def main(argv: list[str]) -> int:
