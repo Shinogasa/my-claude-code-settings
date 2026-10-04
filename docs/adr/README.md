@@ -96,3 +96,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0022](0022-legacy-skills-parent-link-migration.md) | 旧形式の skills 親symlinkを setup.sh が自動移行する | 2026-09-30 | accepted |
 | [0023](0023-codex-personal-profile-key-ownership.md) | Codex個人プロファイルの所有をキー単位で分ける | 2026-10-01 | accepted |
 | [0024](0024-jp-doc-review-hook.md) | 日本語文書のレビューとスキルの読み込み確認をフックで行う | 2026-10-01 | accepted |
+| [0025](0025-jp-doc-review-at-pr-creation.md) | 日本語文書のレビューの時機をPR作成時に移す | 2026-10-04 | accepted |
