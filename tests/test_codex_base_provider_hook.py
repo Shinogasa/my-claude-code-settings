@@ -88,6 +88,31 @@ class TestBaseProviderHook(unittest.TestCase):
         self.config.write_text('model_providers = "gateway"\n')
         self.assert_warns(run_hook(self.home), "検査できません")
 
+    def test_warns_when_personal_auth_exists_in_company_home(self):
+        # ADR 0026: 会社用の CODEX_HOME に auth.json があると、provider が消えたときに個人アカウントで動く
+        self.config.write_text('model_provider = "gateway"\n' + CUSTOM_PROVIDER)
+        (self.home / "auth.json").write_text("{}")
+        self.assert_warns(run_hook(self.home), "auth.json")
+
+    def test_warns_when_auth_json_is_a_dangling_symlink_in_company_home(self):
+        self.config.write_text('model_provider = "gateway"\n' + CUSTOM_PROVIDER)
+        (self.home / "auth.json").symlink_to(self.home / "missing.json")
+        self.assert_warns(run_hook(self.home), "auth.json")
+
+    def test_silent_when_auth_json_exists_in_personal_home(self):
+        # 自前 provider を定義しない個人用の CODEX_HOME には auth.json があってよい
+        self.config.write_text('model = "some-model"\n')
+        (self.home / "auth.json").write_text("{}")
+        self.assert_silent(run_hook(self.home))
+
+    def test_reports_missing_provider_and_auth_json_together(self):
+        # 2つが重なった状態が事故そのものなので、片方だけを報告して他方を隠さない
+        self.config.write_text(CUSTOM_PROVIDER)
+        (self.home / "auth.json").write_text("{}")
+        result = run_hook(self.home)
+        self.assert_warns(result, "model_provider がありません")
+        self.assert_warns(result, "auth.json があります")
+
     def test_does_not_leak_provider_secrets_into_message(self):
         self.config.write_text(
             CUSTOM_PROVIDER
