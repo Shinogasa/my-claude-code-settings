@@ -92,46 +92,40 @@ yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/
 `docs/adr/0003-codex-native-first-activation-policy.md`、実装手順は
 `docs/superpowers/plans/2026-08-18-codex-compatibility-migration.md` を参照。
 
-### P1: 個人用の `CODEX_HOME` を分ける（ADR 0026の実装）
+### P2: 個人用の `CODEX_HOME` 分離（ADR 0026）の残り
 
-2026-09-21に外部ツールの書き換えで `~/.codex/config.toml` の `model_provider` が消え、9/28まで素の `codex` が
-既定の openai（同じ場所にある `auth.json` の個人アカウント）で動いた（`state_5.sqlite` の threads で
-`llm_gateway` の最終利用は 9/20）。SessionStartの `hooks/check-codex-base-provider.py` は起動後の警告なので間に合わない。
+2026-10-06に、本体（`cxp` の切り替え、setupによる両方へのリンク、個人プロファイル生成の廃止、
+会社用の `auth.json` をSessionStartで警告する検査）を実装し、ホスト側も `~/.codex-personal` へ移行した。
+残りは、個人アカウントでCodexを使えるようになるまで止めている。
 
-2026-10-04に、起動前ラッパーではなく `CODEX_HOME` を分けると決めた（ADR 0026）。個人ログインの `auth.json` を
-`~/.codex/` から無くせば、providerが消えても401で失敗し、黙って個人アカウントで動くことはなくなる。
+**着手条件**: 個人アカウントのCodex契約を再開したとき。
 
-**実装で決めること**:
+- `cxp` で `/hooks` を承認する（個人用は hooks.json のパスが変わったので承認し直しが要る）
+- setupで、両方の `CODEX_HOME` のSessionStart hookが承認済みか（`[hooks.state]` の `trusted_hash`）を検査し、
+  未承認なら FAILURES に積む。hookが未承認だと、`auth.json` の検知そのものが黙って走らない
+- SSH署名の設定とサブエージェントの既定値は、setupが会社用の `config.toml` にしか当てていない。
+  個人用にも要るかを決める
+- 実機確認: `cxp` で `/hooks` 承認後、hookが動くこと
+- `codex/hooks.json` のhookコマンドは `$HOME/.codex/hooks/...` の直書き。個人用でも会社用のリンク経由で動くので、
+  `~/.codex` が無いマシンでは個人用のhookも動かない。`CODEX_HOME` 基準にするかを決める
+- keyringに保存する設定（`cli_auth_credentials_store`）では、`auth.json` が作られないので検知できない
+- 9/21に `model_provider` を消した主体は未特定。opencodeの初回起動（9/21 20:29）の4分後に `config.toml` が
+  更新されているが、opencodeのログに書き込みの記録は無い
 
-- 個人用の場所（例: `~/.codex-personal/`）と、既存の個人ログイン・セッションの移し方
-- `setup.sh` で共有資産のリンクを両方へ張る形（リンク先の一覧を1つに保つ）
-- `~/.codex/auth.json` が再び作られたときの検知の場所と方法
-- 個人プロファイルの生成器（`bin/generate-codex-personal-profile.py`）、allowlist、`cxp` の照合のうち、何を消すか
-- GUIアプリが `CODEX_HOME` を尊重するか（未確認）
+### P2: Claude用のpluginがCodexで有効に戻る
 
-**この実装で不要になる項目**: 下の「`cxp` のallowlist照合が見ていない経路」と
-「Codex個人プロファイルで引き継いだ値の変化を表示する」。どちらも、個人プロファイルが会社設定を引き継ぐことから生じている。
+2026-08-26に `~/.codex/config.toml` で無効にした8件（`@claude-plugins-official` の asana、claude-md-management、
+code-review、context7、learning-output-style、security-guidance、serena、superpowers）が、10/03に `enabled = true` に戻っていた。
+`security-guidance` はCodexのSessionStartで `invalid session start JSON output` を起こす。
 
-### P1: Codexで無効にしたClaudeのpluginが、`enabled = true` に戻る
+**原因（2026-10-05に特定）**: Codexの「Claude Codeから取り込む」機能。`~/.codex/state_5.sqlite` の
+`external_agent_config_imports` に、2026-09-22 17:30 に `PLUGINS` 8件を取り込んだ記録があり、8件は完全に一致した。
+取り込みを実行したときだけ起きるので、起動のたびに戻す処理は要らない。
 
-2026-08-26に、`~/.codex/config.toml` で `security-guidance` などを `enabled = false` にした。
-ところが2026-10-03に確かめると、policyが `deny` / `review` の8件
-（`@claude-plugins-official` の asana、claude-md-management、code-review、context7、
-learning-output-style、security-guidance、serena、superpowers）が、すべて `enabled = true` に戻っていた。
-`bin/audit-codex-plugins.py` はexit 1で8件を報告した。同日に8件を `false` へ戻し、監査が通ることを確認した。
+**決めたこと**: 既存のsetupの監査（`bin/audit-codex-plugins.py`）で検知する。取り込み後に気づけるよう、
+SessionStartの検査（`hooks/check-codex-base-provider.py`）にもplugin監査を足す。
 
-`security-guidance` は、CodexのSessionStartで `invalid session start JSON output` を起こす。
-非同期hookの契約がClaude固有だからだ。`enabled = true` に戻るたびに、この失敗がまた起きる。
-
-誰が書き換えたかは未確認。候補は、Codexのplugin導入・更新、GUIアプリ、Claudeのpluginを取り込む機能。
-`model_provider` が外部ツールの書き換えで消えた件（上の「個人用の `CODEX_HOME` を分ける」）と同じ経路かもしれない。
-
-**決めたこと（2026-10-04）**: 起動前に `false` へ戻す。8件はどれもClaude用に入れたpluginで、Codexでは使わない。
-誰が書き換えたかの特定は、上の `CODEX_HOME` 分離と同じ経路の可能性があるので一緒に調べる
-（`config.toml` の変更時刻とCodexの操作記録を照らし合わせる）。
-
-**残る判断**: 素の `codex` には起動前に処理を挟む入口が無い（ADR 0026でラッパーを採らなかった）。
-どこで `false` に戻すかを、書き換えの原因が分かってから決める。
+**着手条件**: Codexの作業を再開したとき。
 
 ### P2: `setup.sh` に dry-run を追加する
 
@@ -141,29 +135,6 @@ learning-output-style、security-guidance、serena、superpowers）が、すべ�
 
 **完了条件**: 配布先の分類（missing / linked / managed-update / conflict）とplugin導入予定を、
 副作用なしで列挙できる。
-
-### P2: `cxp` のallowlist照合が見ていない経路
-
-2026-10-03に、allowlist外のサーバを `enabled = true` にしたプロファイルでは、`cxp` が起動前に止まるようにした。
-そのときのセキュリティレビューの指摘のうち、次の2点が残っている。どちらもMediumで、Confidence: insufficientだった。
-
-- `cxp` が照合するのは `config.toml` と個人プロファイルの `mcp_servers` だけ。プロジェクトの `.codex/config.toml`、
-  管理者の設定、pluginに同梱されたMCPサーバは見ていない。Codexがどの層からMCPサーバを足せるかは、公式資料で確かめていない。
-  引数で渡す経路（`-p` / `--profile` と、`mcp_servers` に触れる `-c` / `--config`）は、同日に `cxp` で拒否するようにした
-- `cxp` はallowlistを、symlinkの先にあるリポジトリの作業ツリーから読む。別のセッションがブランチを切り替えると、
-  切り替え先のブランチのallowlistで判定する。allowlistを書き換えられる人はプロファイルも書き換えられるので、
-  権限の境界の問題ではない。ただし、事故は防げない
-
-**2026-10-04**: ADR 0026で個人用の `CODEX_HOME` を分けると決めたので、その実装が終われば項目ごと不要になる。
-それまでは着手しない。
-
-### P2: Codex個人プロファイルで引き継いだ値の変化を表示する
-
-同じレビューの指摘。setup は所有外のキー名しか表示しないため、`[projects]` の信頼設定や
-`[hooks.state]` の `trusted_hash`、`[plugins]` の有効化（plugin同梱のMCPを含む）が変わっても気づけない。
-
-**決めたこと（2026-10-04）**: 作るなら前回生成時との差分を表示する。ただし、ADR 0026の実装で個人プロファイルが
-会社設定を引き継がなくなるので、この項目自体が不要になる。0026の実装が終わったら消す。
 
 ### P2: `context7` / `serena` のCodex向け候補を個別評価する
 
