@@ -365,18 +365,18 @@ cxp                                        # 個人アカウントで起動（�
 ```
 
 **会社用の `~/.codex` に `auth.json` を置かない。** 会社用の `model_provider` が外部ツールの書き換えなどで
-消えると、Codexは既定の `openai` に倒れ、同じ `CODEX_HOME` の `auth.json` で認証する。
-個人の認証情報が会社用に無ければ、この場合は401で止まり、黙って個人アカウントで動くことはない。
+消えると、Codexは既定の `openai` providerで動き、同じ `CODEX_HOME` の `auth.json` で認証する。
+個人の認証情報が会社用に無ければ、この場合は401で止まり、エラーも出さずに個人アカウントで動くことはない。
 2026-09-21に実際に起きた事故と、`CODEX_HOME` を分けた判断は `docs/adr/0026-codex-separate-personal-home.md` を参照。
 
 `hooks/check-codex-base-provider.py` はSessionStartで、会社用（`[model_providers.*]` を定義している側）について
 次の2つを検査し、UIへ警告する。正常時は何も出さない。
 
-- `model_provider` が無い、または定義していない provider を選んでいる
+- `model_provider` が無い、または定義していないproviderを選んでいる
 - `auth.json` がある（壊れたsymlinkも含む）
 
-provider は起動時に確定するため、警告は次の起動前に直すための通知であり、そのセッションを止めるものではない。
-hook は `/hooks` で承認するまで動かない。認証情報をOSのkeyringに保存する設定（`cli_auth_credentials_store`）では
+providerは起動時に確定するため、警告は次の起動前に直すための通知であり、そのセッションを止めるものではない。
+hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyringに保存する設定（`cli_auth_credentials_store`）では
 `auth.json` が作られないので、この検査では検知できない。
 
 `codex/hooks.json` のhookコマンドは `$HOME/.codex/hooks/...` を指す。個人用で起動しても、hookの実体は

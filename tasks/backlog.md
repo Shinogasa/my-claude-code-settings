@@ -100,9 +100,9 @@ yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/
 
 **着手条件**: 個人アカウントのCodex契約を再開したとき。
 
-- `cxp` で `/hooks` を承認する（個人用は hooks.json のパスが変わったので承認し直しが要る）
+- `cxp` で `/hooks` を承認する（個人用はhooks.jsonのパスが変わったので承認し直しが要る）
 - setupで、両方の `CODEX_HOME` のSessionStart hookが承認済みか（`[hooks.state]` の `trusted_hash`）を検査し、
-  未承認なら FAILURES に積む。hookが未承認だと、`auth.json` の検知そのものが黙って走らない
+  未承認ならFAILURESに積む。hookが未承認だと、`auth.json` の検知そのものが通知なく走らない
 - SSH署名の設定とサブエージェントの既定値は、setupが会社用の `config.toml` にしか当てていない。
   個人用にも要るかを決める
 - 実機確認: `cxp` で `/hooks` 承認後、hookが動くこと
@@ -113,19 +113,19 @@ yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/
   - `cxp` はシェルの環境変数をそのまま引き継ぐ。`ASANA_TOKEN` や `ANTHROPIC_AUTH_TOKEN` はexportされているので、
     個人用のCodexの子プロセス（ツール実行、MCPサーバ）から読める。会社のゲートウェイの認証は `config.toml` のヘッダにあり、
     環境変数では渡していない
-  - 会社のリポジトリで `cxp` を実行すると、信頼済みプロジェクトの `.codex/config.toml` が効きうる（未確認）。
+  - 会社のリポジトリで `cxp` を実行すると、信頼済みプロジェクトの `.codex/config.toml` が適用されうる（未確認）。
     `CODEX_HOME` を分けても、プロジェクトの設定層は分かれない
 - 9/21に `model_provider` を消した主体は未特定。opencodeの初回起動（9/21 20:29）の4分後に `config.toml` が
   更新されているが、opencodeのログに書き込みの記録は無い
 
 ### P2: Claude用のpluginがCodexで有効に戻る
 
-2026-08-26に `~/.codex/config.toml` で無効にした8件（`@claude-plugins-official` の asana、claude-md-management、
+2026-08-26に `~/.codex/config.toml` で無効にした8件（`@claude-plugins-official` のasana、claude-md-management、
 code-review、context7、learning-output-style、security-guidance、serena、superpowers）が、10/03に `enabled = true` に戻っていた。
 `security-guidance` はCodexのSessionStartで `invalid session start JSON output` を起こす。
 
 **原因（2026-10-05に特定）**: Codexの「Claude Codeから取り込む」機能。`~/.codex/state_5.sqlite` の
-`external_agent_config_imports` に、2026-09-22 17:30 に `PLUGINS` 8件を取り込んだ記録があり、8件は完全に一致した。
+`external_agent_config_imports` に、2026-09-22 17:30に `PLUGINS` 8件を取り込んだ記録があり、8件は完全に一致した。
 取り込みを実行したときだけ起きるので、起動のたびに戻す処理は要らない。
 
 **決めたこと**: 既存のsetupの監査（`bin/audit-codex-plugins.py`）で検知する。取り込み後に気づけるよう、
