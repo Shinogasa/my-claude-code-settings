@@ -160,6 +160,26 @@ class SetupCliTests(unittest.TestCase):
         self.assertIn("AGENTS.md", shared_links(personal))
         self.assertEqual(shared_links(personal), shared_links(company))
 
+    def test_codex_no_longer_generates_personal_profile(self):
+        # ADR 0026: 個人用は CODEX_HOME を分けるので、会社用に重ねるプロファイルは作らない
+        (self.home / ".codex").mkdir()
+        config = self.home / ".codex" / "config.toml"
+        config.write_text('[mcp_servers.a]\nurl = "https://a.example"\n')
+        config.chmod(0o600)
+        result = run_setup(self.repository, self.home, "--codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.home / ".codex" / "personal.config.toml").exists())
+
+    def test_codex_keeps_old_personal_profile_and_tells_to_move_it(self):
+        # 既存のプロファイルは消さずに残し、退避を案内する
+        (self.home / ".codex").mkdir()
+        old = self.home / ".codex" / "personal.config.toml"
+        old.write_text('model_provider = "openai"\n')
+        result = run_setup(self.repository, self.home, "--codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(old.read_text(), 'model_provider = "openai"\n')
+        self.assertIn("personal.config.toml", result.stdout + result.stderr)
+
     def test_codex_skips_personal_home_when_missing(self):
         # 会社用だけのマシンでは個人用を作らず、配らなかったことを通知する
         (self.home / ".codex").mkdir()
