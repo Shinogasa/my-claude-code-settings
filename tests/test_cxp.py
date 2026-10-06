@@ -53,7 +53,7 @@ class TestCxp(unittest.TestCase):
         return self.record.read_text(encoding="utf-8").splitlines()
 
     def test_launches_codex_with_personal_home_and_passes_arguments(self):
-        self.personal.mkdir()
+        self.personal.mkdir(mode=0o700)
         result = self.run_cxp("exec", "-c", 'model="x"', "hello world")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
@@ -63,10 +63,28 @@ class TestCxp(unittest.TestCase):
 
     def test_overrides_inherited_codex_home(self):
         # 会社用の CODEX_HOME が環境に残っていても、個人用で起動する
-        self.personal.mkdir()
+        self.personal.mkdir(mode=0o700)
         result = self.run_cxp(codex_home=str(self.home / ".codex"))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.launched()[0], str(self.personal))
+
+    def test_stops_when_personal_home_resolves_to_company_home(self):
+        # ~/.codex-personal が ~/.codex へのsymlinkだと、個人用のつもりで会社用の設定と認証で動く
+        (self.home / ".codex").mkdir(mode=0o700)
+        self.personal.symlink_to(self.home / ".codex", target_is_directory=True)
+        result = self.run_cxp()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("会社用", result.stderr)
+        self.assertFalse(self.record.exists(), "codex が起動してしまった")
+
+    def test_stops_when_personal_home_is_readable_by_others(self):
+        # 個人の auth.json を置く場所なので、本人以外に権限があれば止める
+        self.personal.mkdir(mode=0o755)
+        self.personal.chmod(0o755)
+        result = self.run_cxp()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("700", result.stderr)
+        self.assertFalse(self.record.exists(), "codex が起動してしまった")
 
     def test_stops_before_launching_when_personal_home_is_missing(self):
         result = self.run_cxp()
