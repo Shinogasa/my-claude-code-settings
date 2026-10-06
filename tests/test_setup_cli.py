@@ -145,6 +145,30 @@ class SetupCliTests(unittest.TestCase):
         self.assertTrue((self.home / ".codex" / "bin").is_symlink())
         self.assertTrue((self.home / ".codex" / "hooks").is_symlink())
 
+    def test_codex_links_same_shared_assets_into_personal_home(self):
+        # ADR 0026: 個人用の CODEX_HOME にも、会社用と同じ共有資産を配る
+        company = self.home / ".codex"
+        personal = self.home / ".codex-personal"
+        company.mkdir()
+        personal.mkdir()
+        result = run_setup(self.repository, self.home, "--codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        def shared_links(root):
+            return {p.name: os.readlink(p) for p in root.iterdir() if p.is_symlink()}
+
+        self.assertIn("AGENTS.md", shared_links(personal))
+        self.assertEqual(shared_links(personal), shared_links(company))
+        self.assertTrue((personal / ".my-claude-code-settings" / "ownership.json").is_file())
+
+    def test_codex_skips_personal_home_when_missing(self):
+        # 会社用だけのマシンでは個人用を作らず、配らなかったことを通知する
+        (self.home / ".codex").mkdir()
+        result = run_setup(self.repository, self.home, "--codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.home / ".codex-personal").exists())
+        self.assertIn(".codex-personal", result.stdout + result.stderr)
+
     def test_rerun_removes_only_repository_skill_links_missing_from_manifest(self):
         (self.home / ".claude").mkdir()
         (self.home / ".codex").mkdir()
