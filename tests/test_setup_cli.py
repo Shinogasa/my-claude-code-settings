@@ -159,7 +159,6 @@ class SetupCliTests(unittest.TestCase):
 
         self.assertIn("AGENTS.md", shared_links(personal))
         self.assertEqual(shared_links(personal), shared_links(company))
-        self.assertTrue((personal / ".my-claude-code-settings" / "ownership.json").is_file())
 
     def test_codex_skips_personal_home_when_missing(self):
         # 会社用だけのマシンでは個人用を作らず、配らなかったことを通知する

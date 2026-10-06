@@ -6,6 +6,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 CODEX_DIR="$HOME/.codex"
+# 個人用の CODEX_HOME（ADR 0026）。無ければ個人用への配布だけを飛ばす
+CODEX_PERSONAL_DIR="$HOME/.codex-personal"
 AGENTS_DIR="$HOME/.agents"
 MANIFEST="$SCRIPT_DIR/manifests/skills.json"
 STATE_TOOL="$SCRIPT_DIR/bin/setup-state.py"
@@ -82,10 +84,12 @@ add_generated_target() {
 
 selected_claude() { [ "$SELECTOR" = "--claude" ] || [ "$SELECTOR" = "--all" ]; }
 selected_codex() { [ "$SELECTOR" = "--codex" ] || [ "$SELECTOR" = "--all" ]; }
+selected_codex_personal() { selected_codex && [ -d "$CODEX_PERSONAL_DIR" ]; }
 host_root() {
   case "$1" in
     claude) printf '%s' "$CLAUDE_DIR" ;;
     codex) printf '%s' "$CODEX_DIR" ;;
+    codex-personal) printf '%s' "$CODEX_PERSONAL_DIR" ;;
   esac
 }
 state_path() { printf '%s/.my-claude-code-settings/ownership.json' "$(host_root "$1")"; }
@@ -173,6 +177,20 @@ for skill in skills:
 PY
 }
 
+# 会社用と個人用の CODEX_HOME に同じ一覧を張る。一覧はここだけで持つ
+add_codex_home_links() {
+  local host="$1" root="$2"
+  add_link_target "$host" "$SCRIPT_DIR/rules" "$root/rules"
+  add_link_target "$host" "$SCRIPT_DIR/CLAUDE.md" "$root/AGENTS.md"
+  add_link_target "$host" "$SCRIPT_DIR/codex/RTK.md" "$root/RTK.md"
+  add_link_target "$host" "$SCRIPT_DIR/codex/MODEL_ROUTING.md" "$root/MODEL_ROUTING.md"
+  add_link_target "$host" "$SCRIPT_DIR/hooks" "$root/hooks"
+  add_link_target "$host" "$SCRIPT_DIR/codex/hooks.json" "$root/hooks.json"
+  add_link_target "$host" "$SCRIPT_DIR/codex/agents" "$root/agents"
+  add_link_target "$host" "$SCRIPT_DIR/bin" "$root/bin"
+  add_link_target "$host" "$SCRIPT_DIR/codex-cli-best-practice" "$root/codex-cli-best-practice"
+}
+
 build_targets() {
   local skill
   if selected_claude; then
@@ -187,15 +205,10 @@ build_targets() {
     add_generated_target claude "$SCRIPT_DIR/env.json.template" "$CLAUDE_DIR/settings.personal.json"
   fi
   if selected_codex; then
-    add_link_target codex "$SCRIPT_DIR/rules" "$CODEX_DIR/rules"
-    add_link_target codex "$SCRIPT_DIR/CLAUDE.md" "$CODEX_DIR/AGENTS.md"
-    add_link_target codex "$SCRIPT_DIR/codex/RTK.md" "$CODEX_DIR/RTK.md"
-    add_link_target codex "$SCRIPT_DIR/codex/MODEL_ROUTING.md" "$CODEX_DIR/MODEL_ROUTING.md"
-    add_link_target codex "$SCRIPT_DIR/hooks" "$CODEX_DIR/hooks"
-    add_link_target codex "$SCRIPT_DIR/codex/hooks.json" "$CODEX_DIR/hooks.json"
-    add_link_target codex "$SCRIPT_DIR/codex/agents" "$CODEX_DIR/agents"
-    add_link_target codex "$SCRIPT_DIR/bin" "$CODEX_DIR/bin"
-    add_link_target codex "$SCRIPT_DIR/codex-cli-best-practice" "$CODEX_DIR/codex-cli-best-practice"
+    add_codex_home_links codex "$CODEX_DIR"
+    if selected_codex_personal; then
+      add_codex_home_links codex-personal "$CODEX_PERSONAL_DIR"
+    fi
     while IFS= read -r skill; do
       add_link_target codex "$SCRIPT_DIR/skills/$skill" "$AGENTS_DIR/skills/$skill"
     done < <(read_manifest_skills codex)
@@ -1030,6 +1043,9 @@ if selected_codex; then
   setup_codex_agent_defaults
   audit_codex_plugins
   yellow 'Codex hooks を配置しました。trust state は変更していません。/hooks で review して承認してください。'
+  if ! selected_codex_personal; then
+    yellow "個人用の $CODEX_PERSONAL_DIR が無いため、個人用への配布を飛ばしました（ADR 0026）。"
+  fi
 fi
 if selected_claude; then
   print_claude_path_guidance
