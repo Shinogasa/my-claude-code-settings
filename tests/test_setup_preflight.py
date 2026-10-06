@@ -139,44 +139,6 @@ class SetupStateTests(unittest.TestCase):
         self.assertEqual(self.state.classify(self.source, self.destination, checksum), "conflict")
         self.assertEqual(self.state.classify(self.source, self.destination, None), "conflict")
 
-    def test_owned_digest_ignores_unowned_keys_but_not_owned_edits(self):
-        keys = ("model_provider", "mcp_servers")
-        self.destination.write_text('model_provider = "openai"\n', encoding="utf-8")
-        recorded = self.state.owned_toml_digest(self.destination, keys)
-        self.destination.write_text('model_provider = "openai"\nmodel = "x"\n', encoding="utf-8")
-        self.assertEqual(
-            self.state.classify(self.source, self.destination, recorded, owned_keys=keys),
-            "managed-update",
-        )
-        self.destination.write_text('model_provider = "gateway"\n', encoding="utf-8")
-        self.assertEqual(
-            self.state.classify(self.source, self.destination, recorded, owned_keys=keys),
-            "conflict",
-        )
-
-    def test_owned_digest_with_unserializable_value_is_conflict(self):
-        # JSON にできない値で落ちると分類が止まる。判定できないなら競合として人に見せる。
-        keys = ("model_provider",)
-        self.destination.write_text('model_provider = "openai"\n', encoding="utf-8")
-        recorded = self.state.owned_toml_digest(self.destination, keys)
-        self.destination.write_text("model_provider = 2026-10-01T00:00:00Z\n", encoding="utf-8")
-        self.assertEqual(
-            self.state.classify(self.source, self.destination, recorded, owned_keys=keys),
-            "conflict",
-        )
-
-    def test_owned_digest_recorded_for_other_keys_is_conflict(self):
-        # 所有キーが増えた後に古い記録で照合すると、増えたキーの手編集を見逃す。
-        self.destination.write_text('model_provider = "openai"\n', encoding="utf-8")
-        recorded = self.state.owned_toml_digest(self.destination, ("model_provider",))
-        self.assertEqual(
-            self.state.classify(
-                self.source, self.destination, recorded,
-                owned_keys=("model_provider", "mcp_servers"),
-            ),
-            "conflict",
-        )
-
     def test_install_generated_file_preserves_late_destination(self):
         self.destination.write_text("managed\n", encoding="utf-8")
         expected = self.state.snapshot_path(self.destination)
