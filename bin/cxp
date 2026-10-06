@@ -18,6 +18,19 @@ if [ ! -d "$PERSONAL_HOME" ]; then
   exit 1
 fi
 
+# ~/.codex へのsymlinkだと、個人用のつもりで会社用の設定と認証で動く
+if [ -d "$HOME/.codex" ] && [ "$(cd "$PERSONAL_HOME" && pwd -P)" = "$(cd "$HOME/.codex" && pwd -P)" ]; then
+  echo "エラー: $PERSONAL_HOME の実体が会社用の $HOME/.codex と同じです。別のディレクトリにしてください。" >&2
+  exit 1
+fi
+
+# 個人の auth.json を置く場所なので、本人以外に権限があれば止める
+mode="$(stat -f '%Lp' "$PERSONAL_HOME" 2>/dev/null || stat -c '%a' "$PERSONAL_HOME")"
+if [ "$mode" != 700 ]; then
+  echo "エラー: $PERSONAL_HOME の権限を 700 にしてください（chmod 700 ${PERSONAL_HOME}）。" >&2
+  exit 1
+fi
+
 # 環境に会社用の CODEX_HOME が残っていても、必ず個人用で起動する
 export CODEX_HOME="$PERSONAL_HOME"
 exec codex "$@"

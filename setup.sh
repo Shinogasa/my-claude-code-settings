@@ -985,6 +985,9 @@ if selected_codex; then
   setup_codex_agent_defaults
   audit_codex_plugins
   yellow 'Codex hooks を配置しました。trust state は変更していません。/hooks で review して承認してください。'
+  if selected_codex_personal; then
+    yellow "個人用の $CODEX_PERSONAL_DIR でも、cxp で起動して /hooks の承認が要ります。未承認だと危険コマンドのガードも黙ってスキップされます。"
+  fi
   if [ -e "$CODEX_DIR/personal.config.toml" ]; then
     yellow "$CODEX_DIR/personal.config.toml は使わなくなりました（ADR 0026）。個人用の設定は $CODEX_PERSONAL_DIR に移し、このファイルは退避してください。"
   fi

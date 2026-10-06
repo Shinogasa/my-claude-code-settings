@@ -8,7 +8,9 @@ ADR 0026 で個人用の CODEX_HOME を分けたので、会社用に auth.json 
 事故になるのは「model_provider の欠落」と「会社用に auth.json がある」が重なったときなので、
 両方を検査して UI に警告する。
 
-自前 provider を定義している CODEX_HOME を会社用とみなす。個人用は provider を定義しないので、
+自前 provider を定義している CODEX_HOME を会社用とみなす。ただし config.toml ごと書き換えられて
+provider の定義も消えることがあるので、~/.codex-personal がある（分けて運用している）マシンでは、
+~/.codex を provider の有無と関係なく会社用とみなす。個人用は provider を定義しないので、
 auth.json があっても警告しない。auth.json の代わりに OS の keyring へ保存する設定
 (cli_auth_credentials_store) では、ファイルが無いので検知できない。
 
@@ -35,10 +37,33 @@ def warn(message: str) -> None:
     sys.exit(0)
 
 
+def is_separated_company_home(codex_home: Path) -> bool:
+    home = Path.home()
+    if not (home / ".codex-personal").is_dir():
+        return False
+    try:
+        return codex_home.resolve() == (home / ".codex").resolve()
+    except OSError:
+        return False
+
+
+def find_auth_problem(codex_home: Path) -> str | None:
+    auth_path = codex_home / "auth.json"
+    # 壊れた symlink も「置かれている」側に数える
+    if auth_path.is_symlink() or auth_path.exists():
+        return (
+            f"会社用の {auth_path} があります。model_provider が消えると、"
+            "このアカウントで動きます。個人用の CODEX_HOME へ移してください (ADR 0026)。"
+        )
+    return None
+
+
 def find_problems(codex_home: Path) -> list[str]:
     config_path = codex_home / "config.toml"
+    separated = is_separated_company_home(codex_home)
     if not config_path.exists():
-        return []
+        auth_problem = find_auth_problem(codex_home) if separated else None
+        return [auth_problem] if auth_problem else []
     try:
         with config_path.open("rb") as f:
             config = tomllib.load(f)
@@ -48,18 +73,18 @@ def find_problems(codex_home: Path) -> list[str]:
     providers = config.get("model_providers", {})
     if not isinstance(providers, dict):
         return [f"{config_path} の model_providers がテーブルではないため、provider を検査できません。"]
-    if not providers:
+    if not providers and not separated:
         # 自前 provider を定義しない構成 (既定の openai を使う個人用) は対象外
         return []
 
-    problems = [p for p in (find_provider_problem(config_path, config, providers),) if p]
-    auth_path = codex_home / "auth.json"
-    # 壊れた symlink も「置かれている」側に数える
-    if auth_path.is_symlink() or auth_path.exists():
-        problems.append(
-            f"会社用の {auth_path} があります。model_provider が消えると、"
-            "このアカウントで動きます。個人用の CODEX_HOME へ移してください (ADR 0026)。"
-        )
+    problems = []
+    if providers:
+        provider_problem = find_provider_problem(config_path, config, providers)
+        if provider_problem:
+            problems.append(provider_problem)
+    auth_problem = find_auth_problem(codex_home)
+    if auth_problem:
+        problems.append(auth_problem)
     return problems
 
 

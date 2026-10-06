@@ -109,6 +109,12 @@ yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/
 - `codex/hooks.json` のhookコマンドは `$HOME/.codex/hooks/...` の直書き。個人用でも会社用のリンク経由で動くので、
   `~/.codex` が無いマシンでは個人用のhookも動かない。`CODEX_HOME` 基準にするかを決める
 - keyringに保存する設定（`cli_auth_credentials_store`）では、`auth.json` が作られないので検知できない
+- 2026-10-06のセキュリティレビューの指摘（どちらも分離前からある穴で、今回の変更で悪化はしていない）
+  - `cxp` はシェルの環境変数をそのまま引き継ぐ。`ASANA_TOKEN` や `ANTHROPIC_AUTH_TOKEN` はexportされているので、
+    個人用のCodexの子プロセス（ツール実行、MCPサーバ）から読める。会社のゲートウェイの認証は `config.toml` のヘッダにあり、
+    環境変数では渡していない
+  - 会社のリポジトリで `cxp` を実行すると、信頼済みプロジェクトの `.codex/config.toml` が効きうる（未確認）。
+    `CODEX_HOME` を分けても、プロジェクトの設定層は分かれない
 - 9/21に `model_provider` を消した主体は未特定。opencodeの初回起動（9/21 20:29）の4分後に `config.toml` が
   更新されているが、opencodeのログに書き込みの記録は無い
 
