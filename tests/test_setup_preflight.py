@@ -256,10 +256,10 @@ class SetupStateTests(unittest.TestCase):
 
     def test_backup_path_allows_agent_skills_under_home_but_rejects_outside_home(self):
         home = self.base / "home"
-        agent_skill = home / ".agents" / "skills" / "api-design"
+        agent_skill = home / ".agents" / "skills" / "backend-patterns"
         self.assertEqual(
             self.state.backup_path(home / ".codex", agent_skill, "20260821_010203", home),
-            home / ".codex" / "backups" / "20260821_010203" / ".agents" / "skills" / "api-design",
+            home / ".codex" / "backups" / "20260821_010203" / ".agents" / "skills" / "backend-patterns",
         )
         with self.assertRaises(ValueError):
             self.state.backup_path(home / ".codex", self.base / "outside", "20260821_010203", home)
@@ -312,8 +312,8 @@ class SetupPreflightTests(unittest.TestCase):
         self.assertTrue((self.repository / ".git").is_dir())
         self.assertFalse(synced.exists())
         self.assertEqual(
-            tracked_git(self.repository, self.home, "ls-files", "--", "skills/api-design/SKILL.md").stdout,
-            "skills/api-design/SKILL.md\n",
+            tracked_git(self.repository, self.home, "ls-files", "--", "skills/backend-patterns/SKILL.md").stdout,
+            "skills/backend-patterns/SKILL.md\n",
         )
         self.assertEqual(tracked_git(self.repository, self.home, "status", "--porcelain").stdout.count("?? skills/"), 0)
 
@@ -510,9 +510,9 @@ class SetupPreflightTests(unittest.TestCase):
     def test_duplicate_manifest_target_stops_before_moving_conflicts(self):
         manifest_path = self.repository / "manifests" / "skills.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["shared"].append("api-design")
+        manifest["shared"].append("backend-patterns")
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-        conflict = self.home / ".claude" / "skills" / "api-design"
+        conflict = self.home / ".claude" / "skills" / "backend-patterns"
         conflict.parent.mkdir(parents=True)
         conflict.write_text("user-owned\n", encoding="utf-8")
 
@@ -524,7 +524,7 @@ class SetupPreflightTests(unittest.TestCase):
         )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("api-design", result.stderr)
+        self.assertIn("backend-patterns", result.stderr)
         self.assertTrue(conflict.is_file())
         self.assertEqual(conflict.read_text(encoding="utf-8"), "user-owned\n")
         self.assertFalse((self.home / ".claude" / "backups").exists())
@@ -609,12 +609,12 @@ class SetupPreflightTests(unittest.TestCase):
         self.assertFalse((self.home / ".codex" / "rules").exists())
 
     def test_all_replace_backs_up_agent_skills_under_codex_timestamp(self):
-        agent_skill = self.home / ".agents" / "skills" / "api-design"
+        agent_skill = self.home / ".agents" / "skills" / "backend-patterns"
         agent_skill.parent.mkdir(parents=True)
         agent_skill.write_text("unowned\n", encoding="utf-8")
         result = run_setup(self.repository, self.home, "--all", "--replace-conflicts")
         self.assertEqual(result.returncode, 0, result.stderr)
-        backups = list((self.home / ".codex" / "backups").rglob("api-design"))
+        backups = list((self.home / ".codex" / "backups").rglob("backend-patterns"))
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_text(encoding="utf-8"), "unowned\n")
         self.assertTrue(agent_skill.is_symlink())
@@ -723,7 +723,7 @@ class SetupPreflightTests(unittest.TestCase):
     def test_legacy_parent_keeps_tracked_skill_content_and_inode(self):
         """4: git追跡中のskillは内容・inodeとも変えずrepoに残す。"""
         self.legacy_parent()
-        source = self.repository / "skills/api-design/SKILL.md"
+        source = self.repository / "skills/backend-patterns/SKILL.md"
         before = (source.read_bytes(), source.stat().st_ino)
         result = self.run_tracked_setup("--claude")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1178,7 +1178,7 @@ class SetupPreflightTests(unittest.TestCase):
     def test_all_replace_uses_one_timestamp_for_claude_and_codex_backups(self):
         claude_conflict = self.home / ".claude" / "CLAUDE.md"
         claude_conflict.write_text("claude\n", encoding="utf-8")
-        agent_conflict = self.home / ".agents" / "skills" / "api-design"
+        agent_conflict = self.home / ".agents" / "skills" / "backend-patterns"
         agent_conflict.parent.mkdir(parents=True)
         agent_conflict.write_text("agent\n", encoding="utf-8")
         result = run_setup(self.repository, self.home, "--all", "--replace-conflicts")

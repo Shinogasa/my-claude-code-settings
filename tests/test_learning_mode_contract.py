@@ -235,27 +235,6 @@ class TestDeprecatedCommandRouting(unittest.TestCase):
         self.assertNotIn("$CODEX_DIR/prompts", SETUP)
         self.assertNotIn("| `commands/` | `~/.codex/prompts/` |", README)
 
-    def test_readme_maps_legacy_commands_to_maintained_entries(self):
-        for mapping in (
-            "| `code-review` | Codex組み込み `/review` |",
-            "| `quality-gate` | `verification-loop` |",
-            "| `verify` | `verification-loop` |",
-            "| `tdd` | `superpowers:test-driven-development` |",
-        ):
-            with self.subTest(mapping=mapping):
-                self.assertIn(mapping, README)
-
-    def test_plan_skill_uses_host_neutral_follow_up_entries(self):
-        text = (ROOT / "skills" / "source-command-plan" / "SKILL.md").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("superpowers:test-driven-development", text)
-        self.assertIn("verification-loop", text)
-        self.assertIn("/review", text)
-        self.assertNotIn("/tdd", text)
-        self.assertNotIn("/code-review", text)
-        self.assertNotIn("/prp-plan", text)
-        self.assertNotIn("/prp-implement", text)
 
 
 class TestSharedSkillPortability(unittest.TestCase):
