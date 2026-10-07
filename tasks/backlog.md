@@ -439,27 +439,19 @@ external callを毎回のtestへ入れない。
 **着手条件**: 不足している表示項目と、それにより起きた具体的な問題を記録できたとき、
 またはCodex公式がcustom providerを公開したとき。
 
-### Everything Claude Code由来資産を棚卸しする
+### Everything Claude Code由来資産の残り（agents 6件） → Codex再開待ち
 
-commit `0ca03372e3ecb09c00ffedb707dc819a4b664334` で、skills 8件、agents 8件、commands 10件、
-rules 3件、contexts 3件を含む34ファイルを導入した。自前`code-review`がCodex標準reviewと
-重複していたように、Codex native機能、Superpowers、現在の自前ruleとの競合がありうる。
+commit `0ca03372` でECCから取り込んだ資産を、2026-10-07に棚卸しした。直近60日のClaude Codeの会話記録206件で
+利用を数え、使っていないcommand 10件・skill 7件と、対応する `skills/source-command-*` 6件を削除した。
+rulesは、superpowersと重なる `ecc-testing.md` を削除し、`ecc-development-workflow.md` を重ならない部分だけに縮めた。
 
-**決めたこと**: Codex移行中には一括削除しない。導入元、現行upstream、実利用記録、
-代替機能、発火競合を資産ごとに確認し、keep / replace / removeへ分類する。
+`verify`・`code-review`・`security-review` は、Claude Code本体の組み込みスキルを同名で上書きしていた。
+消したことで組み込み版が使えるようになった。今後、同名の資産を足すときは組み込みを上書きしないか確かめる。
 
-**着手条件**: Codex互換性移行の実装とruntime smoke testが完了したとき。
+**残り**: agents のうち、60日の利用が0件の6件（build-error-resolver、code-architect、code-simplifier、planner、
+refactor-cleaner、silent-failure-hunter）。`codex/agents/*.toml` がこの定義から生成されるため、消すとCodex側も変わる。
 
-**rules 3ファイルについて分かっていること（2026-10-03）**: `ecc-coding-style.md`・`ecc-testing.md`・
-`ecc-development-workflow.md` は、どれも毎セッション読み込まれている。TypeScriptに依存する記述は4行だけだった
-（`use` プレフィックスのフック、テストのコード例2つ、npmの例）。残りは不変性、命名、AAAなど言語に依存しない内容で、
-利用者が主に使うKotlinにも合う。問題は言語ではなく、次の2点にある。
-
-- `ecc-testing.md` のTDDの手順が、`superpowers:test-driven-development` と重なっている。
-  `ecc-development-workflow.md` の「planner agentで計画」「PRD等の文書を先に作る」も、今の運用と合っていない
-- 「カバレッジ80%、Unit・Integration・E2Eすべて必須」は、設定リポジトリのような作業には重い
-
-rulesだけを先に削ることも、`paths:` を付けることもしないと決めた。ほかのECC由来の資産と一緒に、この棚卸しで扱う。
+**着手条件**: Codexの作業を再開したとき。Codexでの利用も合わせて数えてから決める。
 
 ### superpowers の自動注入をプラグイン同梱フックで賄えるか → 決めること
 
@@ -974,8 +966,8 @@ Python や Markdown だけを触る作業中も常に効いている。
 **着手条件**: 指示が守られない事例が実際に出たとき、または CLAUDE.md と rules の
 合計がさらに増えたとき。
 
-2026-10-03に、候補の3ファイルは中身ごと「Everything Claude Code由来資産を棚卸しする」の項目で扱うと決めた。
-`paths:` を付けるかどうかも、そちらで keep / replace / remove を決めた後に判断する。
+2026-10-07の棚卸しで `ecc-testing.md` を削除し、`ecc-development-workflow.md` を縮めた。
+候補は `ecc-coding-style.md` と `ecc-development-workflow.md` の2つになった。`paths:` を付けるかは、上の着手条件のとおり。
 
 ### コンテナ環境で PreToolUse フックが fail-open している → `cw-workspace-local` へ移管する（先方への追記待ち）
 
