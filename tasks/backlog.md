@@ -448,7 +448,7 @@ rulesは、superpowersと重なる `ecc-testing.md` を削除し、`ecc-developm
 `verify`・`code-review`・`security-review` は、Claude Code本体の組み込みスキルを同名で上書きしていた。
 消したことで組み込み版が使えるようになった。今後、同名の資産を足すときは組み込みを上書きしないか確かめる。
 
-**残り**: agents のうち、60日の利用が0件の6件（build-error-resolver、code-architect、code-simplifier、planner、
+**残り**: agentsのうち、60日の利用が0件の6件（build-error-resolver、code-architect、code-simplifier、planner、
 refactor-cleaner、silent-failure-hunter）。`codex/agents/*.toml` がこの定義から生成されるため、消すとCodex側も変わる。
 
 **着手条件**: Codexの作業を再開したとき。Codexでの利用も合わせて数えてから決める。

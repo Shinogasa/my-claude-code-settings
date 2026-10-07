@@ -4,12 +4,12 @@ alwaysApply: true
 
 # Development Workflow
 
-開発パイプラインのうち、superpowers が扱わない調査・コミット・PR前の確認を定める。
+開発パイプラインのうち、superpowersが扱わない調査・コミット・PR前の確認を定める。
 
 ## Feature Implementation Workflow
 
-計画、TDD、コードレビューの手順は superpowers のskill（brainstorming → writing-plans →
-test-driven-development → requesting-code-review）に従う。ここでは superpowers が扱わない部分だけを定める。
+計画、TDD、コードレビューの手順はsuperpowersのskill（brainstorming → writing-plans →
+test-driven-development → requesting-code-review）に従う。ここではsuperpowersが扱わない部分だけを定める。
 
 1. **Research & Reuse** _(mandatory before any new implementation)_
    - **GitHub code search first:** Run `gh search repos` and `gh search code` to find existing implementations, templates, and patterns before writing anything new.
