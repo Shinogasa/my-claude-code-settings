@@ -842,7 +842,7 @@ PR作成時のレビューは止めた記録を消さない形に直したので
 
 ## Claude Code 設定の追随
 
-### `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` を外せるか → 決めること
+### `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` を外せるか → 残すと決めた（2026-10-07）
 
 `.env` 経由で `settings.json` に `"1"` が焼き込まれており、beta 配信される機能を
 受け取れない。**この変数は公式の env-vars ページに記載が無い**（submodule の
@@ -860,7 +860,11 @@ v1.81.11-nightly 以降への更新）であり、クライアント側の無効
 
 両方が「Anthropic 直 かつ 更新済み」なら、この変数は不要になる。
 
-**着手条件**: gateway の構成を確認できたとき。
+**決めたこと（2026-10-07）**: 残す。gatewayのバックエンドはBedrock経由で、betaヘッダの問題が起きる経路にあたる。
+LiteLLMのバージョンは分からない（gatewayの `/health/readiness` と `/health/liveliness` の応答にバージョンは含まれず、`/version` は404）。
+試しに外して1回通っても、betaヘッダは機能ごとに送られるので、外して大丈夫な証拠にはならない。
+
+**着手条件**: gatewayの管理者に、LiteLLMが v1.81.11-nightly 以降かを確かめられたとき。
 
 ### rules を `paths:` で遅延読み込みにするか → 決めること
 
@@ -922,25 +926,3 @@ Python や Markdown だけを触る作業中も常に効いている。
 2026-10-01 時点で先方の作業ツリーに未コミットの変更があったため、追記は保留している。
 追記したらこの項目を参照だけに縮める。
 
-### cmux の hook が 5 秒でタイムアウトする
-
-cmux（0.64.25）が Claude Code の起動時に `--settings` で渡す一時ファイル
-（`$TMPDIR/cmux-claude-settings.*`）の hook が、`timeout = 5` で打ち切られることがある。
-このリポジトリの設定ではなく、cmux が起動のたびに生成する設定に入っている。
-
-```
-UserPromptSubmit hook [cmux_cli=... hooks enqueue claude prompt-submit ...] timed out after 5s — output discarded.
-```
-
-- `UserPromptSubmit` を含むほぼ全イベント（Notification、PreToolUse、PostToolUse、Stop など）が
-  `timeout = 5`。`PermissionRequest` は 125、Stop の `auto-name` は 120
-- hook 内の cmux CLI 呼び出しは `CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5` と失敗時の `{}` を持つのに、
-  全体が 5 秒を超えた。どこで待っているか（CLI の起動、ソケット接続、標準入力の読み取り）は未確認
-- 打ち切られても出力が捨てられるだけで、Claude Code の動作は止まらない。cmux 側の通知や
-  プロンプト連携が欠ける可能性がある（未確認）
-
-**決めたこと（2026-10-04）**: cmuxのhook連携は使っていないので、`CMUX_CLAUDE_HOOKS_DISABLED=1` で切る。
-5秒かかっている段階の計測はしない。
-
-**残る判断**: 変数をどこで設定するか。cmuxが起動時に読む環境変数なので、このリポジトリの `settings.json` ではなく
-シェルの設定（dotfiles側）になる見込み。cmuxが参照するタイミングは未確認。
