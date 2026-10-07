@@ -4,11 +4,14 @@ alwaysApply: true
 
 # Development Workflow
 
-開発パイプライン: research, planning, TDD, code review, and commit。
+開発パイプラインのうち、superpowers が扱わない調査・コミット・PR前の確認を定める。
 
 ## Feature Implementation Workflow
 
-0. **Research & Reuse** _(mandatory before any new implementation)_
+計画、TDD、コードレビューの手順は superpowers のskill（brainstorming → writing-plans →
+test-driven-development → requesting-code-review）に従う。ここでは superpowers が扱わない部分だけを定める。
+
+1. **Research & Reuse** _(mandatory before any new implementation)_
    - **GitHub code search first:** Run `gh search repos` and `gh search code` to find existing implementations, templates, and patterns before writing anything new.
    - **Library docs second:** Use Context7 or primary vendor docs to confirm API behavior, package usage, and version-specific details before implementing.
    - **Exa only when the first two are insufficient:** Use Exa for broader web research or discovery after GitHub search and primary docs.
@@ -16,30 +19,12 @@ alwaysApply: true
    - **Search for adaptable implementations:** Look for open-source projects that solve 80%+ of the problem and can be forked, ported, or wrapped.
    - Prefer adopting or porting a proven approach over writing net-new code when it meets the requirement.
 
-1. **Plan First**
-   - Use **planner** agent to create implementation plan
-   - Generate planning docs before coding: PRD, architecture, system_design, tech_doc, task_list
-   - Identify dependencies and risks
-   - Break down into phases
-
-2. **TDD Approach**
-   - Use the **superpowers:test-driven-development** skill
-   - Write tests first (RED)
-   - Implement to pass tests (GREEN)
-   - Refactor (IMPROVE)
-   - Verify 80%+ coverage
-
-3. **Code Review**
-   - Run `/code-review` immediately after writing code
-   - Address CRITICAL and HIGH issues
-   - Fix MEDIUM issues when possible
-
-4. **Commit & Push**
+2. **Commit & Push**
    - Detailed commit messages
    - Follow conventional commits format
    - Conventional commits形式を使用する
 
-5. **Pre-Review Checks**
+3. **Pre-Review Checks**
    - Verify all automated checks (CI/CD) are passing
    - Resolve any merge conflicts
    - Ensure branch is up to date with target branch
