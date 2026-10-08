@@ -100,3 +100,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0026](0026-codex-separate-personal-home.md) | Codexの個人用に `CODEX_HOME` を分ける | 2026-10-04 | accepted |
 | [0027](0027-code-learning-focus-area-cap.md) | 本人が宣言した重点学習領域だけコード学習の上限を上げる | 2026-10-08 | accepted |
 | [0028](0028-work-principles-delivery.md) | 仕事の原則集を、書き出したコピーと独立したレビュワーで届ける | 2026-10-08 | accepted |
+| [0030](0030-setup-state-batch-invocation.md) | setup.sh から setup-state.py を対象ごとではなく一括で呼ぶ | 2026-10-09 | accepted |
