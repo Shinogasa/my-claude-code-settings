@@ -282,6 +282,9 @@ class GitSideEffectTests(HookCase):
         self.write("docs/specs/a.md", "変更")
         self.untracked = self.write("docs/specs/new.md")
         self.index = self.repo / ".git" / "index"
+        # 秒の境目をまたいでも racy になるよう、mtime をインデックスにそろえる
+        index_mtime = self.index.stat().st_mtime_ns
+        os.utime(self.tracked, ns=(index_mtime, index_mtime))
 
     def test_filters_are_not_run_and_index_is_not_written(self):
         cases = [("git commit -a -m x", self.tracked), ("git add -A && git commit -m x", self.untracked),
