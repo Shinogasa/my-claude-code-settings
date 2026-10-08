@@ -110,8 +110,11 @@ PreToolUse の `Bash` で動く。
    - サブモジュールの filter: `diff-files` はサブモジュールの中で `git status` を起動し、サブモジュール側の設定の filter を走らせる
      （2026-10-08 に実測）。`diff-files` と `diff-index` に `--ignore-submodules` を付ける
    - 欠けたオブジェクトの取得（lazy fetch）: partial clone で HEAD のツリーが手元に無いと、`diff-index` が remote の `uploadpack` の
-     コマンドを起動する（2026-10-08 に実測）。`GIT_NO_LAZY_FETCH=1` で止め、検査できなかったとして1回止める。あわせて
-     `-c protocol.allow=never -c core.sshCommand=false -c core.askPass= -c credential.helper=` で通信の経路を閉じる
+     コマンドを起動する（2026-10-08 に実測）。`GIT_NO_LAZY_FETCH=1`（Git 2.45.0 以降）で止め、検査できなかったとして1回止める。
+     lazy fetch を確実に止めるのはこの環境変数だけである。あわせて
+     `-c protocol.allow=never -c core.sshCommand=false -c core.askPass= -c credential.helper=` も付けるが、多層防御にとどまる。
+     リポジトリの設定の `protocol.<名前>.allow=always` は `protocol.allow` より優先されるので、`-c` では閉じきれない。
+     `core.askPass=` を空にしても、環境の `SSH_ASKPASS` に戻る。Git 2.45 未満では、リポジトリの設定のコマンドが承認前に走りうる（受け入れた。backlog）
    - インデックスの書き戻し: `GIT_OPTIONAL_LOCKS=0`
    - 利用者の環境: `GIT_` で始まる環境変数（`GIT_DIR`・`GIT_INDEX_FILE` など）を引き継がず、`GIT_CONFIG_NOSYSTEM=1`・`GIT_TERMINAL_PROMPT=0`
    - 止まらない git と孫プロセス: `git` は新しいセッションで起動し、出力は一時ファイルに受ける。終わるか、10秒とフック全体の残り時間の
@@ -232,6 +235,8 @@ ADR 0025 は日本語レビューの時点をコミットからPR作成へ移し
   `setup.sh` がブランチの切り替えを検知するかを決める（backlog）
 
 - `guard-dangerous-bash.py` と `jp-doc-review.py` の `git` 呼び出しは、このフックと同じ対策（lazy fetch・filter など）をしていない（backlog）
+- Git 2.45 未満では lazy fetch を止められず、per-protocol の `allow` が `-c` を上書きする（backlog）
+- リポジトリのルートに制御文字・書式文字があると、レビュワーがファイルを開けない（パスは escape して表示される）（backlog）
 
 ### 受け入れた（理由つき）
 
@@ -247,6 +252,8 @@ ADR 0025 は日本語レビューの時点をコミットからPR作成へ移し
 - ハードリンクで、リポジトリの外のファイルと同じ実体を指す対象は見分けない。symlink と違い、パスからは外を指していると分からない
 - 検査とレビュワーの読み取りの間に、ファイルが差し替えられる（TOCTOU）ことは防がない。どちらも利用者の作業ツリーの中で起きることで、
   フックは承認を求めるだけで、読み取りの時点を固定できない
+- 絶対パスが200字を超えるファイルは、拒否せず、注記つきでレビューの対象から外す。深すぎるチェックアウトではレビューが行われない
+- Git 2.45 未満では、リポジトリの設定のコマンドが承認前に走りうる。Git 2.45 未満を使う環境は限られ、backlog で扱う
 
 ### 未確認
 
