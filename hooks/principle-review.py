@@ -156,9 +156,12 @@ def session_key(payload: dict) -> Optional[str]:
 def session_lock(key: str) -> Iterator[None]:
     """同じセッションのフックが並行して動いても、同じファイルを2回「1回目」と数えないようにする。"""
     state_dir().mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd = os.open(state_dir() / f"{key}.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    os.chmod(state_dir(), 0o700)
+    lock_path = state_dir() / f"{key}.lock"
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
+        os.utime(lock_path)  # 使っているロックを、古い状態の掃除で消さないようにする
         yield
     finally:
         os.close(fd)
@@ -168,21 +171,35 @@ def read_state(key: str) -> dict:
     path = state_dir() / f"{key}.json"
     if not path.exists():
         return {"paths": {}, "error_shown": False}
-    return json.loads(path.read_text(encoding="utf-8"))
+    fresh = {"paths": {}, "error_shown": False}
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return fresh  # 壊れた状態は空に置き換える。対象は未記録になるので1回止まる
+    if not isinstance(state, dict) or not isinstance(state.get("paths"), dict):
+        return fresh
+    return state
 
 
 def write_state(key: str, value: dict) -> None:
     fd, temporary = tempfile.mkstemp(dir=state_dir(), prefix=f".{key}.", suffix=".tmp")
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(value, handle, ensure_ascii=False)
-    os.replace(temporary, state_dir() / f"{key}.json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, ensure_ascii=False)
+        os.replace(temporary, state_dir() / f"{key}.json")
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def cleanup_old_state() -> None:
     limit = time.time() - STATE_RETENTION_DAYS * 86400
     for path in state_dir().glob("*"):
-        if path.is_file() and path.stat().st_mtime < limit:
-            path.unlink(missing_ok=True)
+        try:
+            if path.is_file() and path.stat().st_mtime < limit:
+                path.unlink()
+        except FileNotFoundError:
+            continue  # 並行して動いた別のフックが先に消した
 
 
 def transcript_size(payload: dict) -> int:
@@ -253,7 +270,7 @@ def main(argv: List[str]) -> int:
         emit(handle(payload))
     except Exception as error:  # 検査できなかったことを黙って通さず、フックのエラーとして画面に出す
         print(f"principle-review: {type(error).__name__}: {error}", file=sys.stderr)
-        return 1
+        emit(with_messages({}, [f"原則レビューを検査できなかった（{type(error).__name__}: {error}）。止めずに通した"]))
     return 0
 
 
