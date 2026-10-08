@@ -95,8 +95,12 @@ PreToolUse の `Bash` で動く。
    変更された追跡ファイル（`git diff --name-only`）も含める。
    同じコマンドの中で `git commit` より前に `git add`（`git stage`）があれば、区切りの種類によらずそのコミットに結び付ける。
    PreToolUse の時点では add がまだ実行されていないので、add ごとに `git add --dry-run --ignore-missing` で足すファイルを確かめ、
-   コミット先のリポジトリの下にあるものを含める。add の移動先を確定できない、`-p`・`-i`・`-e` を使う、dry-run が失敗する、
-   出力を解析できない、のどれかなら、変更された追跡ファイルと、対象の場所にある未追跡ファイルを広めに含める
+   コミット先のリポジトリの下にあるものを含める。add の移動先を確定できない、許可していないオプションがある、dry-run が失敗する、
+   出力を解析できない、のどれかなら、変更された追跡ファイルと、対象の場所にある未追跡ファイルを広めに含める。
+   フックは利用者がコマンドを承認する前に動くので、dry-run に渡すオプションは `-A`・`--all`・`-u`・`--update`・`-f`・`--force`・
+   `--no-ignore-removal`・`--ignore-removal`・`--no-all` だけにする（`--pathspec-from-file` や `-N`・`-p` などは渡さない）。
+   pathspec は明示した `--` の後に渡す。フックの `git` 呼び出しにはすべて `-c core.fsmonitor=false -c core.hooksPath=/dev/null` を付け、
+   リポジトリの設定でコマンドが走らないようにする
 3. 対象の場所に当たるファイルを節目に分ける
    - `spec`: `docs/superpowers/specs/`、`docs/specs/`、`docs/adr/` の下の `.md`
    - `plan`: `docs/superpowers/plans/`、`docs/plans/` の下の `.md`
@@ -155,7 +159,8 @@ ADR 0025 は日本語レビューの時点をコミットからPR作成へ移し
 - フック（このリポジトリの `tests/`、TDD）: 対象の場所の判定（spec・plan・対象外・削除）、`-a` の扱い、
   （セッション, パス）の組で1回だけ止めること、止めるときの理由の中身、6.1の各行、2回目の通過とレビュワー未起動の表示。
   `git add` と同じコマンドのコミット: add の後の commit（未追跡）、`add -A`、サブディレクトリからの `add .`、
-  未追跡の下書きを残して別のファイルだけを add（通す）、`-C` で別のリポジトリ、日本語とスペースの名前、`add -p`（広めに取る）、
+  未追跡の下書きを残して別のファイルだけを add（通す）、`-C` で別のリポジトリ、日本語とスペースの名前、`add -p`・`-N`・
+  `--pathspec-from-file`（渡さずに広めに取る）、設定した `core.fsmonitor` が走らないこと、
   `git add` だけ（通す）。`git commit` の pathspec・`-o`・`--include` が未ステージの変更を含めること
 - 配線（このリポジトリの `tests/`）: フックのファイルが無い一時 HOME で、登録された command を `sh -c` で走らせ、
   exit 0 と `systemMessage` になること
