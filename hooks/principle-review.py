@@ -44,9 +44,12 @@ LONG_OPTS_WITH_VALUE = {"--message", "--file", "--author", "--date", "--cleanup"
 # 未ステージの変更もコミットに入れる git commit のオプション
 WORKTREE_LONG_OPTS = {"--all", "--only", "--include", "--pathspec-from-file"}
 WORKTREE_SHORT_FLAGS = set("aoi")
-# 対象を git add --dry-run で確かめられない git add のオプション
-INTERACTIVE_ADD_OPTS = {"-p", "--patch", "-i", "--interactive", "-e", "--edit"}
-INTERACTIVE_ADD_SHORT_FLAGS = set("pie")
+# git add --dry-run に渡してよいオプション。フックは利用者がコマンドを承認する前に動くので、
+# 任意のファイルを読む（--pathspec-from-file）、インデックスを書く（--refresh・-N など）、対話する（-p など）
+# オプションは渡さない。これ以外のオプションがあれば dry-run をせず、広めに取る
+SAFE_ADD_OPTS = {"-A", "--all", "-u", "--update", "-f", "--force", "--no-ignore-removal", "--ignore-removal", "--no-all"}
+# リポジトリの設定でコマンドが走らないよう、フックの git 呼び出しすべてに付ける
+SAFE_GIT_CONFIG = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
 
 
 def commit_options(args: List[str]) -> Tuple[set, set, List[str]]:
@@ -169,7 +172,7 @@ def _git(repo: str, deadline: float, *args: str) -> subprocess.CompletedProcess:
         raise GitError(f"フック全体の時間予算（{TIME_BUDGET_SECONDS}秒）を使い切った")
     try:
         # メッセージで「リポジトリ外」を見分けるので、翻訳されないよう LC_ALL=C にする
-        return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True,
+        return subprocess.run(["git", "-C", repo, *SAFE_GIT_CONFIG, *args], capture_output=True, text=True,
                               timeout=min(GIT_TIMEOUT_SECONDS, remaining), env={**os.environ, "LC_ALL": "C"})
     except (OSError, subprocess.SubprocessError) as error:
         raise GitError(f"git を実行できない: {error}") from error
@@ -190,10 +193,32 @@ def _broad_paths(root: str, deadline: float) -> List[str]:
             *_git_paths(root, deadline, "ls-files", "-z", "--others", "--exclude-standard", "--", *prefixes)]
 
 
+def _split_add_args(args: Tuple[str, ...]) -> Optional[Tuple[List[str], List[str]]]:
+    """git add の引数を、渡してよいオプションと pathspec に分ける。渡せないオプションがあれば None。"""
+    options: List[str] = []
+    pathspecs: List[str] = []
+    for index, token in enumerate(args):
+        if token == "--":
+            pathspecs.extend(args[index + 1:])
+            break
+        if token.startswith("-"):
+            if token not in SAFE_ADD_OPTS:
+                return None
+            options.append(token)
+        else:
+            pathspecs.append(token)
+    return options, pathspecs
+
+
 def _dry_run_paths(directory: str, args: Tuple[str, ...], deadline: float) -> Optional[List[str]]:
     """git add が足すファイルの絶対パスを返す。確かめられなければ None。"""
+    split = _split_add_args(args)
+    if split is None:
+        return None
+    options, pathspecs = split
     top = _git(directory, deadline, "rev-parse", "--show-toplevel")
-    result = _git(directory, deadline, "-c", "core.quotePath=false", "add", "--dry-run", "--ignore-missing", *args)
+    result = _git(directory, deadline, "-c", "core.quotePath=false", "add", "--dry-run", "--ignore-missing",
+                  *options, "--", *pathspecs)
     if top.returncode != 0 or result.returncode != 0:
         return None
     paths = []
@@ -206,24 +231,11 @@ def _dry_run_paths(directory: str, args: Tuple[str, ...], deadline: float) -> Op
     return paths
 
 
-def _is_interactive_add(args: Tuple[str, ...]) -> bool:
-    for token in args:
-        if token == "--":
-            return False
-        if token in INTERACTIVE_ADD_OPTS:
-            return True
-        if token.startswith("-") and not token.startswith("--") and set(token[1:]) & INTERACTIVE_ADD_SHORT_FLAGS:
-            return True
-    return False
-
-
 def _added_paths(root: str, adds: Tuple[Add, ...], deadline: float) -> List[str]:
     """先に出た git add が、このコミットのリポジトリに足しうるファイルの、ルートからの相対パスを返す。"""
     relatives: List[str] = []
     for directory, args in adds:
-        absolute = None
-        if directory is not None and not _is_interactive_add(args):
-            absolute = _dry_run_paths(directory, args, deadline)
+        absolute = None if directory is None else _dry_run_paths(directory, args, deadline)
         if absolute is None:
             relatives.extend(_broad_paths(root, deadline))
             continue
