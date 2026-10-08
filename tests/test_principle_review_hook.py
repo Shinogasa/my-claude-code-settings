@@ -200,3 +200,57 @@ class StateResilienceTests(HookCase):
             os.utime(self.base / "state" / name, (old, old))
         self.run_hook("git commit -m x")
         self.assertTrue((self.base / "state" / "s1.lock").exists())
+
+
+def agent_call(subagent_type):
+    return {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Agent", "input": {"subagent_type": subagent_type, "prompt": "p"}}]}}
+
+
+class FailureAndFollowUpTests(HookCase):
+    def append_transcript(self, *entries):
+        with self.transcript_path.open("a", encoding="utf-8") as handle:
+            for entry in entries:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    def test_missing_principles_data_denies_once_then_passes_with_message(self):
+        self.data.unlink()
+        self.stage("docs/specs/a.md")
+        first = self.run_hook("git commit -m x")[1]
+        self.assertEqual(decision_of(first), "deny")
+        self.assertIn("原則集を読めない", first["hookSpecificOutput"]["permissionDecisionReason"])
+        second = self.run_hook("git commit -m x")[1]
+        self.assertIsNone(decision_of(second))
+        self.assertIn("原則集を読めない", second["systemMessage"])
+
+    def test_missing_session_id_passes_with_message(self):
+        self.stage("docs/specs/a.md")
+        payload = {"cwd": str(self.repo), "tool_input": {"command": "git commit -m x"}}
+        code, output = self.run_hook("", raw=json.dumps(payload))
+        self.assertIsNone(decision_of(output))
+        self.assertIn("検査できなかった", output["systemMessage"])
+
+    def test_unreadable_input_passes_with_message(self):
+        code, output = self.run_hook("", raw="{not json")
+        self.assertEqual(code, 0)
+        self.assertIn("検査できなかった", output["systemMessage"])
+
+    def test_second_commit_warns_when_reviewer_was_not_started(self):
+        self.stage("docs/specs/a.md")
+        self.run_hook("git commit -m x")
+        self.append_transcript(agent_call("jp-doc-reviewer"))
+        output = self.run_hook("git commit -m x")[1]
+        self.assertIsNone(decision_of(output))
+        self.assertIn("principle-reviewer が起動していない", output["systemMessage"])
+
+    def test_second_commit_is_quiet_when_reviewer_was_started(self):
+        self.stage("docs/specs/a.md")
+        self.run_hook("git commit -m x")
+        self.append_transcript(agent_call("principle-reviewer"))
+        self.assertEqual(self.run_hook("git commit -m x"), (0, {}))
+
+    def test_warning_is_shown_only_once_per_file(self):
+        self.stage("docs/specs/a.md")
+        self.run_hook("git commit -m x")
+        self.run_hook("git commit -m x")
+        self.assertEqual(self.run_hook("git commit -m x"), (0, {}))
