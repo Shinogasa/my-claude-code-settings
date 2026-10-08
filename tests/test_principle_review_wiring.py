@@ -70,7 +70,7 @@ class ReviewerAgentTests(unittest.TestCase):
 
     def test_name_and_read_only_tools(self):
         self.assertEqual(self.meta["name"], "principle-reviewer")
-        self.assertEqual(set(codex_agents.parse_tools(self.meta["tools"])), {"Read", "Grep"})
+        self.assertEqual(set(codex_agents.parse_tools(self.meta["tools"])), {"Read"})
 
     def test_body_points_to_data_and_reading_rules(self):
         self.assertIn("~/.claude/skills/work-principles/principles.json", self.body)
