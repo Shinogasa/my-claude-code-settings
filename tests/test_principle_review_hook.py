@@ -44,3 +44,124 @@ class ClassifyTests(unittest.TestCase):
         self.assertTrue(f(["git", "commit", "--all"]))
         self.assertFalse(f(["git", "commit", "-m", "-a"]))
         self.assertFalse(f(["git", "commit", "-m", "add all"]))
+
+
+def decision_of(output):
+    return output.get("hookSpecificOutput", {}).get("permissionDecision")
+
+
+class HookCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name).resolve()
+        self.repo = self.base / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-q", "-b", "work")
+        git(self.repo, "config", "user.name", "t")
+        git(self.repo, "config", "user.email", "t@example.invalid")
+        git(self.repo, "commit", "-q", "--allow-empty", "-m", "init")
+        self.data = self.base / "principles.json"
+        self.data.write_text('{"principles": []}', encoding="utf-8")
+        self.transcript_path = self.base / "transcript.jsonl"
+        self.transcript_path.write_text("", encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_hook(self, command, session="s1", cwd=None, raw=None):
+        payload = {"session_id": session, "cwd": str(cwd or self.repo), "transcript_path": str(self.transcript_path),
+                   "tool_name": "Bash", "tool_input": {"command": command}}
+        env = {**os.environ, "PRINCIPLE_REVIEW_STATE_DIR": str(self.base / "state"),
+               "PRINCIPLE_REVIEW_DATA": str(self.data)}
+        result = subprocess.run([sys.executable, str(HOOK)], input=raw if raw is not None else json.dumps(payload),
+                                capture_output=True, text=True, env=env)
+        output = json.loads(result.stdout) if result.stdout.strip() else {}
+        return result.returncode, output
+
+    def stage(self, relative, text="本文", repo=None):
+        path = (repo or self.repo) / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        git(repo or self.repo, "add", relative)
+        return path
+
+
+class BlockOnceTests(HookCase):
+    def test_non_commit_passes_silently(self):
+        self.stage("docs/specs/a.md")
+        self.assertEqual(self.run_hook("git status"), (0, {}))
+
+    def test_commit_without_targets_passes_silently(self):
+        self.stage("src/a.py")
+        self.assertEqual(self.run_hook("git commit -m x"), (0, {}))
+
+    def test_spec_commit_is_denied_once_with_reviewer_instruction(self):
+        path = self.stage("docs/superpowers/specs/a.md")
+        code, output = self.run_hook("git commit -m x")
+        self.assertEqual((code, decision_of(output)), (0, "deny"))
+        reason = output["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("principle-reviewer", reason)
+        self.assertIn(f"spec: {path}", reason)
+        self.assertIn("要約せず", reason)
+        self.assertIsNone(decision_of(self.run_hook("git commit -m x")[1]))
+
+    def test_edited_after_review_is_not_denied_again(self):
+        self.stage("docs/specs/a.md", "一版")
+        self.run_hook("git commit -m x")
+        self.stage("docs/specs/a.md", "二版")
+        self.assertIsNone(decision_of(self.run_hook("git commit -m x")[1]))
+
+    def test_new_plan_in_same_session_is_denied(self):
+        self.stage("docs/specs/a.md")
+        self.run_hook("git commit -m x")
+        git(self.repo, "commit", "-q", "-m", "spec")
+        self.stage("docs/superpowers/plans/a.md")
+        self.assertEqual(decision_of(self.run_hook("git commit -m x")[1]), "deny")
+
+    def test_other_session_is_denied_again(self):
+        self.stage("docs/specs/a.md")
+        self.run_hook("git commit -m x", session="s1")
+        self.assertEqual(decision_of(self.run_hook("git commit -m x", session="s2")[1]), "deny")
+
+    def test_deleted_target_only_passes(self):
+        self.stage("docs/adr/0001-x.md")
+        git(self.repo, "commit", "-q", "-m", "adr")
+        git(self.repo, "rm", "-q", "docs/adr/0001-x.md")
+        self.assertEqual(self.run_hook("git commit -m x"), (0, {}))
+
+    def test_japanese_and_space_in_filename(self):
+        self.stage("docs/specs/仕事の 原則.md")
+        self.assertEqual(decision_of(self.run_hook("git commit -m x")[1]), "deny")
+
+    def test_unstaged_change_counts_only_with_all_flag(self):
+        self.stage("docs/specs/a.md")
+        git(self.repo, "commit", "-q", "-m", "spec")
+        (self.repo / "docs/specs/a.md").write_text("変更", encoding="utf-8")
+        self.assertEqual(self.run_hook("git commit -m x"), (0, {}))
+        self.assertEqual(decision_of(self.run_hook("git commit -am x")[1]), "deny")
+
+
+class TargetRepositoryTests(HookCase):
+    def setUp(self):
+        super().setUp()
+        self.other = self.base / "other"
+        self.other.mkdir()
+        git(self.other, "init", "-q", "-b", "work")
+        git(self.other, "config", "user.name", "t")
+        git(self.other, "config", "user.email", "t@example.invalid")
+        git(self.other, "commit", "-q", "--allow-empty", "-m", "init")
+
+    def test_git_dash_c_targets_the_other_repository(self):
+        path = self.stage("docs/specs/a.md", repo=self.other)
+        code, output = self.run_hook(f"git -C {self.other} commit -m x")
+        self.assertEqual(decision_of(output), "deny")
+        self.assertIn(str(path), output["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_cd_and_commit_targets_the_other_repository(self):
+        self.stage("docs/specs/a.md", repo=self.other)
+        self.assertEqual(decision_of(self.run_hook(f"cd {self.other} && git commit -m x")[1]), "deny")
+
+    def test_outside_any_repository_passes(self):
+        outside = self.base / "outside"
+        outside.mkdir()
+        self.assertEqual(self.run_hook("git commit -m x", cwd=outside), (0, {}))
