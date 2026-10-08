@@ -11,7 +11,8 @@
         "yomiyasu"
     ],
     "claude": [
-        "claude-code-best-practice"
+        "claude-code-best-practice",
+        "work-principles"
     ],
     "codex": [
         "codex-cli-best-practice"
