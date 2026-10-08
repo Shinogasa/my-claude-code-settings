@@ -99,7 +99,7 @@ class TestSkillManifest(unittest.TestCase):
                 assert_complete_classification({"learning-mode"}, actual)
 
     def test_host_specific_entries_are_fixed(self):
-        self.assertEqual(self.manifest["claude"], ["claude-code-best-practice"])
+        self.assertEqual(self.manifest["claude"], ["claude-code-best-practice", "work-principles"])
         self.assertEqual(self.manifest["codex"], ["codex-cli-best-practice"])
 
     def test_shared_entries_are_sorted(self):

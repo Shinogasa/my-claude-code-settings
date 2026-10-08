@@ -49,6 +49,18 @@ PR作成時の日本語レビュー、マージ済みPRの照会、`claude-headl
 設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯はADR 0024と0025。
 最初の実装はClaude Codeだけを対象にした。
 
+### P1: `cd <別のリポジトリ> && gh pr create` でPR作成時のレビューが止まらなかった
+
+2026-10-08、sakurai-transcripts を cwd にしたセッションから `cd ~/garage/my-claude-code-settings && gh pr create ...` を実行して PR #68 を作った。
+仕様書とADR（日本語のMarkdown）を含むのに、`pre-tool-use-bash` は止めなかった。
+
+コードを読んだ範囲では、`handle_pre_tool_use_bash` はPRを作るリポジトリを、入力の `cwd` から `_find_git_root` で決めている。
+コマンド中の `cd` を見ていないので、cwd 側のリポジトリ（差分に日本語文書が無い）を調べた可能性がある。原因はまだ再現で確かめていない。
+ADR 0025 の背景で挙げた、コミットでの `cd` による取り違えと同じ型にあたる。
+
+**決めること**: PRを作るリポジトリの解決に、`guard-dangerous-bash.py` のディレクトリ解決（`apply_directory_change`・`git_target_dirs`）を再利用するか。
+`gh` の `-R` / `--repo` の指定も扱うか。
+
 ### P2: Codexでも日本語文書のレビューを動かす
 
 Codexの公式ドキュメント（2026-10-01確認）では、PreToolUse・PostToolUseが `apply_patch` とMCPツールにも動き、
@@ -954,3 +966,52 @@ Python や Markdown だけを触る作業中も常に効いている。
 2026-10-01 時点で先方の作業ツリーに未コミットの変更があったため、追記は保留している。
 追記したらこの項目を参照だけに縮める。
 
+---
+
+## 仕事の原則集
+
+`jp-doc-review` の課題は、上の「日本語文書レビュー（yomiyasu）の続き」にある（P1）。ここには重ねて書かない。
+
+### 原則集の basis を照合して公開する
+
+**決めること**: basis を動画と照合する範囲（全25件か、助言でよく引かれる原則だけか）。
+仕事の原則集の公開コピーには、照合していない basis を入れていない（ADR 0028）。照合したら、書き出しの公開する欄に basis を足す。
+
+### 原則レビューのフックと助言スキルを Codex に対応させる
+
+**決めること**: Codex のフック（`codex/hooks.json`）で同じ挙動を作るか、助言スキルだけを共有するか。
+`principle-reviewer` の指示文が名指しする原則集のパスは `~/.claude/skills/work-principles/` だけで、Codex では読む先が違う。対応するときに、ホスト別のパスを併記する。
+
+### フックの無いブランチへ戻すと全 Bash が止まる
+
+**決めること**: 全フックの command を「ファイルが無ければ表示して通す」形にそろえるか、`setup.sh` がブランチの切り替えを検知して生成し直すか。
+設定リポジトリの作業ツリーを、あるフックを足す前のブランチへ戻すと、生成済みの `~/.claude/settings.json` がまだそのフックを呼び、
+ファイルが無いので exit 2 になって全 Bash が止まる。`principle-review.py` だけは command 側で避けた（仕様書 2026-10-08-work-principles-design.md の10章）。
+
+### `unittest discover` が一部のテストで止まる
+
+**決めること**: 原因の調査を先にするか、止まるモジュールを分けて走らせるか。
+`python3 -m unittest discover -s tests` を実行すると、`test_codex_model_switch`・`test_learning_store`・`test_setup_cli`・`test_setup_preflight` で止まる（2026-10-08、main 由来、原因は未調査）。
+
+### `permissions.deny` で Read・Grep の機密パスを拒否するか
+
+**決めること**: 拒否するパス（`~/.ssh`・`~/.aws`・`.env` など、どこまで含めるか）と、`settings.json.template` に書くと全セッションの Read・Grep に効くことを受け入れるか。
+`principle-reviewer` は Read だけを使うが、成果物に読み先を指示されても従わないことは指示文で頼んでいるだけで、仕組みでは止めていない（2026-10-08 のセキュリティレビュー）。
+
+### guard-dangerous-bash.py と jp-doc-review.py の git 呼び出しも、承認前に相手の設定で動く経路（lazy fetch・filter など）を塞ぐか
+
+**決めること**: `hooks/principle-review.py` の `_git`（GIT_ 環境変数を引き継がない、`GIT_NO_LAZY_FETCH=1`、fsmonitor・フック・通信の無効化、
+filter の打ち消し、新しいセッションで起動してグループごと止める）を共通の補助に切り出して使うか、それぞれに必要な分だけ足すか。
+どちらのフックも利用者がコマンドを承認する前に、作業中のリポジトリで `git` を実行する。原則レビューのフックでは、
+partial clone の lazy fetch とサブモジュールの filter が承認前に走ることを 2026-10-08 に実測した。ほかの2つは確かめていない。
+
+### Git 2.45 未満で lazy fetch を止められない／per-protocol の allow で -c が上書きされる
+
+**決めること**: Git 2.45 未満を「検査できなかった」扱いにするか、`protocol.{file,ssh,git,http,https,ext}.allow=never` を明示するか。
+`GIT_NO_LAZY_FETCH` は Git 2.45.0 以降で効く。それ未満では lazy fetch を止められず、リポジトリの設定のコマンドが承認前に走りうる。
+`-c protocol.allow=never` も、リポジトリの `protocol.<名前>.allow=always` に上書きされる（仕様書 2026-10-08-work-principles-design.md の6章・10章）。
+
+### リポジトリのルートに制御文字・書式文字があるとレビュワーがファイルを開けない
+
+**決めること**: `has_control` を絶対パスに当てて除外するか。
+いまは相対パスにだけ当てているので、ルートに制御文字・書式文字があると、パスは escape して表示され、レビュワーがファイルを開けない（仕様書の10章）。
