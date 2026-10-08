@@ -10,7 +10,7 @@
 
 **Tech Stack:** sakurai-transcripts は Python 3.12・PyYAML・pytest（`uv run`）。設定リポジトリは標準ライブラリだけの Python 3 と unittest。
 
-**Spec:** `my-claude-code-settings/docs/superpowers/specs/2026-10-08-work-principles-design.md`（PR #68）、ADR 0026
+**Spec:** `my-claude-code-settings/docs/superpowers/specs/2026-10-08-work-principles-design.md`（PR #68）、ADR 0028
 
 ## Global Constraints
 
@@ -449,7 +449,7 @@ gh pr create --base main --title "feat: 確認済みの原則を公開用に書�
 **Files:**
 - Create: `skills/work-principles/principles.json`（生成物）
 - Create: `tests/test_work_principles_data.py`
-- Modify: `docs/superpowers/specs/2026-10-08-work-principles-design.md`（`principles.yaml` → `principles.json`、4章の公開する欄の `source.url` → `source_url`）、`docs/adr/0026-work-principles-delivery.md`（同じ置き換え）
+- Modify: `docs/superpowers/specs/2026-10-08-work-principles-design.md`（`principles.yaml` → `principles.json`、4章の公開する欄の `source.url` → `source_url`）、`docs/adr/0028-work-principles-delivery.md`（同じ置き換え）
 
 **Interfaces:**
 - Produces: `skills/work-principles/principles.json`。形は `{"_generated": str, "themes": [{"name","description","note","ids"}], "principles": [{"id","principle","scenes","checkpoints","review_question"?,"not_applicable","source_url","theme"}]}`
@@ -543,7 +543,7 @@ Expected: OK（5件）
 - [ ] **Step 6: コミット（GREEN）**
 
 ```bash
-git add skills/work-principles/principles.json docs/superpowers/specs/2026-10-08-work-principles-design.md docs/adr/0026-work-principles-delivery.md
+git add skills/work-principles/principles.json docs/superpowers/specs/2026-10-08-work-principles-design.md docs/adr/0028-work-principles-delivery.md
 git commit -m "feat: 原則集のコピーを足す（GREEN: test_work_principles_data の5件）"
 ```
 
@@ -627,7 +627,7 @@ git commit -m "test: 原則レビューのフックの対象判定のテスト�
 #!/usr/bin/env python3
 """仕様書・ADR・計画を含む git commit の直前に1回だけ止め、principle-reviewer の起動を促す。
 
-設計: docs/superpowers/specs/2026-10-08-work-principles-design.md、ADR 0026
+設計: docs/superpowers/specs/2026-10-08-work-principles-design.md、ADR 0028
 """
 import sys
 from pathlib import Path
@@ -1454,7 +1454,7 @@ git commit -m "feat: 仕事の原則で助言するスキルを足す（発火�
 ## 原則集の basis を照合して公開する
 
 決めること: basis を動画と照合する範囲（全25件か、助言でよく引かれる原則だけか）。
-仕事の原則集の公開コピーには、照合していない basis を入れていない（ADR 0026）。照合したら、書き出しの公開する欄に basis を足す。
+仕事の原則集の公開コピーには、照合していない basis を入れていない（ADR 0028）。照合したら、書き出しの公開する欄に basis を足す。
 
 ## 原則レビューのフックと助言スキルを Codex に対応させる
 

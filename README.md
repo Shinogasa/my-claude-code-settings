@@ -508,7 +508,7 @@ npx版を残すと、`npx skills update` がリンクをたどってsubmoduleの
 
 助言スキル `skills/work-principles/` とレビュワーが読む `principles.json` は生成物で、直接編集しない。正本は非公開リポジトリにあり、
 そちらで `uv run transcripts-export` を実行して書き出す。設計は `docs/superpowers/specs/2026-10-08-work-principles-design.md`、
-判断の経緯は `docs/adr/0026-work-principles-delivery.md` を参照。
+判断の経緯は `docs/adr/0028-work-principles-delivery.md` を参照。
 
 ## claude-code-best-practice（submodule）
 

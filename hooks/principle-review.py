@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """仕様書・ADR・計画を含む git commit の直前に1回だけ止め、principle-reviewer の起動を促す。
 
-設計: docs/superpowers/specs/2026-10-08-work-principles-design.md、ADR 0026
+設計: docs/superpowers/specs/2026-10-08-work-principles-design.md、ADR 0028
 """
 import fcntl
 import functools
