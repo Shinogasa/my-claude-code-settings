@@ -54,8 +54,8 @@ principles.yaml + themes.md                    skills/work-principles/
 - 公開する欄: `id`・`principle`・`scenes`・`checkpoints`・`review_question`（あるものだけ）・`not_applicable`・`source_url`・`theme`（テーマ名）
 - 公開しない欄: `basis`・`risk`・`status`・`reject_reason`・`source.at`
 - テーマの見出し、説明文、「使い分け」の注記を `themes` として同じファイルに書く。「原則なし」の節は書かない
-- ファイルの先頭のコメントに、生成元、直接編集しないこと、再生成のコマンドを書く
 - 設定リポジトリのテストは標準ライブラリだけで書くので、YAMLではなくJSONにした
+- JSONにはコメントを書けないので、ファイルの先頭の `_generated` キーに、生成元、直接編集しないこと、再生成のコマンドを書く
 - 同じ正本からは、毎回まったく同じ内容を出す（`--check` で比べるため）
 - `--check`: 書き出さずに、生成した内容と `--dest` のファイルを比べる。差があれば差のある原則IDを出し、非ゼロで終わる
 - `--dest` のファイルやディレクトリが無いときは「検査できなかった」として非ゼロで終わる。`--check` を成功にはしない
