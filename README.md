@@ -613,6 +613,21 @@ python3 -W error::ResourceWarning -m unittest tests.test_codex_model_switch_runt
 `-f` は最初の失敗・エラーで停止するfailfast。ログを保存した場合は末尾だけでなく、
 全体の `FAIL`・`ERROR` とtracebackを確認する。失敗対象の修正と検証が済んだら、最後に全suiteを実行する。
 
+ふだんの確認は `tests/run.sh` で行う（ADR 0029）。既定では、1件ごとに `setup.sh` を実行する
+`test_setup_cli.py` と `test_setup_preflight.py` を除き、uvの一時環境のpytest-xdistで並列に流す。
+PRの前は `--all` で全件を流す。依存はuvの一時環境に入るだけで、システムやdotfilesには何も入れない。
+
+```bash
+bash tests/run.sh          # 既定の組（約40秒）
+bash tests/run.sh --all    # 全件（約2分半）
+bash tests/run.sh --dry-run --all  # 実行するコマンドを表示するだけ
+```
+
+`--all` が、未コミットの変更の無い状態で通ると、HEADを `.git/tests-all-passed` に記録する。
+PR作成時のhookはこの記録とHEADを照らし合わせ、一致しなければ `gh pr create` を止める。
+
+uvが無い環境では、通知を出したうえで逐次のunittestへ切り替わる。並列化しない全件実行は従来どおり次のとおり（約24分）。
+
 ```bash
 python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_*.py' -v
 ```

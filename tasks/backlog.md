@@ -449,6 +449,18 @@ Codex を主ホストとして使う頻度が上がったとき。
 
 ---
 
+## PR作成の判定（is_pr_create）の取りこぼし
+
+### P3: `gh -R x pr create` などをPR作成と判定できない
+
+`hooks/jp-doc-review.py` の `is_pr_create` は、コマンドの先頭3語が `gh pr create` かだけを見る。
+`gh -R org/repo pr create`、`gh --repo x pr create`、`/usr/bin/gh pr create`、`timeout 60 gh pr create` などを見逃す。
+日本語レビューのhookと、全件テストの記録を確かめるhook（ADR 0029）の両方が、この関数を使っている。
+2026-10-09のsecurity-reviewerの指摘3。
+
+**決めること**: どこまでの書き方を拾うか。少なくとも `-R` / `--repo` の読み飛ばしと、パス付きの `gh` は拾いたい。
+エイリアスやスクリプト経由は、静的な判定では拾えないので対象外にするか。
+
 ## 学習モード
 
 ### コード学習の候補が拾われていない → 着手条件待ち
