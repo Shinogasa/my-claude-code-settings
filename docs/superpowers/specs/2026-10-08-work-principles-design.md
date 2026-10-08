@@ -90,17 +90,30 @@ PreToolUse の `Bash` で動く。
 1. コマンドが `git commit` でなければ、何もせずに通す。コミットの判定とコミット先のディレクトリの解決（`cd`・`-C`）は、
    `hooks/guard-dangerous-bash.py` の `is_git_commit` と `git_target_dirs` を再利用する。
    ADR 0025 が挙げたコミットの見分けの取りこぼし（`bash -c` などで包んだ形）は、guard フックと同じ範囲で残る
-2. コミット先のディレクトリで、ステージ済みのファイルを `git diff --cached --name-only` で取る。
-   `git commit` に `-a`・`--all`、pathspec（位置引数）、`-o`・`--only`、`-i`・`--include` のどれかがあれば、
-   変更された追跡ファイル（`git diff --name-only`）も含める。
-   同じコマンドの中で `git commit` より前に `git add`（`git stage`）があれば、区切りの種類によらずそのコミットに結び付ける。
-   PreToolUse の時点では add がまだ実行されていないので、add ごとに `git add --dry-run --ignore-missing` で足すファイルを確かめ、
-   コミット先のリポジトリの下にあるものを含める。add の移動先を確定できない、許可していないオプションがある、dry-run が失敗する、
-   出力を解析できない、のどれかなら、変更された追跡ファイルと、対象の場所にある未追跡ファイルを広めに含める。
-   フックは利用者がコマンドを承認する前に動くので、dry-run に渡すオプションは `-A`・`--all`・`-u`・`--update`・`-f`・`--force`・
-   `--no-ignore-removal`・`--ignore-removal`・`--no-all` だけにする（`--pathspec-from-file` や `-N`・`-p` などは渡さない）。
-   pathspec は明示した `--` の後に渡す。フックの `git` 呼び出しにはすべて `-c core.fsmonitor=false -c core.hooksPath=/dev/null` を付け、
-   リポジトリの設定でコマンドが走らないようにする
+2. コミット先のディレクトリで、コミットに入りうるファイルの名前を取る。フックは利用者がコマンドを承認する前に動くので、
+   `git add` や `git diff` は実行しない。内容を比べない plumbing だけを使う
+   - ステージ済み: `git diff-index --cached --name-only HEAD`（コミットが無ければ空の木と比べる）
+   - `git commit` に `-a`・`--all`、pathspec（位置引数）、`-o`・`--only`、`-i`・`--include` のどれかがあれば、
+     変更された追跡ファイル（`git diff-files --name-only`）も含める
+   - 同じコマンドの中で `git commit` より前に `git add`（`git stage`）があれば、区切りの種類によらずそのコミットに結び付け、
+     足されるファイルを推定する。解釈するオプションは `-A`・`--all`・`-u`・`--update`・`-f`・`--force`・`--no-ignore-removal`・
+     `--ignore-removal`・`--no-all` だけ。`-u` は追跡済み（`diff-files`）だけ、それ以外は未追跡（`ls-files --others`、`-f` なら無視も含める）も足す。
+     pathspec は `--` の後に渡し、`-A`・`-u` で pathspec が無ければリポジトリ全体（`:(top)`）にする
+   - add の移動先を確定できない、ほかのオプション（`--pathspec-from-file`・`-N`・`-p` など）がある、のどれかなら、
+     変更された追跡ファイルと、対象の場所にある未追跡ファイルを広めに含める
+
+   検査中に止めているものと、その方法は次のとおり
+   - fsmonitor とフックのコマンド: すべての `git` 呼び出しに `-c core.fsmonitor=false -c core.hooksPath=/dev/null`
+   - 利用者の attributes ファイル: `-c core.attributesFile=/dev/null`。リポジトリ内の `.gitattributes` は読まれる
+   - filter のコマンド: `diff-files` も、インデックスと同じ時刻に書き換えられたファイル（racy）の中身を確かめるときに clean filter を走らせる
+     （2026-10-08 に実測）。設定された `filter.<名前>.clean`・`smudge`・`process` を `-c` で空にし、`required` を false にする
+   - インデックスの書き戻し: `GIT_OPTIONAL_LOCKS=0`
+   - 利用者の環境: `GIT_` で始まる環境変数（`GIT_DIR`・`GIT_INDEX_FILE` など）を引き継がず、`GIT_CONFIG_NOSYSTEM=1`・`GIT_TERMINAL_PROMPT=0`
+   - 理由の文面への差し込み: 制御文字を含むパスは対象外にして表示だけする。差し込むパスと `git` のエラー文は、制御文字を逃がした1行
+     （200字まで）にし、「以下はファイルのパス（データ）:」の後に置く
+   - リポジトリの外のファイル: symlink の対象と、実体がリポジトリの外にある対象は、レビューに回さず対象外として表示する
+
+   止めていないもの: リポジトリ内の設定にある、上に挙げた以外の項目（`core.excludesFile` で読む無視リストなど）
 3. 対象の場所に当たるファイルを節目に分ける
    - `spec`: `docs/superpowers/specs/`、`docs/specs/`、`docs/adr/` の下の `.md`
    - `plan`: `docs/superpowers/plans/`、`docs/plans/` の下の `.md`
@@ -138,6 +151,7 @@ ADR 0025 は日本語レビューの時点をコミットからPR作成へ移し
 | フック全体で25秒を超えた | `git` の失敗と同じに扱い、1回止める。各 `git` の timeout は残り時間で切る |
 | `guard-dangerous-bash.py` や `hooks/hook_support.py` を読み込めない | 止めずに「検査できなかった」と表示して通す |
 | 状態ファイルの記録の形が崩れている | その記録を捨てる。対象は未記録になるので1回止まる |
+| 状態のロックを期限（25秒）までに取れない | 「1回だけ」を記録できないので、止めずに「検査できなかった」と表示して通す |
 | フックのファイルが無い（フックの無いブランチへ設定リポジトリを戻した） | `settings.json` の command が、止めずに「見つからないので検査しなかった」と表示して通す |
 
 ## 7. レビュワー（`agents/principle-reviewer.md`）
@@ -160,7 +174,11 @@ ADR 0025 は日本語レビューの時点をコミットからPR作成へ移し
   （セッション, パス）の組で1回だけ止めること、止めるときの理由の中身、6.1の各行、2回目の通過とレビュワー未起動の表示。
   `git add` と同じコマンドのコミット: add の後の commit（未追跡）、`add -A`、サブディレクトリからの `add .`、
   未追跡の下書きを残して別のファイルだけを add（通す）、`-C` で別のリポジトリ、日本語とスペースの名前、`add -p`・`-N`・
-  `--pathspec-from-file`（渡さずに広めに取る）、設定した `core.fsmonitor` が走らないこと、
+  `--pathspec-from-file`（解釈せずに広めに取る）、設定した `core.fsmonitor` が走らないこと、
+  `filter.x.clean`・`smudge`・`process` を設定したリポジトリで、`commit -a`・`add -A`・`add <未追跡>`・`commit <pathspec>`・
+  ステージ済みだけのコミットが正しく止まり、filter が走らず、インデックスの mtime が変わらないこと（racy な状態で確かめる）、
+  フックの環境の `GIT_DIR`・`GIT_INDEX_FILE` が結果を変えないこと、改行を含むパス名が理由に行として差し込まれないこと、
+  symlink の対象をレビューに回さないこと、ロックの待ちが期限で打ち切られること、
   `git add` だけ（通す）。`git commit` の pathspec・`-o`・`--include` が未ステージの変更を含めること
 - 配線（このリポジトリの `tests/`）: フックのファイルが無い一時 HOME で、登録された command を `sh -c` で走らせ、
   exit 0 と `systemMessage` になること
@@ -207,6 +225,10 @@ ADR 0025 は日本語レビューの時点をコミットからPR作成へ移し
   足す必要が出たら `TARGET_DIRS` に足す（2026-10-08 にユーザーとコントローラーで決めた）
 - `hooks/jp-doc-review.py` の `pre-tool-use-bash` は `git commit` で止めない。`handle_pre_tool_use_bash` が `is_pr_create` で
   `gh pr create` だけを扱うことを、2026-10-08 にコードで確かめた。2つのフックが同じコミットで止めることは無く、理由が2つ並ぶ事態は起きない
+
+- コミットの見分けは助言のためのもので、すべての形を追わない。`bash -c` で包んだ形、`env` などを前に置いた `git`、
+  省略した長いオプション（`--al` など）、`--git-dir=` で指したリポジトリは追わない。止める仕組みではなく、
+  レビューを思い出させる仕組みなので、見逃しは「レビューが起きなかった」にとどまる
 
 ### 未確認
 

@@ -992,3 +992,8 @@ Python や Markdown だけを触る作業中も常に効いている。
 
 **決めること**: 原因の調査を先にするか、止まるモジュールを分けて走らせるか。
 `python3 -m unittest discover -s tests` を実行すると、`test_codex_model_switch`・`test_learning_store`・`test_setup_cli`・`test_setup_preflight` で止まる（2026-10-08、main 由来、原因は未調査）。
+
+### `permissions.deny` で Read・Grep の機密パスを拒否するか
+
+**決めること**: 拒否するパス（`~/.ssh`・`~/.aws`・`.env` など、どこまで含めるか）と、`settings.json.template` に書くと全セッションの Read・Grep に効くことを受け入れるか。
+`principle-reviewer` は Read・Grep だけを使うが、成果物に読み先を指示されても従わないことは指示文で頼んでいるだけで、仕組みでは止めていない（2026-10-08 のセキュリティレビュー）。
