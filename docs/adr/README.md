@@ -76,8 +76,8 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0002](0002-host-specific-activation-adapters.md) | 共有ポリシーをホスト別アダプターで発火させる | 2026-08-18 | superseded by 0003 |
 | [0003](0003-codex-native-first-activation-policy.md) | Codex移行をnative-firstなallowlistで管理する | 2026-08-18 | accepted |
 | [0004](0004-codex-runtime-enforcement-policy.md) | Codexの起動時規約とセキュリティレビューを段階的に強制する | 2026-08-20 | accepted（モデル選択は0010で部分置換） |
-| [0005](0005-codex-personal-profile-mcp-inheritance.md) | 個人プロファイルが会社設定の MCP サーバを継承する既定 | 2026-08-31 | accepted |
-| [0006](0006-codex-personal-profile-standalone-mcp-transport.md) | Codex個人プロファイルのMCP定義を単体検証可能にする | 2026-09-01 | accepted |
+| [0005](0005-codex-personal-profile-mcp-inheritance.md) | 個人プロファイルが会社設定の MCP サーバを継承する既定 | 2026-08-31 | superseded by 0026 |
+| [0006](0006-codex-personal-profile-standalone-mcp-transport.md) | Codex個人プロファイルのMCP定義を単体検証可能にする | 2026-09-01 | superseded by 0026 |
 | [0007](0007-learning-mode-decision-layer-gate.md) | 判断点を層で選別し、実装レベルの経験は定石欄で供給する | 2026-08-21 | accepted（共通開示・記録契約は0017で補完） |
 | [0008](0008-codex-rtk-prompt-integration.md) | CodexのRTK統合を指示アダプターで管理する | 2026-09-02 | accepted |
 | [0009](0009-codex-bitwarden-signing-agent.md) | Codex子プロセスへBitwarden SSH agentを配布する | 2026-09-03 | accepted |
@@ -94,6 +94,7 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0020](0020-learning-store-directory-lock.md) | 学習store directoryを排他し旧CLIと書込方式を分離する | 2026-09-29 | accepted |
 | [0021](0021-learning-mode-rule-skill-split.md) | learning-mode を常時ruleと詳細skillに分ける | 2026-09-30 | accepted |
 | [0022](0022-legacy-skills-parent-link-migration.md) | 旧形式の skills 親symlinkを setup.sh が自動移行する | 2026-09-30 | accepted |
-| [0023](0023-codex-personal-profile-key-ownership.md) | Codex個人プロファイルの所有をキー単位で分ける | 2026-10-01 | accepted |
+| [0023](0023-codex-personal-profile-key-ownership.md) | Codex個人プロファイルの所有をキー単位で分ける | 2026-10-01 | superseded by 0026 |
 | [0024](0024-jp-doc-review-hook.md) | 日本語文書のレビューとスキルの読み込み確認をフックで行う | 2026-10-01 | accepted |
 | [0025](0025-jp-doc-review-at-pr-creation.md) | 日本語文書のレビューの時機をPR作成時に移す | 2026-10-04 | accepted |
+| [0026](0026-codex-separate-personal-home.md) | Codexの個人用に `CODEX_HOME` を分ける | 2026-10-04 | accepted |

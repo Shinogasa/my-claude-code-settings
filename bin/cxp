@@ -1,7 +1,8 @@
 #!/bin/bash
-# 個人の ChatGPT アカウント(OAuth)で Codex CLI を起動する。
-# 会社PCでは ~/.codex/config.toml に LLM gateway の provider と認証ヘッダが直書きされて
-# いるため、その上へ個人用プロファイルを重ねて provider を切り替える。
+# 個人の ChatGPT アカウントで Codex CLI を起動する。
+# 個人用の設定と認証情報は ~/.codex-personal にだけ置き、CODEX_HOME を切り替えて起動する（ADR 0026）。
+# 会社用の ~/.codex に個人の auth.json を置かないので、会社用の model_provider が消えても
+# 個人アカウントで黙って動くことはない（401 で止まる）。
 #
 # 素の `codex` は会社設定のままにしてある。逆向き(会社側をラッパー必須)にすると、
 # シェル統合が読み込まれなかったときに `codex` が黙って個人アカウントで動いてしまう。
@@ -9,181 +10,27 @@
 
 set -euo pipefail
 
-CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-PROFILE_NAME="personal"
-PROFILE_FILE="$CODEX_HOME/$PROFILE_NAME.config.toml"
-BASE_CONFIG="$CODEX_HOME/config.toml"
+PERSONAL_HOME="$HOME/.codex-personal"
 
-# 下の照合は personal プロファイルと config.toml だけを見る。引数で別のプロファイルを
-# 選んだり、-c で mcp_servers・profile・model_provider を上書きしたりすると照合をすり抜けるため、起動前に拒否する。
-# `--` より後ろは codex へ渡す本文なので見ない。
-reject_argument() {
-  echo "エラー: cxp では $1 を使えません(個人プロファイルの MCP 照合をすり抜けるため)。" >&2
-  exit 1
-}
-# provider とプロファイルを差し替えるキーも、会社の gateway へ戻す経路になるので拒否する
-GUARDED_CONFIG="mcp_servers / profile / model_provider(s) を上書きする -c/--config"
-expect_config_value=false
-for argument in "$@"; do
-  if [ "$expect_config_value" = true ]; then
-    case "$argument" in *mcp_servers*|*profile*|*model_provider*) reject_argument "$GUARDED_CONFIG" ;; esac
-    expect_config_value=false
-    continue
-  fi
-  case "$argument" in
-    --) break ;;
-    -p|-p*|--profile|--profile=*) reject_argument "-p/--profile" ;;
-    -c|--config) expect_config_value=true ;;
-    -c*mcp_servers*|-c*profile*|-c*model_provider*) reject_argument "$GUARDED_CONFIG" ;;
-    --config=*mcp_servers*|--config=*profile*|--config=*model_provider*) reject_argument "$GUARDED_CONFIG" ;;
-  esac
-done
-
-# codex は `-p` に存在しないプロファイル名を渡してもエラーにせず、base 設定のまま起動する
-# (実測: exit 0 / provider は会社のまま)。個人アカウントのつもりで会社の gateway へ
-# 繋がる無言の事故になるため、こちらで明示的に落とす。
-if [ ! -f "$PROFILE_FILE" ]; then
-  echo "エラー: $PROFILE_FILE が見つかりません。bash setup.sh を実行してください。" >&2
+if [ ! -d "$PERSONAL_HOME" ]; then
+  echo "エラー: 個人用の $PERSONAL_HOME がありません。作成して個人アカウントでログインしてください。" >&2
+  echo "  mkdir -m 700 $PERSONAL_HOME && CODEX_HOME=$PERSONAL_HOME codex login" >&2
   exit 1
 fi
 
-# プロファイルは base に merge される(実測: プロファイル未記載の MCP サーバが起動した)。
-# profile 単体の設定検証を通すため transport も転記するので、サーバの追加・削除だけでなく
-# url / command の変更も検査し、setup.sh を再実行するまで止める。
-# 手で enabled = true に書き換えた allowlist 外のサーバも止める。setup の所有判定で
-# 気づけるのは次回の setup 実行時だけなので、ここで照合する。allowlist は symlink を
-# たどった先のリポジトリから読む(cxp は ~/.codex/bin などのリンク経由で起動される)。
-python3 - "$BASE_CONFIG" "$PROFILE_FILE" "${BASH_SOURCE[0]}" <<'PY'
-import pathlib
-import sys
-import tomllib
-from urllib.parse import urlsplit
+# ~/.codex へのsymlinkだと、個人用のつもりで会社用の設定と認証で動く
+if [ -d "$HOME/.codex" ] && [ "$(cd "$PERSONAL_HOME" && pwd -P)" = "$(cd "$HOME/.codex" && pwd -P)" ]; then
+  echo "エラー: $PERSONAL_HOME の実体が会社用の $HOME/.codex と同じです。別のディレクトリにしてください。" >&2
+  exit 1
+fi
 
+# 個人の auth.json を置く場所なので、本人以外に権限があれば止める
+mode="$(stat -f '%Lp' "$PERSONAL_HOME" 2>/dev/null || stat -c '%a' "$PERSONAL_HOME")"
+if [ "$mode" != 700 ]; then
+  echo "エラー: $PERSONAL_HOME の権限を 700 にしてください（chmod 700 ${PERSONAL_HOME}）。" >&2
+  exit 1
+fi
 
-def stop(message: str) -> None:
-    print(f"エラー: {message}", file=sys.stderr)
-    print(
-        "       bash setup.sh を実行して personal.config.toml を再生成してください。",
-        file=sys.stderr,
-    )
-    raise SystemExit(1)
-
-
-def mcp_servers(path: pathlib.Path) -> dict:
-    if not path.exists():
-        return {}
-    try:
-        with path.open("rb") as f:
-            servers = tomllib.load(f).get("mcp_servers", {})
-    except (OSError, ValueError) as error:
-        # TOMLDecodeError と UnicodeDecodeError は ValueError の派生
-        stop(f"{path} を読めません: {error}")
-    if not isinstance(servers, dict):
-        stop(f"{path} の mcp_servers がテーブルではありません")
-    return servers
-
-
-def transport(name: str, definition, source: pathlib.Path) -> tuple[str, str]:
-    if not isinstance(definition, dict):
-        stop(f"{source} の MCP サーバ {name} がテーブルではありません")
-
-    keys = [key for key in ("command", "url") if key in definition]
-    if len(keys) != 1:
-        stop(
-            f"{source} の MCP サーバ {name} に有効な transport "
-            "(command または url) がありません"
-        )
-
-    key = keys[0]
-    value = definition[key]
-    if not isinstance(value, str) or not value:
-        stop(f"{source} の MCP サーバ {name} の {key} が不正です")
-    if key == "url":
-        try:
-            parsed = urlsplit(value)
-        except ValueError:
-            stop(f"{source} の MCP サーバ {name} の url が不正です")
-        if (
-            parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
-            or parsed.fragment
-        ):
-            stop(
-                f"{source} の MCP サーバ {name} の url に "
-                "個人プロファイルへ複写できない要素があります"
-            )
-    return key, value
-
-
-def read_allowlist(script: str) -> set[str]:
-    path = (
-        pathlib.Path(script).resolve().parent.parent
-        / "codex"
-        / "personal-mcp-allowlist.txt"
-    )
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, ValueError) as error:
-        stop(f"MCP サーバの allowlist を読めません: {path} ({error})")
-    return {
-        line.strip()
-        for line in text.splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    }
-
-
-base_config, profile = (pathlib.Path(p) for p in sys.argv[1:3])
-allowlist = read_allowlist(sys.argv[3])
-base_servers = mcp_servers(base_config)
-profile_servers = mcp_servers(profile)
-
-missing = sorted(base_servers.keys() - profile_servers.keys())
-if missing:
-    stop(
-        "個人プロファイルが未反映の MCP サーバがあります: "
-        + ", ".join(missing)
-    )
-
-stale = sorted(profile_servers.keys() - base_servers.keys())
-if stale:
-    stop(
-        "個人プロファイルに削除済みの MCP サーバが残っています: "
-        + ", ".join(stale)
-    )
-
-mismatched = []
-for name in sorted(base_servers):
-    profile_definition = profile_servers[name]
-    if not isinstance(profile_definition, dict):
-        stop(f"個人プロファイルの MCP サーバ {name} がテーブルではありません")
-    if not isinstance(profile_definition.get("enabled"), bool):
-        stop(f"個人プロファイルの MCP サーバ {name} に boolean の enabled がありません")
-
-    base_transport = transport(name, base_servers[name], base_config)
-    profile_transport = transport(name, profile_definition, profile)
-    if set(profile_definition) != {profile_transport[0], "enabled"}:
-        stop(f"個人プロファイルの MCP サーバ {name} に許可されていない設定があります")
-
-    if base_transport != profile_transport:
-        mismatched.append(name)
-
-if mismatched:
-    stop(
-        "個人プロファイルの transport が古い MCP サーバがあります: "
-        + ", ".join(mismatched)
-    )
-
-not_allowed = sorted(
-    name
-    for name, definition in profile_servers.items()
-    if definition["enabled"] and name not in allowlist
-)
-if not_allowed:
-    stop(
-        "allowlist にない MCP サーバが有効になっています: "
-        + ", ".join(not_allowed)
-    )
-PY
-
-exec codex -p "$PROFILE_NAME" "$@"
+# 環境に会社用の CODEX_HOME が残っていても、必ず個人用で起動する
+export CODEX_HOME="$PERSONAL_HOME"
+exec codex "$@"

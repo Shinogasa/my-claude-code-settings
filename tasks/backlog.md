@@ -92,92 +92,46 @@ yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/
 `docs/adr/0003-codex-native-first-activation-policy.md`、実装手順は
 `docs/superpowers/plans/2026-08-18-codex-compatibility-migration.md` を参照。
 
-### P1: base provider 検査を起動前に止める経路が無い
+### P2: 個人用の `CODEX_HOME` 分離（ADR 0026）の残り
 
-`hooks/check-codex-base-provider.py` は SessionStart で `~/.codex/config.toml` の
-`model_provider` 欠落を警告する。ただし provider は起動時に確定するため、警告時点で
-そのセッションは既に既定の openai（`auth.json` の個人アカウント）で動いている。
-さらに Codex の hook は `/hooks` で承認されるまで黙ってスキップされ、未承認でも何も出ない。
+2026-10-06に、本体（`cxp` の切り替え、setupによる両方へのリンク、個人プロファイル生成の廃止、
+会社用の `auth.json` をSessionStartで警告する検査）を実装し、ホスト側も `~/.codex-personal` へ移行した。
+残りは、個人アカウントでCodexを使えるようになるまで止めている。
 
-2026-09-21 に外部ツールの書き換えで `model_provider` が消え、9/28 まで素の `codex` が
-個人アカウントで動いていた（`state_5.sqlite` の threads で `llm_gateway` の最終利用は 9/20）。
+**着手条件**: 個人アカウントのCodex契約を再開したとき。
 
-**対策の候補**:
+- `cxp` で `/hooks` を承認する（個人用はhooks.jsonのパスが変わったので承認し直しが要る）
+- setupで、両方の `CODEX_HOME` のSessionStart hookが承認済みか（`[hooks.state]` の `trusted_hash`）を検査し、
+  未承認ならFAILURESに積む。hookが未承認だと、`auth.json` の検知そのものが通知なく走らない
+- SSH署名の設定とサブエージェントの既定値は、setupが会社用の `config.toml` にしか当てていない。
+  個人用にも要るかを決める
+- 実機確認: `cxp` で `/hooks` 承認後、hookが動くこと
+- `codex/hooks.json` のhookコマンドは `$HOME/.codex/hooks/...` の直書き。個人用でも会社用のリンク経由で動くので、
+  `~/.codex` が無いマシンでは個人用のhookも動かない。`CODEX_HOME` 基準にするかを決める
+- keyringに保存する設定（`cli_auth_credentials_store`）では、`auth.json` が作られないので検知できない
+- 2026-10-06のセキュリティレビューの指摘（どちらも分離前からある穴で、今回の変更で悪化はしていない）
+  - `cxp` はシェルの環境変数をそのまま引き継ぐ。`ASANA_TOKEN` や `ANTHROPIC_AUTH_TOKEN` はexportされているので、
+    個人用のCodexの子プロセス（ツール実行、MCPサーバ）から読める。会社のゲートウェイの認証は `config.toml` のヘッダにあり、
+    環境変数では渡していない
+  - 会社のリポジトリで `cxp` を実行すると、信頼済みプロジェクトの `.codex/config.toml` が適用されうる（未確認）。
+    `CODEX_HOME` を分けても、プロジェクトの設定層は分かれない
+- 9/21に `model_provider` を消した主体は未特定。opencodeの初回起動（9/21 20:29）の4分後に `config.toml` が
+  更新されているが、opencodeのログに書き込みの記録は無い
 
-- 素の `codex` を包むラッパーで起動前に検査し、欠落時は exec しない
-- `setup.sh --codex` でも同じ検査を走らせ、`FAILURES` に積む
+### P2: Claude用のpluginがCodexで有効に戻る
 
-**決めること**:
+2026-08-26に `~/.codex/config.toml` で無効にした8件（`@claude-plugins-official` のasana、claude-md-management、
+code-review、context7、learning-output-style、security-guidance、serena、superpowers）が、10/03に `enabled = true` に戻っていた。
+`security-guidance` はCodexのSessionStartで `invalid session start JSON output` を起こす。
 
-- ラッパーを置く場合、`cxp` の「素の `codex` は会社設定のまま」という向きとどう両立させるか
-  （PATH 上の優先順位と、シェル統合が読み込まれないときの倒れ方）
+**原因（2026-10-05に特定）**: Codexの「Claude Codeから取り込む」機能。`~/.codex/state_5.sqlite` の
+`external_agent_config_imports` に、2026-09-22 17:30に `PLUGINS` 8件を取り込んだ記録があり、8件は完全に一致した。
+取り込みを実行したときだけ起きるので、起動のたびに戻す処理は要らない。
 
-### P1: Codexで無効にしたClaudeのpluginが、`enabled = true` に戻る
+**決めたこと**: 既存のsetupの監査（`bin/audit-codex-plugins.py`）で検知する。取り込み後に気づけるよう、
+SessionStartの検査（`hooks/check-codex-base-provider.py`）にもplugin監査を足す。
 
-2026-08-26に、`~/.codex/config.toml` で `security-guidance` などを `enabled = false` にした。
-ところが2026-10-03に確かめると、policyが `deny` / `review` の8件
-（`@claude-plugins-official` の asana、claude-md-management、code-review、context7、
-learning-output-style、security-guidance、serena、superpowers）が、すべて `enabled = true` に戻っていた。
-`bin/audit-codex-plugins.py` はexit 1で8件を報告した。同日に8件を `false` へ戻し、監査が通ることを確認した。
-
-`security-guidance` は、CodexのSessionStartで `invalid session start JSON output` を起こす。
-非同期hookの契約がClaude固有だからだ。`enabled = true` に戻るたびに、この失敗がまた起きる。
-
-誰が書き換えたかは未確認。候補は、Codexのplugin導入・更新、GUIアプリ、Claudeのpluginを取り込む機能。
-`model_provider` が外部ツールの書き換えで消えた件（上の「base provider 検査」）と同じ経路かもしれない。
-
-**決めること**: 監査で気づくだけにするか、setupで `false` に戻すか、起動前に止めるか。
-その前に、`config.toml` の変更時刻とCodexの操作記録を照らし合わせて、誰が書き換えたかを特定する。
-
-### P1: `gpt-5.6-sol` で全ターンが失敗する回避設定を `setup.sh` で恒久化する
-
-`~/.codex/config.toml` に次が無いと、`gpt-5.6-sol` を使う**全ターン**がモデルの推論前に失敗する。
-
-```toml
-[features.multi_agent_v2]
-tool_namespace = "agents"
-```
-
-codex の MultiAgentV2 は自前生成した `spawn_agent` を既定で `collaboration` 名前空間に置くが、
-このモデルは `collaboration.spawn_agent` を予約済みとして扱い、送られたスキーマが
-モデル側の設定と完全一致しないと HTTP 500 で拒否する。上流は
-[openai/codex#31864](https://github.com/openai/codex/issues/31864)（2026-09-02 時点 Open、修正PRなし）。
-codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**バージョンを上げても下げても回避できない**。
-
-**調査コストが高い理由**（次に踏む人がここで溶かさないために残す）:
-
-拒否は SSE の `error` イベントで返り、**ストリーム自体は正常に閉じる**。codex はこのエラー本文を
-表示せず `stream disconnected before completion: stream closed before response.completed`
-に畳むため、原因が見えないまま5回リトライして毎回12〜17秒で失敗する。
-この「約13秒」はタイムアウトではなく**リトライ予算の枯渇時間**であり、
-ネットワーク・プロキシ・DNS・アイドルタイムアウトの調査へ強く誘導される。
-2026-09-02 に1セッション丸ごと費やして特定した。特定の決め手は、
-リクエストとレスポンスを中継プロキシで丸ごと記録して SSE の生バイト列を見ることだった。
-上位レイヤのエラー文言からは辿れない。
-
-**なぜこのリポジトリの管轄か**:
-
-障害は作業ディレクトリに依存しない（ワークスペース外でも同一の失敗を実測済み）ため、
-特定プロジェクトの設定ではなくホストの codex 全体の性質。`config.toml` は認証ヘッダを
-平文で持つためリポジトリ管理下に置けないが、このキーは非機密なので、既存方針の
-「リポジトリが状態を持つのではなく、冪等なコマンドを `setup.sh` が叩く」
-（Codex プラグイン導入と同じ形）に収まる。方針の例外にはならない。
-
-**決めること**:
-
-- 既に `tool_namespace` が別の値で存在する場合、上書きするか、警告して残すか
-- 適用を無条件にするか、`model` が該当モデルのときだけにするか
-  （無条件でもローカルのツール名前空間が変わるだけで他モデルには無害と考えられるが**未確認**）
-- 上流が #31864 を修正してキー名または既定値が変わったとき、この上書きは**黙って無効になり**
-  再び不透明な13秒失敗へ戻る。検知手段を持つか（`codex features list` の値を検査する等）
-
-**完了条件**:
-
-- [ ] `bash setup.sh` の実行で `~/.codex/config.toml` に該当キーが入る（冪等）
-- [ ] `codex` 自身（`codex features enable/disable`）と GUI アプリも同じファイルへ書き込むため、
-      それらによる書き換えの後でも壊れない。素朴な追記だとキー重複やコメント消失が起きうる
-- [ ] 未設定のマシンで `codex exec "..."` が成功する
-      （設定前は12〜17秒で失敗することを再現できる。成功/失敗が判別できる検査であること）
+**着手条件**: Codexの作業を再開したとき。
 
 ### P2: `setup.sh` に dry-run を追加する
 
@@ -187,30 +141,6 @@ codex 0.147.0 と 0.152.1 の両方で同一の失敗を実測しており、**�
 
 **完了条件**: 配布先の分類（missing / linked / managed-update / conflict）とplugin導入予定を、
 副作用なしで列挙できる。
-
-### P2: `cxp` のallowlist照合が見ていない経路
-
-2026-10-03に、allowlist外のサーバを `enabled = true` にしたプロファイルでは、`cxp` が起動前に止まるようにした。
-そのときのセキュリティレビューの指摘のうち、次の2点が残っている。どちらもMediumで、Confidence: insufficientだった。
-
-- `cxp` が照合するのは `config.toml` と個人プロファイルの `mcp_servers` だけ。プロジェクトの `.codex/config.toml`、
-  管理者の設定、pluginに同梱されたMCPサーバは見ていない。Codexがどの層からMCPサーバを足せるかは、公式資料で確かめていない。
-  引数で渡す経路（`-p` / `--profile` と、`mcp_servers` に触れる `-c` / `--config`）は、同日に `cxp` で拒否するようにした
-- `cxp` はallowlistを、symlinkの先にあるリポジトリの作業ツリーから読む。別のセッションがブランチを切り替えると、
-  切り替え先のブランチのallowlistで判定する。allowlistを書き換えられる人はプロファイルも書き換えられるので、
-  権限の境界の問題ではない。ただし、事故は防げない
-
-**決めること**: プロファイルの生成時にallowlistのdigestを書き込み、`cxp` で照合するか。
-先にCodexの公式資料で、MCPサーバを足せる設定の層を確かめる。
-
-### P2: Codex個人プロファイルで引き継いだ値の変化を表示する
-
-同じレビューの指摘。setup は所有外のキー名しか表示しないため、`[projects]` の信頼設定や
-`[hooks.state]` の `trusted_hash`、`[plugins]` の有効化（plugin同梱のMCPを含む）が変わっても気づけない。
-
-**決めること**: 前回生成時との差分を表示するか、所有外キーの digest を別に記録して変化時に警告するか。
-
-**完了条件**: 所有外のキーの値が前回の生成から変わったとき、setup の出力で分かる。
 
 ### P2: `context7` / `serena` のCodex向け候補を個別評価する
 
@@ -912,7 +842,7 @@ PR作成時のレビューは止めた記録を消さない形に直したので
 
 ## Claude Code 設定の追随
 
-### `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` を外せるか → 決めること
+### `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` を外せるか → 残すと決めた（2026-10-07）
 
 `.env` 経由で `settings.json` に `"1"` が焼き込まれており、beta 配信される機能を
 受け取れない。**この変数は公式の env-vars ページに記載が無い**（submodule の
@@ -930,7 +860,11 @@ v1.81.11-nightly 以降への更新）であり、クライアント側の無効
 
 両方が「Anthropic 直 かつ 更新済み」なら、この変数は不要になる。
 
-**着手条件**: gateway の構成を確認できたとき。
+**決めたこと（2026-10-07）**: 残す。gatewayのバックエンドはBedrock経由で、betaヘッダの問題が起きる経路にあたる。
+LiteLLMのバージョンは分からない（gatewayの `/health/readiness` と `/health/liveliness` の応答にバージョンは含まれず、`/version` は404）。
+試しに外して1回通っても、betaヘッダは機能ごとに送られるので、外して大丈夫な証拠にはならない。
+
+**着手条件**: gatewayの管理者に、LiteLLMが v1.81.11-nightly 以降かを確かめられたとき。
 
 ### rules を `paths:` で遅延読み込みにするか → 決めること
 
@@ -992,25 +926,3 @@ Python や Markdown だけを触る作業中も常に効いている。
 2026-10-01 時点で先方の作業ツリーに未コミットの変更があったため、追記は保留している。
 追記したらこの項目を参照だけに縮める。
 
-### cmux の hook が 5 秒でタイムアウトする
-
-cmux（0.64.25）が Claude Code の起動時に `--settings` で渡す一時ファイル
-（`$TMPDIR/cmux-claude-settings.*`）の hook が、`timeout = 5` で打ち切られることがある。
-このリポジトリの設定ではなく、cmux が起動のたびに生成する設定に入っている。
-
-```
-UserPromptSubmit hook [cmux_cli=... hooks enqueue claude prompt-submit ...] timed out after 5s — output discarded.
-```
-
-- `UserPromptSubmit` を含むほぼ全イベント（Notification、PreToolUse、PostToolUse、Stop など）が
-  `timeout = 5`。`PermissionRequest` は 125、Stop の `auto-name` は 120
-- hook 内の cmux CLI 呼び出しは `CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5` と失敗時の `{}` を持つのに、
-  全体が 5 秒を超えた。どこで待っているか（CLI の起動、ソケット接続、標準入力の読み取り）は未確認
-- 打ち切られても出力が捨てられるだけで、Claude Code の動作は止まらない。cmux 側の通知や
-  プロンプト連携が欠ける可能性がある（未確認）
-
-**決めること**: どこで直すか。cmux の設定で timeout を変えられるか、cmux への報告で直してもらうか、
-`CMUX_CLAUDE_HOOKS_DISABLED=1` で連携を切るか。先に、どの段階で 5 秒かかっているかを計測する。
-管轄がこのリポジトリか（ホストのツール設定なので dotfiles 側か）も決める。
-
-**着手条件**: 即時着手できる。再現頻度を数えるところから始める。

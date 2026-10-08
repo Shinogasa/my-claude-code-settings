@@ -1,7 +1,7 @@
 ---
 adr: 23
 date: 2026-10-01
-status: accepted
+status: superseded by 0026
 ---
 
 # Codex個人プロファイルの所有をキー単位で分ける

@@ -1,7 +1,7 @@
 ---
 adr: 6
 date: 2026-09-01
-status: accepted
+status: superseded by 0026
 ---
 
 # Codex個人プロファイルのMCP定義を単体検証可能にする

@@ -37,7 +37,7 @@ bash setup.sh --claude
 3. Claudeを選択した場合、`settings.json.template` から `~/.claude/settings.json` を生成し、
    `.env` が存在すれば `env` ブロック（APIキー等）を追加マージ
 4. Claudeを選択した場合、`~/.claude/settings.personal.json` を生成する
-5. Codexを選択した場合、`~/.codex/personal.config.toml` を生成する（[認証プロファイルの切り替え](#認証プロファイルの切り替え)用）
+5. Codexを選択した場合、`~/.codex-personal` があれば、そこにも同じリンクを張る（[認証プロファイルの切り替え](#認証プロファイルの切り替え)用）
 
 | リポジトリ | リンク先 | 内容 |
 |---|---|---|
@@ -352,58 +352,35 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 | コマンド | 接続先 | 仕組み |
 |---|---|---|
 | `codex` | LLM gateway経由（会社） | `~/.codex/config.toml` の `model_provider` がそのまま効く |
-| `cxp` | 個人ChatGPTアカウント | `codex -p personal` で `~/.codex/personal.config.toml` を重ね、`model_provider` を `openai` へ切り替える |
+| `cxp` | 個人ChatGPTアカウント | `CODEX_HOME=~/.codex-personal` で起動する。設定・認証・履歴は会社用と分かれる |
 
-初回は個人アカウントでのログインが要る（`~/.codex/auth.json` に入る）。
+個人用の `CODEX_HOME` は自分で作り、そこでログインする。`bash setup.sh --codex` は、
+`~/.codex-personal` があれば会社用と同じ共有資産のリンクを張る（無ければ個人用への配布だけを飛ばす）。
 
 ```bash
-codex login          # 個人ChatGPTアカウントでログイン
-cxp                  # 個人アカウントで起動
+mkdir -m 700 ~/.codex-personal
+CODEX_HOME=~/.codex-personal codex login   # 個人ChatGPTアカウントでログイン
+bash setup.sh --codex                      # 個人用にもリンクを張る
+cxp                                        # 個人アカウントで起動（初回は /hooks で承認する）
 ```
 
-会社経路は `auth.json` を読まない（`codex doctor` が
-`model provider requires OpenAI auth false` と報告する）ため、
-個人ログインを追加しても業務側には影響しない。`~/.codex` は共有のままでよい。
+**会社用の `~/.codex` に `auth.json` を置かない。** 会社用の `model_provider` が外部ツールの書き換えなどで
+消えると、Codexは既定の `openai` providerで動き、同じ `CODEX_HOME` の `auth.json` で認証する。
+個人の認証情報が会社用に無ければ、この場合は401で止まり、エラーも出さずに個人アカウントで動くことはない。
+2026-09-21に実際に起きた事故と、`CODEX_HOME` を分けた判断は `docs/adr/0026-codex-separate-personal-home.md` を参照。
 
-現在どちらに繋がっているかは `codex doctor` の `default model provider` で確認する。
+`hooks/check-codex-base-provider.py` はSessionStartで、会社用（`[model_providers.*]` を定義している側）について
+次の2つを検査し、UIへ警告する。正常時は何も出さない。
 
-#### 会社の MCP サーバは明示的に無効化する
+- `model_provider` が無い、または定義していないproviderを選んでいる
+- `auth.json` がある（壊れたsymlinkも含む）
 
-Codex のプロファイルは base 設定を**置き換えるのではなく重ねる**。プロファイルに書いて
-いない `[mcp_servers.*]` は個人セッションでもそのまま起動する（実測: プロファイル未記載の
-サーバが接続を試みた）。会社のゲートウェイ上にあるサーバや会社アカウントで認証するサーバが
-残ると、**個人作業が会社インフラを会社の鍵で叩く**。エラーも通知も出ないため気づけない。
+providerは起動時に確定するため、警告は次の起動前に直すための通知であり、そのセッションを止めるものではない。
+hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyringに保存する設定（`cli_auth_credentials_store`）では
+`auth.json` が作られないので、この検査では検知できない。
 
-そのため `setup.sh` は `~/.codex/config.toml` の `[mcp_servers.*]` を全列挙し、
-**deny by default** でプロファイルを生成する。個人セッションで有効にするサーバだけを
-`codex/personal-mcp-allowlist.txt` に列挙する。
-
-各エントリには `enabled` に加え、HTTP サーバなら `url`、stdio サーバなら `command` を
-転記する。Codex CLI 0.151.0 の TUI が設定保存時に profile を単体検証するためである。
-認証ヘッダー、token 環境変数、引数、環境変数は転記せず、base から継承する。
-URL に userinfo、query、fragment がある場合は、endpoint と秘密値を安全に分離できないため
-生成を拒否する。個人 profile 側の MCP エントリも `{url, enabled}` または
-`{command, enabled}` 以外のキーがあれば `cxp` が起動前に拒否する。
-
-allowlist 外のサーバは継承した設定を持っていても `enabled = false` のため起動しない。
-allowlist へ追加したサーバは base の headers、token 環境変数、args、env も実行時に利用する。
-したがって allowlist への追加は、そのサーバの接続先と実行パラメータをまとめて信頼する判断である。
-
-生成後にサーバが追加・削除された場合、または `url` / `command` が変わった場合、
-`cxp` は起動前に不一致を検出し、`setup.sh` の再実行を促して停止する。
-
-#### Codex が保存した設定は引き継ぐ
-
-`setup.sh` が所有するのは `model_provider` と `[mcp_servers.*]` だけである。Codex は `cxp` の
-セッションで保存した設定（モデル既定、project の信頼、ステータスライン、hook の信頼など）を
-このプロファイルへ書き込むため、それ以外のキーは再生成時にそのまま引き継ぐ。引き継いだキーは
-`setup.sh` の出力に一覧で表示される。所有キーを手で編集した場合だけ、次回の `setup.sh` が
-競合として止まる。経緯は `docs/adr/0023-codex-personal-profile-key-ownership.md` を参照。
-
-**検査の範囲**: `config.toml` の `[mcp_servers.*]` のみ。プラグイン marketplace 由来の
-MCP サーバ（`~/.codex/plugins/` 配下で定義され `codex mcp list` には出る）は
-`config.toml` に現れないため、この生成にも検査にも**含まれない**。
-plugin 由来のサーバを有効化する場合は、その素性を自分で確認すること。
+`codex/hooks.json` のhookコマンドは `$HOME/.codex/hooks/...` を指す。個人用で起動しても、hookの実体は
+会社用のリンク経由で読まれる。
 
 #### 設計上の判断
 
@@ -411,17 +388,9 @@ plugin 由来のサーバを有効化する場合は、その素性を自分で�
 逆向きにするとシェル統合が読み込まれなかったときに `codex` が黙って個人アカウントで
 動くため。この向きなら `cxp: command not found` で気づける。
 
-加えて Codex 固有の事情がある。`codex -p` は**存在しないプロファイル名を渡しても
-エラーにせず base 設定で起動する**（実測: exit 0、provider は会社のまま）。
-`cxp` はプロファイルの実在を自分で検査して落とす。
-
-この向きの安全性は、base の `config.toml` がトップレベルの `model_provider` で
-会社の provider を選んでいることに依存する。このキーだけが消えると、素の `codex` は
-既定の `openai` に倒れ、`cxp` と共有している `auth.json` の個人アカウントで**黙って**動く。
-`hooks/check-codex-base-provider.py` が SessionStart でこの状態を検知し、UI へ警告する
-（`[model_providers.*]` を定義しているのに選ばれていないときだけ。正常時は何も出さない）。
-provider は起動時に確定するため、警告は次の起動前に直すための通知であり、そのセッションを
-止めるものではない。hook は `/hooks` で承認するまで動かない。
+以前は `codex -p personal` で会社用の設定に個人プロファイルを重ねていた。重ねる方式では
+会社のMCPサーバや設定を個人セッションが引き継ぐため、allowlistによる無効化や所有キーの管理が必要だった
+（ADR 0005・0006・0023）。`CODEX_HOME` を分けたことで、これらの仕組みは削除した。
 
 ## ディレクトリ構成
 

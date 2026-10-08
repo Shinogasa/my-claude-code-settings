@@ -1,7 +1,7 @@
 ---
 adr: 5
 date: 2026-08-31
-status: accepted
+status: superseded by 0026
 ---
 
 # 個人プロファイルが会社設定の MCP サーバを継承する既定

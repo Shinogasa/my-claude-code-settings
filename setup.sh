@@ -6,6 +6,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 CODEX_DIR="$HOME/.codex"
+# 個人用の CODEX_HOME（ADR 0026）。無ければ個人用への配布だけを飛ばす
+CODEX_PERSONAL_DIR="$HOME/.codex-personal"
 AGENTS_DIR="$HOME/.agents"
 MANIFEST="$SCRIPT_DIR/manifests/skills.json"
 STATE_TOOL="$SCRIPT_DIR/bin/setup-state.py"
@@ -18,7 +20,6 @@ PENDING_SKILL_PARENTS=()
 BACKUP_TIMESTAMP=""
 CLAUDE_SETTINGS_STAGED=""
 CLAUDE_PERSONAL_STAGED=""
-CODEX_PERSONAL_STAGED=""
 SETUP_ENV_JSON='{}'
 
 usage() {
@@ -55,7 +56,7 @@ green() { printf '✓ %s\n' "$1"; }
 
 cleanup_staged_files() {
   local path
-  for path in "$CLAUDE_SETTINGS_STAGED" "$CLAUDE_PERSONAL_STAGED" "$CODEX_PERSONAL_STAGED"; do
+  for path in "$CLAUDE_SETTINGS_STAGED" "$CLAUDE_PERSONAL_STAGED"; do
     [ -z "$path" ] || rm -f "$path"
   done
 }
@@ -82,10 +83,12 @@ add_generated_target() {
 
 selected_claude() { [ "$SELECTOR" = "--claude" ] || [ "$SELECTOR" = "--all" ]; }
 selected_codex() { [ "$SELECTOR" = "--codex" ] || [ "$SELECTOR" = "--all" ]; }
+selected_codex_personal() { selected_codex && [ -d "$CODEX_PERSONAL_DIR" ]; }
 host_root() {
   case "$1" in
     claude) printf '%s' "$CLAUDE_DIR" ;;
     codex) printf '%s' "$CODEX_DIR" ;;
+    codex-personal) printf '%s' "$CODEX_PERSONAL_DIR" ;;
   esac
 }
 state_path() { printf '%s/.my-claude-code-settings/ownership.json' "$(host_root "$1")"; }
@@ -173,6 +176,20 @@ for skill in skills:
 PY
 }
 
+# 会社用と個人用の CODEX_HOME に同じ一覧を張る。一覧はここだけで持つ
+add_codex_home_links() {
+  local host="$1" root="$2"
+  add_link_target "$host" "$SCRIPT_DIR/rules" "$root/rules"
+  add_link_target "$host" "$SCRIPT_DIR/CLAUDE.md" "$root/AGENTS.md"
+  add_link_target "$host" "$SCRIPT_DIR/codex/RTK.md" "$root/RTK.md"
+  add_link_target "$host" "$SCRIPT_DIR/codex/MODEL_ROUTING.md" "$root/MODEL_ROUTING.md"
+  add_link_target "$host" "$SCRIPT_DIR/hooks" "$root/hooks"
+  add_link_target "$host" "$SCRIPT_DIR/codex/hooks.json" "$root/hooks.json"
+  add_link_target "$host" "$SCRIPT_DIR/codex/agents" "$root/agents"
+  add_link_target "$host" "$SCRIPT_DIR/bin" "$root/bin"
+  add_link_target "$host" "$SCRIPT_DIR/codex-cli-best-practice" "$root/codex-cli-best-practice"
+}
+
 build_targets() {
   local skill
   if selected_claude; then
@@ -187,19 +204,13 @@ build_targets() {
     add_generated_target claude "$SCRIPT_DIR/env.json.template" "$CLAUDE_DIR/settings.personal.json"
   fi
   if selected_codex; then
-    add_link_target codex "$SCRIPT_DIR/rules" "$CODEX_DIR/rules"
-    add_link_target codex "$SCRIPT_DIR/CLAUDE.md" "$CODEX_DIR/AGENTS.md"
-    add_link_target codex "$SCRIPT_DIR/codex/RTK.md" "$CODEX_DIR/RTK.md"
-    add_link_target codex "$SCRIPT_DIR/codex/MODEL_ROUTING.md" "$CODEX_DIR/MODEL_ROUTING.md"
-    add_link_target codex "$SCRIPT_DIR/hooks" "$CODEX_DIR/hooks"
-    add_link_target codex "$SCRIPT_DIR/codex/hooks.json" "$CODEX_DIR/hooks.json"
-    add_link_target codex "$SCRIPT_DIR/codex/agents" "$CODEX_DIR/agents"
-    add_link_target codex "$SCRIPT_DIR/bin" "$CODEX_DIR/bin"
-    add_link_target codex "$SCRIPT_DIR/codex-cli-best-practice" "$CODEX_DIR/codex-cli-best-practice"
+    add_codex_home_links codex "$CODEX_DIR"
+    if selected_codex_personal; then
+      add_codex_home_links codex-personal "$CODEX_PERSONAL_DIR"
+    fi
     while IFS= read -r skill; do
       add_link_target codex "$SCRIPT_DIR/skills/$skill" "$AGENTS_DIR/skills/$skill"
     done < <(read_manifest_skills codex)
-    add_generated_target codex "$SCRIPT_DIR/codex/personal-mcp-allowlist.txt" "$CODEX_DIR/personal.config.toml"
   fi
 }
 
@@ -319,10 +330,6 @@ validate_sources() {
     red "Codex plugin auditor が存在しません"
     return 1
   fi
-  if selected_codex && [ ! -f "$SCRIPT_DIR/bin/generate-codex-personal-profile.py" ]; then
-    red "Codex 個人プロファイル生成スクリプトが存在しません"
-    return 1
-  fi
   if selected_codex && [ ! -f "$SCRIPT_DIR/bin/configure_codex_signing.py" ]; then
     red "Codex SSH署名設定スクリプトが存在しません"
     return 1
@@ -377,23 +384,15 @@ classify_target() {
   if [ "${TARGET_GENERATED[$index]}" = true ]; then
     recorded="$(recorded_checksum "${TARGET_HOSTS[$index]}" "$destination")"
   fi
-  python3 - "$STATE_TOOL" "$source" "$destination" "$recorded" \
-    "${TARGET_GENERATED[$index]}" "$SCRIPT_DIR/bin/generate-codex-personal-profile.py" <<'PY'
+  python3 - "$STATE_TOOL" "$source" "$destination" "$recorded" "${TARGET_GENERATED[$index]}" <<'PY'
 import importlib.util
 import sys
 
-tool, source, destination, recorded, generated, generator_path = sys.argv[1:]
+tool, source, destination, recorded, generated = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("setup_state", tool)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-owned_keys = None
-if recorded.startswith(module.OWNED_DIGEST_PREFIX):
-    # 所有キーだけの記録は Codex 個人プロファイルが使う。現在の定義と照合する。
-    generator_spec = importlib.util.spec_from_file_location("generate_profile", generator_path)
-    generator = importlib.util.module_from_spec(generator_spec)
-    generator_spec.loader.exec_module(generator)
-    owned_keys = generator.OWNED_KEYS
-print(module.classify(source, destination, recorded or None, generated == "true", owned_keys))
+print(module.classify(source, destination, recorded or None, generated == "true"))
 PY
 }
 
@@ -763,42 +762,6 @@ PY
   CLAUDE_PERSONAL_STAGED=""
 }
 
-# Codex のプロファイルは base 設定へ重ねられるため、全 MCP サーバを deny-by-default で
-# 列挙する。TUI の config/batchWrite は profile を単体検証するので、enabled だけでなく
-# base と同じ url または command も含む自己完結したエントリを生成する。
-prepare_codex_personal_profile() {
-  CODEX_PERSONAL_STAGED="$(mktemp "$CODEX_DIR/.personal.config.toml.setup.XXXXXX")" || return 1
-  chmod 600 "$CODEX_PERSONAL_STAGED" || return 1
-  python3 "$SCRIPT_DIR/bin/generate-codex-personal-profile.py" \
-    "$CODEX_DIR/config.toml" "$SCRIPT_DIR/codex/personal-mcp-allowlist.txt" "$CODEX_PERSONAL_STAGED" \
-    "$CODEX_DIR/personal.config.toml"
-}
-
-commit_codex_personal_profile() {
-  local state_file="$1" snapshot="$2"
-  python3 - "$CODEX_PERSONAL_STAGED" "$CODEX_DIR/personal.config.toml" \
-    "$STATE_TOOL" "$state_file" "$snapshot" \
-    "$SCRIPT_DIR/bin/generate-codex-personal-profile.py" <<'PY'
-import importlib.util
-import json
-import sys
-
-staged, destination, tool, state_path, snapshot, generator_path = sys.argv[1:]
-spec = importlib.util.spec_from_file_location("setup_state", tool)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-generator_spec = importlib.util.spec_from_file_location("generate_profile", generator_path)
-generator = importlib.util.module_from_spec(generator_spec)
-generator_spec.loader.exec_module(generator)
-module.install_generated_file(staged, destination, json.loads(snapshot))
-state = module.load_state(state_path)
-# Codex が書き足すキーは所有外。所有キーだけの digest を記録し、追記では競合にしない。
-state["generated"][destination] = module.owned_toml_digest(destination, generator.OWNED_KEYS)
-module.save_state(state_path, state)
-PY
-  CODEX_PERSONAL_STAGED=""
-}
-
 target_snapshot_for_destination() {
   local destination="$1" index
   for index in "${!TARGET_DESTINATIONS[@]}"; do
@@ -844,11 +807,6 @@ apply_targets() {
       "$(state_path claude)" \
       "$(target_snapshot_for_destination "$CLAUDE_DIR/settings.json")" \
       "$(target_snapshot_for_destination "$CLAUDE_DIR/settings.personal.json")"
-  fi
-  if selected_codex; then
-    commit_codex_personal_profile \
-      "$(state_path codex)" \
-      "$(target_snapshot_for_destination "$CODEX_DIR/personal.config.toml")"
   fi
 }
 
@@ -1005,9 +963,6 @@ snapshot_targets || exit 1
 if selected_claude; then
   prepare_claude_files || exit 1
 fi
-if selected_codex; then
-  prepare_codex_personal_profile || exit 1
-fi
 validate_target_snapshots || exit 1
 if [ "${#CONFLICT_DESTINATIONS[@]}" -gt 0 ]; then
   backup_conflicts "$BACKUP_TIMESTAMP" || exit 1
@@ -1030,6 +985,15 @@ if selected_codex; then
   setup_codex_agent_defaults
   audit_codex_plugins
   yellow 'Codex hooks を配置しました。trust state は変更していません。/hooks で review して承認してください。'
+  if selected_codex_personal; then
+    yellow "個人用の $CODEX_PERSONAL_DIR でも、cxp で起動して /hooks の承認が要ります。未承認だと危険コマンドのガードも黙ってスキップされます。"
+  fi
+  if [ -e "$CODEX_DIR/personal.config.toml" ]; then
+    yellow "$CODEX_DIR/personal.config.toml は使わなくなりました（ADR 0026）。個人用の設定は $CODEX_PERSONAL_DIR に移し、このファイルは退避してください。"
+  fi
+  if ! selected_codex_personal; then
+    yellow "個人用の $CODEX_PERSONAL_DIR が無いため、個人用への配布を飛ばしました（ADR 0026）。"
+  fi
 fi
 if selected_claude; then
   print_claude_path_guidance

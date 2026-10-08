@@ -25,9 +25,11 @@ base_url = "https://gateway.example.com"
 """
 
 
-def run_hook(codex_home, payload=None):
+def run_hook(codex_home, payload=None, home=None):
     env = dict(os.environ)
     env["CODEX_HOME"] = str(codex_home)
+    if home is not None:
+        env["HOME"] = str(home)
     body = {"hook_event_name": "SessionStart", "source": "startup"}
     result = subprocess.run(
         ["python3", str(HOOK)],
@@ -87,6 +89,60 @@ class TestBaseProviderHook(unittest.TestCase):
     def test_warns_when_model_providers_is_not_a_table(self):
         self.config.write_text('model_providers = "gateway"\n')
         self.assert_warns(run_hook(self.home), "検査できません")
+
+    def test_warns_when_personal_auth_exists_in_company_home(self):
+        # ADR 0026: 会社用の CODEX_HOME に auth.json があると、provider が消えたときに個人アカウントで動く
+        self.config.write_text('model_provider = "gateway"\n' + CUSTOM_PROVIDER)
+        (self.home / "auth.json").write_text("{}")
+        self.assert_warns(run_hook(self.home), "auth.json")
+
+    def test_warns_when_auth_json_is_a_dangling_symlink_in_company_home(self):
+        self.config.write_text('model_provider = "gateway"\n' + CUSTOM_PROVIDER)
+        (self.home / "auth.json").symlink_to(self.home / "missing.json")
+        self.assert_warns(run_hook(self.home), "auth.json")
+
+    def test_silent_when_auth_json_exists_in_personal_home(self):
+        # 自前 provider を定義しない個人用の CODEX_HOME には auth.json があってよい
+        self.config.write_text('model = "some-model"\n')
+        (self.home / "auth.json").write_text("{}")
+        self.assert_silent(run_hook(self.home))
+
+    def test_reports_missing_provider_and_auth_json_together(self):
+        # 2つが重なった状態が事故そのものなので、片方だけを報告して他方を隠さない
+        self.config.write_text(CUSTOM_PROVIDER)
+        (self.home / "auth.json").write_text("{}")
+        result = run_hook(self.home)
+        self.assert_warns(result, "model_provider がありません")
+        self.assert_warns(result, "auth.json があります")
+
+    def make_separated_home(self):
+        # ~/.codex-personal があるマシン = CODEX_HOME を分けて運用している（ADR 0026）
+        home = self.home / "user"
+        company = home / ".codex"
+        company.mkdir(parents=True)
+        (home / ".codex-personal").mkdir()
+        return home, company
+
+    def test_warns_when_provider_definitions_are_gone_but_homes_are_separated(self):
+        # config.toml ごと書き換えられて provider 定義も消えた場合でも、会社用の auth.json を見逃さない
+        home, company = self.make_separated_home()
+        (company / "config.toml").write_text('model = "x"\n')
+        (company / "auth.json").write_text("{}")
+        self.assert_warns(run_hook(company, home=home), "auth.json")
+
+    def test_warns_when_company_config_is_missing_but_homes_are_separated(self):
+        home, company = self.make_separated_home()
+        (company / "auth.json").write_text("{}")
+        self.assert_warns(run_hook(company, home=home), "auth.json")
+
+    def test_silent_for_default_home_with_auth_when_not_separated(self):
+        # 個人PCのように ~/.codex だけを使う構成では、auth.json があっても警告しない
+        home = self.home / "user"
+        company = home / ".codex"
+        company.mkdir(parents=True)
+        (company / "config.toml").write_text('model = "x"\n')
+        (company / "auth.json").write_text("{}")
+        self.assert_silent(run_hook(company, home=home))
 
     def test_does_not_leak_provider_secrets_into_message(self):
         self.config.write_text(

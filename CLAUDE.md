@@ -9,7 +9,8 @@ Claude Code設定の作業時は `/claude-code-best-practice` スキルが自動
 コーディングエージェントのグローバル設定をGit管理するリポジトリ。`bash setup.sh` でシンボリックリンクを作成する。
 
 - Claude Code: `~/.claude/` 配下（全資産）
-- Codex CLI: `~/.agents/skills` `~/.codex/prompts` `~/.codex/rules` `~/.codex/AGENTS.md` `~/.codex/hooks` `~/.codex/hooks.json`（`~/.codex` がある場合のみ）
+- Codex CLI: `~/.agents/skills` と、`~/.codex` 配下の `rules` `AGENTS.md` `hooks` `hooks.json` など（`~/.codex` がある場合のみ）。
+  個人用の `~/.codex-personal` があれば、同じものを張る（ADR 0026）
 
 skills / commands / rules / CLAUDE.md は、同じファイルを両ホストへリンクしている。**内容を書くときは特定ホスト固有のツール名・パスに依存させない**（依存する場合はホスト別に併記する）。
 

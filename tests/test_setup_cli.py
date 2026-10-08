@@ -131,7 +131,6 @@ class SetupCliTests(unittest.TestCase):
         self.assertTrue((self.home / ".codex" / "AGENTS.md").is_symlink())
         self.assertTrue((self.home / ".agents" / "skills" / "api-design").is_symlink())
         self.assertTrue((self.home / ".agents" / "skills" / "codex-cli-best-practice").is_symlink())
-        self.assertTrue((self.home / ".codex" / ".my-claude-code-settings" / "ownership.json").is_file())
         self.assertFalse((self.home / ".codex" / "prompts").exists())
         self.assertFalse((self.home / ".claude" / "CLAUDE.md").exists())
 
@@ -144,6 +143,49 @@ class SetupCliTests(unittest.TestCase):
         self.assertTrue((self.home / ".codex" / "AGENTS.md").is_symlink())
         self.assertTrue((self.home / ".codex" / "bin").is_symlink())
         self.assertTrue((self.home / ".codex" / "hooks").is_symlink())
+
+    def test_codex_links_same_shared_assets_into_personal_home(self):
+        # ADR 0026: 個人用の CODEX_HOME にも、会社用と同じ共有資産を配る
+        company = self.home / ".codex"
+        personal = self.home / ".codex-personal"
+        company.mkdir()
+        personal.mkdir()
+        result = run_setup(self.repository, self.home, "--codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        def shared_links(root):
+            return {p.name: os.readlink(p) for p in root.iterdir() if p.is_symlink()}
+
+        self.assertIn("AGENTS.md", shared_links(personal))
+        self.assertEqual(shared_links(personal), shared_links(company))
+
+    def test_codex_no_longer_generates_personal_profile(self):
+        # ADR 0026: 個人用は CODEX_HOME を分けるので、会社用に重ねるプロファイルは作らない
+        (self.home / ".codex").mkdir()
+        config = self.home / ".codex" / "config.toml"
+        config.write_text('[mcp_servers.a]\nurl = "https://a.example"\n')
+        config.chmod(0o600)
+        result = run_setup(self.repository, self.home, "--codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.home / ".codex" / "personal.config.toml").exists())
+
+    def test_codex_keeps_old_personal_profile_and_tells_to_move_it(self):
+        # 既存のプロファイルは消さずに残し、退避を案内する
+        (self.home / ".codex").mkdir()
+        old = self.home / ".codex" / "personal.config.toml"
+        old.write_text('model_provider = "openai"\n')
+        result = run_setup(self.repository, self.home, "--codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(old.read_text(), 'model_provider = "openai"\n')
+        self.assertIn("personal.config.toml", result.stdout + result.stderr)
+
+    def test_codex_skips_personal_home_when_missing(self):
+        # 会社用だけのマシンでは個人用を作らず、配らなかったことを通知する
+        (self.home / ".codex").mkdir()
+        result = run_setup(self.repository, self.home, "--codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.home / ".codex-personal").exists())
+        self.assertIn(".codex-personal", result.stdout + result.stderr)
 
     def test_rerun_removes_only_repository_skill_links_missing_from_manifest(self):
         (self.home / ".claude").mkdir()
@@ -445,69 +487,6 @@ class SetupCliTests(unittest.TestCase):
         )
         self.assertEqual(attribute.stdout.rstrip("\n"), "preserve-me")
         self.assertIn("deny write", acl.stdout)
-
-    def test_codex_setup_generates_transport_complete_mcp_entries(self):
-        (self.home / ".codex").mkdir()
-        config = self.home / ".codex" / "config.toml"
-        config.write_text(
-            '[mcp_servers."remote-http"]\n'
-            'url = "https://example.invalid/mcp"\n'
-            '[mcp_servers.local_stdio]\n'
-            'command = "/bin/true"\n',
-            encoding="utf-8",
-        )
-        config.chmod(0o600)
-
-        result = run_setup(self.repository, self.home, "--codex")
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        with (self.home / ".codex" / "personal.config.toml").open("rb") as profile:
-            servers = tomllib.load(profile)["mcp_servers"]
-        self.assertEqual(
-            servers,
-            {
-                "local_stdio": {"command": "/bin/true", "enabled": False},
-                "remote-http": {
-                    "url": "https://example.invalid/mcp",
-                    "enabled": False,
-                },
-            },
-        )
-
-    def write_codex_config(self):
-        (self.home / ".codex").mkdir()
-        config = self.home / ".codex" / "config.toml"
-        config.write_text('[mcp_servers.local_stdio]\ncommand = "/bin/true"\n', encoding="utf-8")
-        config.chmod(0o600)
-        return self.home / ".codex" / "personal.config.toml"
-
-    def test_codex_rerun_keeps_settings_written_by_codex(self):
-        # Codex は起動中のプロファイルへ設定保存を書き込む。setup の所有外なので競合にしない。
-        profile = self.write_codex_config()
-        self.assertEqual(run_setup(self.repository, self.home, "--codex").returncode, 0)
-        with profile.open("a", encoding="utf-8") as handle:
-            handle.write('\n[projects."/work/repo"]\ntrust_level = "trusted"\n')
-
-        result = run_setup(self.repository, self.home, "--codex")
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        with profile.open("rb") as handle:
-            document = tomllib.load(handle)
-        self.assertEqual(document["projects"], {"/work/repo": {"trust_level": "trusted"}})
-        self.assertEqual(document["model_provider"], "openai")
-
-    def test_codex_hand_edit_of_owned_keys_is_conflict(self):
-        # 所有部分の手編集は従来どおり確認を求める。黙って戻すと編集の意図が消える。
-        profile = self.write_codex_config()
-        self.assertEqual(run_setup(self.repository, self.home, "--codex").returncode, 0)
-        edited = profile.read_text(encoding="utf-8").replace("enabled = false", "enabled = true")
-        profile.write_text(edited, encoding="utf-8")
-
-        result = run_setup(self.repository, self.home, "--codex")
-
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("personal.config.toml", result.stderr)
-        self.assertEqual(profile.read_text(encoding="utf-8"), edited)
 
     def test_all_requires_both_host_directories_before_any_mutation(self):
         (self.home / ".claude").mkdir()
