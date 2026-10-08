@@ -61,4 +61,29 @@ if [ "$DRY_RUN" = true ]; then
   exit 0
 fi
 
-exec "${COMMAND[@]}"
+if [ "$INCLUDE_SLOW" = false ]; then
+  exec "${COMMAND[@]}"
+fi
+
+# PR作成時のhook（hooks/require-full-tests-before-pr.py）が、このファイル名と目印を見る
+TESTS_ALL_PASSED_STAMP="tests-all-passed"
+
+# 追跡中のファイルに未コミットの変更が無ければHEADを返す。あれば何も返さない
+clean_head() {
+  git diff --quiet HEAD -- 2>/dev/null || return 0
+  git rev-parse HEAD 2>/dev/null || true
+}
+
+STARTED_AT="$(clean_head)"
+STATUS=0
+"${COMMAND[@]}" || STATUS=$?
+if [ "$STATUS" -ne 0 ]; then
+  exit "$STATUS"
+fi
+
+if [ -n "$STARTED_AT" ] && [ "$(clean_head)" = "$STARTED_AT" ]; then
+  echo "$STARTED_AT" > "$(git rev-parse --git-path "$TESTS_ALL_PASSED_STAMP")"
+  echo "全件の通過を記録した: $STARTED_AT" >&2
+else
+  echo "注意: 未コミットの変更があったか、実行中にHEADが変わったため、全件の通過は記録しない。" >&2
+fi
