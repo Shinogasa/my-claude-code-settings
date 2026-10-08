@@ -254,3 +254,69 @@ class FailureAndFollowUpTests(HookCase):
         self.run_hook("git commit -m x")
         self.run_hook("git commit -m x")
         self.assertEqual(self.run_hook("git commit -m x"), (0, {}))
+
+
+class PartialFailureTests(HookCase):
+    def setUp(self):
+        super().setUp()
+        self.other = self.base / "other"
+        self.other.mkdir()
+        git(self.other, "init", "-q", "-b", "work")
+        git(self.other, "config", "user.name", "t")
+        git(self.other, "config", "user.email", "t@example.invalid")
+        git(self.other, "commit", "-q", "--allow-empty", "-m", "init")
+
+    def state_of(self, session="s1"):
+        return json.loads((self.base / "state" / f"{session}.json").read_text(encoding="utf-8"))
+
+    def break_repo(self):
+        # index を壊す。rev-parse は通るが git diff --cached が失敗する
+        (self.repo / ".git" / "index").write_bytes(b"garbage")
+
+    def test_broken_repo_does_not_hide_review_of_the_other_repo(self):
+        self.break_repo()
+        path = self.stage("docs/specs/a.md", repo=self.other)
+        command = f"git -C {self.repo} commit -m x && git -C {self.other} commit -m x"
+        output = self.run_hook(command)[1]
+        self.assertEqual(decision_of(output), "deny")
+        reason = output["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn(str(path), reason)
+        self.assertIn("次のリポジトリは検査できなかった", reason)
+        self.assertIn(str(self.repo), reason)
+        self.assertIn(str(path), self.state_of()["paths"])
+
+    def test_missing_principles_data_names_unreviewed_targets_and_records_nothing(self):
+        self.data.unlink()
+        path = self.stage("docs/specs/a.md")
+        first = self.run_hook("git commit -m x")[1]
+        self.assertEqual(decision_of(first), "deny")
+        self.assertIn(str(path), first["hookSpecificOutput"]["permissionDecisionReason"])
+        second = self.run_hook("git commit -m x")[1]
+        self.assertIsNone(decision_of(second))
+        self.assertIn(str(path), second["systemMessage"])
+        self.assertEqual(self.state_of()["paths"], {})
+
+    def test_git_failure_in_single_repo_denies_once_then_passes_with_message(self):
+        self.stage("docs/specs/a.md")
+        self.break_repo()
+        first = self.run_hook("git commit -m x")[1]
+        self.assertEqual(decision_of(first), "deny")
+        second = self.run_hook("git commit -m x")[1]
+        self.assertIsNone(decision_of(second))
+        self.assertIn(str(self.repo), second["systemMessage"])
+
+    def test_state_without_error_shown_is_filled_with_default(self):
+        self.stage("docs/specs/a.md")
+        state = self.base / "state"
+        state.mkdir()
+        (state / "s1.json").write_text('{"paths": {}}', encoding="utf-8")
+        self.break_repo()  # error_shown を読む経路（git失敗）に入れる
+        self.assertEqual(decision_of(self.run_hook("git commit -m x")[1]), "deny")
+
+    def test_unreadable_transcript_on_second_commit_says_so(self):
+        self.stage("docs/specs/a.md")
+        self.run_hook("git commit -m x")
+        self.transcript_path.unlink()
+        output = self.run_hook("git commit -m x")[1]
+        self.assertIsNone(decision_of(output))
+        self.assertIn("起動を確かめられなかった", output["systemMessage"])
