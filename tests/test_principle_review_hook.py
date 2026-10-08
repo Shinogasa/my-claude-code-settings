@@ -91,6 +91,12 @@ class HookCase(unittest.TestCase):
         output = json.loads(result.stdout) if result.stdout.strip() else {}
         return result.returncode, output
 
+    def write(self, relative, text="本文", repo=None):
+        path = (repo or self.repo) / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
     def stage(self, relative, text="本文", repo=None):
         path = (repo or self.repo) / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -161,12 +167,6 @@ class BlockOnceTests(HookCase):
 class AddInSameCommandTests(HookCase):
     """git add と git commit を1つのコマンドで打つ形と、git commit に pathspec を渡す形。"""
 
-    def write(self, relative, text="本文", repo=None):
-        path = (repo or self.repo) / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-        return path
-
     def test_add_then_commit_of_untracked_spec_is_denied(self):
         path = self.write("docs/specs/a.md")
         output = self.run_hook("git add docs/specs/a.md && git commit -m x")[1]
@@ -224,6 +224,41 @@ class AddInSameCommandTests(HookCase):
     def test_interactive_add_falls_back_to_untracked_targets(self):
         self.write("docs/specs/a.md")
         self.assertEqual(decision_of(self.run_hook("git add -p && git commit -m x")[1]), "deny")
+
+
+class AddHardeningTests(HookCase):
+    """フックは利用者がコマンドを承認する前に動く。コマンドの引数で git に任意のファイルを読ませたり、
+    設定されたコマンドを実行させたりしない。"""
+
+    def test_pathspec_from_file_is_not_forwarded(self):
+        # dry-run に渡せば src/x.py だけになって通るが、渡さずに広めに取るので未追跡の下書きで止まる
+        self.write("docs/specs/draft.md")
+        self.write("src/x.py")
+        listing = self.base / "list.txt"
+        listing.write_text("src/x.py\n", encoding="utf-8")
+        command = f"git add --pathspec-from-file={listing} && git commit -m x"
+        self.assertEqual(decision_of(self.run_hook(command)[1]), "deny")
+
+    def test_pathspec_from_file_without_targets_passes(self):
+        self.write("src/x.py")
+        self.assertEqual(self.run_hook("git add --pathspec-from-file=/etc/hosts && git commit -m x"), (0, {}))
+
+    def test_unknown_option_falls_back(self):
+        self.write("docs/specs/draft.md")
+        self.write("src/x.py")
+        self.assertEqual(decision_of(self.run_hook("git add -N src/x.py && git commit -m x")[1]), "deny")
+
+    def test_allowed_option_and_double_dash_use_dry_run(self):
+        self.write("docs/specs/draft.md")
+        self.write("src/-x.py")
+        self.assertEqual(self.run_hook("git add -f -- src/-x.py && git commit -m x"), (0, {}))
+
+    def test_configured_fsmonitor_is_not_run(self):
+        marker = self.base / "marker"
+        git(self.repo, "config", "core.fsmonitor", f"touch {marker}")
+        self.write("docs/specs/a.md")
+        self.assertEqual(decision_of(self.run_hook("git add docs/specs/a.md && git commit -a -m x")[1]), "deny")
+        self.assertFalse(marker.exists())
 
 
 class TargetRepositoryTests(HookCase):
