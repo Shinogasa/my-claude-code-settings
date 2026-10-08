@@ -623,10 +623,10 @@ bash tests/run.sh --all    # 全件（約2分半）
 bash tests/run.sh --dry-run --all  # 実行するコマンドを表示するだけ
 ```
 
-`--all` が、未コミットの変更の無い状態で通ると、HEADを `.git/tests-all-passed` に記録する。
+未コミットの変更が無い状態で `--all` が通ると、HEADを `.git/tests-all-passed` に記録する。
 PR作成時のhookはこの記録とHEADを照らし合わせ、一致しなければ `gh pr create` を止める。
 
-uvが無い環境では、通知を出したうえで逐次のunittestへ切り替わる。並列化しない全件実行は従来どおり次のとおり（約24分）。
+uvが無い環境では、通知を出したうえで逐次のunittestへ切り替わる。並列化せずに全件を流すコマンドは、従来と変わらない（約24分）。
 
 ```bash
 python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_*.py' -v
