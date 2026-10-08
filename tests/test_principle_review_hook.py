@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -130,8 +131,10 @@ class BlockOnceTests(HookCase):
         self.assertEqual(self.run_hook("git commit -m x"), (0, {}))
 
     def test_japanese_and_space_in_filename(self):
-        self.stage("docs/specs/仕事の 原則.md")
-        self.assertEqual(decision_of(self.run_hook("git commit -m x")[1]), "deny")
+        path = self.stage("docs/specs/仕事の 原則.md")
+        output = self.run_hook("git commit -m x")[1]
+        self.assertEqual(decision_of(output), "deny")
+        self.assertIn(f"spec: {path}", output["hookSpecificOutput"]["permissionDecisionReason"])
 
     def test_unstaged_change_counts_only_with_all_flag(self):
         self.stage("docs/specs/a.md")
@@ -165,3 +168,35 @@ class TargetRepositoryTests(HookCase):
         outside = self.base / "outside"
         outside.mkdir()
         self.assertEqual(self.run_hook("git commit -m x", cwd=outside), (0, {}))
+
+
+class StateResilienceTests(HookCase):
+    def write_session_state(self, text, session="s1"):
+        state = self.base / "state"
+        state.mkdir(exist_ok=True)
+        (state / f"{session}.json").write_text(text, encoding="utf-8")
+
+    def test_corrupt_json_state_is_denied_first(self):
+        self.stage("docs/specs/a.md")
+        self.write_session_state("{broken")
+        self.assertEqual(decision_of(self.run_hook("git commit -m x")[1]), "deny")
+
+    def test_non_dict_state_is_denied_first(self):
+        self.stage("docs/specs/a.md")
+        self.write_session_state("[]")
+        self.assertEqual(decision_of(self.run_hook("git commit -m x")[1]), "deny")
+
+    def test_unexpected_exception_exits_zero_with_message(self):
+        payload = json.dumps({"session_id": "s1", "tool_name": "Bash", "tool_input": {"command": "git commit -m x"}})
+        code, output = self.run_hook("", raw=payload)
+        self.assertEqual(code, 0)
+        self.assertIn("検査できなかった", json.dumps(output, ensure_ascii=False))
+
+    def test_cleanup_keeps_the_lock_in_use(self):
+        self.stage("docs/specs/a.md")
+        self.run_hook("git commit -m x")
+        old = time.time() - 8 * 86400
+        for name in ("s1.lock", "s1.json"):
+            os.utime(self.base / "state" / name, (old, old))
+        self.run_hook("git commit -m x")
+        self.assertTrue((self.base / "state" / "s1.lock").exists())
