@@ -178,6 +178,7 @@ def read_state(key: str) -> dict:
         return fresh  # 壊れた状態は空に置き換える。対象は未記録になるので1回止まる
     if not isinstance(state, dict) or not isinstance(state.get("paths"), dict):
         return fresh
+    state.setdefault("error_shown", False)  # error_shown が欠けた状態でも KeyError にしない
     return state
 
 
@@ -269,20 +270,33 @@ def handle(payload: dict) -> dict:
     with session_lock(key):
         cleanup_old_state()
         state = read_state(key)
+        pending = [(path, checkpoint) for path, checkpoint in targets if path not in state["paths"]]
         problem = data_problem()
-        problems = errors + ([problem] if problem else [])
-        if problems:
+        if problem:
+            # 原則集を読めないとレビュワーが動けない。対象は記録せず、レビューできなかった対象を毎回名指す
+            problems = [*errors, problem]
+            unreviewed = [f"レビューできなかった対象: {path}" for path, _checkpoint in targets]
             if not state["error_shown"]:
                 state["error_shown"] = True
                 write_state(key, state)
-                return deny("原則レビューを検査できなかったので1回止めた。\n" + "\n".join(f"- {p}" for p in problems))
-            return with_messages({}, ["原則レビューを検査できないまま通した:", *problems])
-        pending = [(path, checkpoint) for path, checkpoint in targets if path not in state["paths"]]
+                lines = "\n".join(f"- {line}" for line in [*problems, *unreviewed])
+                return deny("原則レビューを検査できなかったので1回止めた。\n" + lines)
+            return with_messages({}, ["原則レビューを検査できないまま通した:", *problems, *unreviewed])
         if pending:
             for path, _checkpoint in pending:
                 state["paths"][path] = {"offset": transcript_size(payload), "checked": False}
+            reason = review_request(pending)
+            if errors:
+                state["error_shown"] = True
+                reason += "\n次のリポジトリは検査できなかった:\n" + "\n".join(f"- {e}" for e in errors)
             write_state(key, state)
-            return deny(review_request(pending))
+            return deny(reason)
+        if errors:
+            if not state["error_shown"]:
+                state["error_shown"] = True
+                write_state(key, state)
+                return deny("原則レビューを検査できなかったので1回止めた。\n" + "\n".join(f"- {e}" for e in errors))
+            return with_messages({}, ["原則レビューを検査できないまま通した:", *errors])
         messages = []
         for path, _checkpoint in targets:
             record = state["paths"][path]
