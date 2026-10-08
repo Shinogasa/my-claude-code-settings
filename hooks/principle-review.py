@@ -10,10 +10,12 @@ import importlib.util
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
@@ -51,12 +53,16 @@ WHOLE_TREE_ADD_OPTS = {"-A", "--all", "--no-ignore-removal", "-u", "--update"}  
 UPDATE_ONLY_ADD_OPTS = {"-u", "--update"}  # 追跡済みのファイルだけ
 FORCE_ADD_OPTS = {"-f", "--force"}  # 無視されたファイルも足す
 # フックの git 呼び出しすべてに付ける。fsmonitor とフックのコマンドを止め、利用者の attributes ファイルを読まない。
+# 通信（protocol.allow=never、ssh・askpass・credential helper の無効化）も止める。
 # リポジトリ内の .gitattributes は読まれるので、filter は _filter_overrides で別に打ち消す
-SAFE_GIT_CONFIG = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.attributesFile=/dev/null")
+SAFE_GIT_CONFIG = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.attributesFile=/dev/null",
+                   "-c", "protocol.allow=never", "-c", "core.sshCommand=false", "-c", "core.askPass=",
+                   "-c", "credential.helper=")
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # まだコミットが無いリポジトリの比較元
-# 対象外にするパスの文字。理由の文面へ改行などを持ち込ませない
-CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
-MAX_SHOWN_LENGTH = 200
+# 対象外にするパスの文字の種類。制御文字のほか、双方向の制御・ゼロ幅・タグ文字（Cf）、
+# 復号できなかったバイト（Cs）、私用・未割り当ての文字も含め、理由の文面へ持ち込ませない
+CONTROL_CATEGORIES = {"Cc", "Cf", "Cs", "Co", "Zl", "Zp", "Cn"}
+MAX_SHOWN_LENGTH = 200  # これより長いパスは、切り詰めずに対象外にする
 
 
 def commit_options(args: List[str]) -> Tuple[set, set, List[str]]:
@@ -177,19 +183,58 @@ def _git_env() -> dict:
     """利用者の GIT_* 環境変数（GIT_DIR・GIT_INDEX_FILE など）を引き継がない環境を返す。"""
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     # メッセージで「リポジトリ外」を見分けるので、翻訳されないよう LC_ALL=C にする。
-    # GIT_OPTIONAL_LOCKS=0 で、検査中にインデックスの stat 情報を書き戻さない
-    return {**env, "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"}
+    # GIT_OPTIONAL_LOCKS=0 で、検査中にインデックスの stat 情報を書き戻さない。
+    # GIT_NO_LAZY_FETCH=1 で、partial clone の欠けたオブジェクトを取りに行かない（取りに行くと remote の設定のコマンドが走る）
+    return {**env, "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_NO_LAZY_FETCH": "1"}
+
+
+GIT_POLL_SECONDS = 0.01
+
+
+def _kill_group(pgid: int) -> None:
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass  # グループに残ったプロセスが無い
+
+
+def _wait_exited(process: subprocess.Popen, timeout: float) -> bool:
+    """子が終わるまで待つ。回収はしないので、その間に pid（＝プロセスグループID）が使い回されることはない。"""
+    limit = time.monotonic() + timeout
+    while time.monotonic() < limit:
+        if os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is not None:
+            return True
+        time.sleep(GIT_POLL_SECONDS)
+    return False
 
 
 def _git(repo: str, deadline: float, *args: str) -> subprocess.CompletedProcess:
+    """git を新しいセッションで実行する。出力はパイプでなく一時ファイルに受けるので、
+    出力を握ったまま残る孫プロセスを待たない。終わった後（または時間切れのとき）はグループごと止める。
+    """
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise GitError(f"フック全体の時間予算（{TIME_BUDGET_SECONDS}秒）を使い切った")
-    try:
-        return subprocess.run(["git", "-C", repo, *SAFE_GIT_CONFIG, *args], capture_output=True, text=True,
-                              timeout=min(GIT_TIMEOUT_SECONDS, remaining), env=_git_env())
-    except (OSError, subprocess.SubprocessError) as error:
-        raise GitError(f"git を実行できない: {error}") from error
+    timeout = min(GIT_TIMEOUT_SECONDS, remaining)
+    command = ["git", "-C", repo, *SAFE_GIT_CONFIG, *args]
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        try:
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                                       env=_git_env(), start_new_session=True)
+        except OSError as error:
+            raise GitError(f"git を実行できない: {error}") from error
+        exited = _wait_exited(process, timeout)
+        _kill_group(process.pid)  # 回収の前に止めるので、別のプロセスのグループを誤って止めない
+        process.wait()
+        if not exited:
+            raise GitError(f"git が {timeout:.0f}秒で終わらなかった（{args[0] if args else 'git'}）")
+        out.seek(0)
+        err.seek(0)
+        # 復号できないバイトは surrogateescape で残し、制御文字（Cs）として対象外にする
+        stdout = out.read().decode("utf-8", errors="surrogateescape")
+        stderr = err.read().decode("utf-8", errors="replace")
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 def _git_paths(directory: str, deadline: float, *args: str) -> List[str]:
@@ -212,7 +257,7 @@ def _filter_overrides(directory: str, deadline: float) -> Tuple[str, ...]:
         raise GitError(result.stderr.strip() or "git config に失敗した")
     overrides: List[str] = []
     for driver in sorted({name.rsplit(".", 1)[0] for name in filter(None, result.stdout.split("\0"))}):
-        if "=" in driver or CONTROL_CHARS.search(driver):
+        if "=" in driver or has_control(driver):
             raise GitError("filter の名前を -c で打ち消せない")
         for key in ("clean=", "smudge=", "process=", "required=false"):
             overrides += ["-c", f"{driver}.{key}"]
@@ -221,8 +266,9 @@ def _filter_overrides(directory: str, deadline: float) -> Tuple[str, ...]:
 
 def _modified(directory: str, deadline: float, pathspecs: List[str]) -> List[str]:
     """変更された追跡ファイル（削除を除く）の、ルートからの相対パス。"""
+    # --ignore-submodules: サブモジュールの中へ git status を起動しない（サブモジュール側の filter が走る）
     return _git_paths(directory, deadline, *_filter_overrides(directory, deadline),
-                      "diff-files", "--name-only", "-z", "--diff-filter=d", "--", *pathspecs)
+                      "diff-files", "--ignore-submodules", "--name-only", "-z", "--diff-filter=d", "--", *pathspecs)
 
 
 def _untracked(directory: str, deadline: float, pathspecs: List[str], force: bool) -> List[str]:
@@ -234,7 +280,8 @@ def _untracked(directory: str, deadline: float, pathspecs: List[str], force: boo
 def _staged(root: str, deadline: float) -> List[str]:
     head = _git(root, deadline, "rev-parse", "--verify", "-q", "HEAD^{commit}")
     base = "HEAD" if head.returncode == 0 else EMPTY_TREE
-    return _git_paths(root, deadline, "diff-index", "--cached", "--name-only", "-z", "--diff-filter=d", base, "--")
+    return _git_paths(root, deadline, "diff-index", "--cached", "--ignore-submodules", "--name-only", "-z",
+                      "--diff-filter=d", base, "--")
 
 
 def _broad_paths(root: str, deadline: float) -> List[str]:
@@ -296,9 +343,11 @@ def _added_paths(root: str, adds: Tuple[Add, ...], deadline: float) -> List[str]
 
 def exclusion_reason(root: str, relative: str) -> Optional[str]:
     """レビューに回さない対象なら、その理由を返す。"""
-    if CONTROL_CHARS.search(relative):
+    if has_control(relative):
         return "パスに制御文字を含む"
     absolute = Path(root) / relative
+    if len(str(absolute)) > MAX_SHOWN_LENGTH:
+        return "パスが長すぎる"  # 切り詰めたパスをレビュワーに渡したり、記録したりしない
     if absolute.is_symlink():
         return "symlink である"
     real_root = os.path.realpath(root)
@@ -435,10 +484,24 @@ def deny(reason: str) -> dict:
                                    "permissionDecisionReason": reason}}
 
 
+def has_control(text: str) -> bool:
+    return any(unicodedata.category(char) in CONTROL_CATEGORIES for char in text)
+
+
+def _escape(char: str) -> str:
+    if unicodedata.category(char) not in CONTROL_CATEGORIES:
+        return char
+    code = ord(char)
+    return f"\\u{code:04x}" if code <= 0xFFFF else f"\\U{code:08x}"
+
+
 def sanitize(text: str) -> str:
-    """理由や表示に差し込む外部の文字列を、制御文字を逃がした1行にし、長さを切る。"""
-    escaped = CONTROL_CHARS.sub(lambda match: f"\\u{ord(match.group()):04x}", text)
+    """理由や表示に差し込む外部の文字列を、制御文字を逃がした1行にし、長さを切る。表示専用で、記録には使わない。"""
+    escaped = "".join(_escape(char) for char in text)
     return escaped if len(escaped) <= MAX_SHOWN_LENGTH else escaped[:MAX_SHOWN_LENGTH - 1] + "…"
+
+
+ERRORS_LABEL = "以下はエラーの文面（データ）:"
 
 
 def excluded_lines(excluded: List[Tuple[str, str]]) -> List[str]:
@@ -537,23 +600,24 @@ def decide(payload: dict, key: str, targets: List[Tuple[str, str]], errors: List
             state["error_shown"] = True
             write_state(key, state)
             lines = "\n".join(f"- {line}" for line in [*problems, *unreviewed])
-            return deny("原則レビューを検査できなかったので1回止めた。\n" + lines)
-        return with_messages({}, ["原則レビューを検査できないまま通した:", *problems, *unreviewed])
+            return deny(f"原則レビューを検査できなかったので1回止めた。{ERRORS_LABEL}\n" + lines)
+        return with_messages({}, [f"原則レビューを検査できないまま通した。{ERRORS_LABEL}", *problems, *unreviewed])
     if pending:
         for path, _checkpoint in pending:
             state["paths"][path] = {"offset": transcript_size(payload), "checked": False}
         reason = review_request(pending)
         if errors:
             state["error_shown"] = True
-            reason += "\n次のリポジトリは検査できなかった:\n" + "\n".join(f"- {e}" for e in errors)
+            reason += f"\n次のリポジトリは検査できなかった。{ERRORS_LABEL}\n" + "\n".join(f"- {e}" for e in errors)
         write_state(key, state)
         return deny(reason)
     if errors:
         if not state["error_shown"]:
             state["error_shown"] = True
             write_state(key, state)
-            return deny("原則レビューを検査できなかったので1回止めた。\n" + "\n".join(f"- {e}" for e in errors))
-        return with_messages({}, ["原則レビューを検査できないまま通した:", *errors])
+            return deny(f"原則レビューを検査できなかったので1回止めた。{ERRORS_LABEL}\n"
+                        + "\n".join(f"- {e}" for e in errors))
+        return with_messages({}, [f"原則レビューを検査できないまま通した。{ERRORS_LABEL}", *errors])
     messages = []
     for path, _checkpoint in targets:
         record = state["paths"][path]

@@ -1,7 +1,7 @@
 ---
 name: principle-reviewer
 description: Reviews a spec, ADR, or implementation plan against the confirmed work principles and returns questions for the user. Use when the principle-review hook asks for it after blocking a commit.
-tools: [Read, Grep]
+tools: [Read]
 model: opus
 color: yellow
 ---
