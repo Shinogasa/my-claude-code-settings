@@ -32,7 +32,7 @@
 sakurai-transcripts（非公開・正本）            my-claude-code-settings（公開）
 principles.yaml + themes.md                    skills/work-principles/
    │                                             ├─ SKILL.md         助言（description で自動発火）と読み替えの規則
-   └─ uv run transcripts-export ──────────────▶  └─ principles.yaml  生成物。直接編集しない
+   └─ uv run transcripts-export ──────────────▶  └─ principles.json  生成物。直接編集しない
                                                 agents/principle-reviewer.md   レビュワー（Read・Grepだけ）
                                                 hooks/principle-review.py      PreToolUse(Bash) で git commit を1回止める
 ```
@@ -40,7 +40,7 @@ principles.yaml + themes.md                    skills/work-principles/
 | 単位 | 置き場所 | 役割 | 依存するもの |
 |---|---|---|---|
 | 書き出し | `sakurai-transcripts` の `src/transcripts/export.py` | 正本から公開してよい欄だけを生成する。公開の関所を兼ねる | 正本、1段目の検証 |
-| 原則集のコピー | `skills/work-principles/principles.yaml` | スキルとレビュワーが読む | なし（生成物） |
+| 原則集のコピー | `skills/work-principles/principles.json` | スキルとレビュワーが読む | なし（生成物） |
 | 助言スキル | `skills/work-principles/SKILL.md` | 相談に原則を引いて助言する。読み替えの規則を持つ | 原則集のコピー |
 | レビュワー | `agents/principle-reviewer.md` | 成果物を節目の原則と照らし、問いを返す | 原則集のコピー、スキルの読み替えの節 |
 | フック | `hooks/principle-review.py` | 節目を検出し、レビュワーの起動を1回促す | git、会話記録（`hooks/hook_support.py`） |
@@ -51,10 +51,11 @@ principles.yaml + themes.md                    skills/work-principles/
 
 - 1段目の検証（`transcripts-principles`）と同じ検査を先に走らせ、失敗したら書き出さない
 - `status: confirmed` の原則だけを、`id` の順に並べる
-- 公開する欄: `id`・`principle`・`scenes`・`checkpoints`・`review_question`（あるものだけ）・`not_applicable`・`source.url`・`theme`（テーマ名）
+- 公開する欄: `id`・`principle`・`scenes`・`checkpoints`・`review_question`（あるものだけ）・`not_applicable`・`source_url`・`theme`（テーマ名）
 - 公開しない欄: `basis`・`risk`・`status`・`reject_reason`・`source.at`
 - テーマの見出し、説明文、「使い分け」の注記を `themes` として同じファイルに書く。「原則なし」の節は書かない
 - ファイルの先頭のコメントに、生成元、直接編集しないこと、再生成のコマンドを書く
+- 設定リポジトリのテストは標準ライブラリだけで書くので、YAMLではなくJSONにした
 - 同じ正本からは、毎回まったく同じ内容を出す（`--check` で比べるため）
 - `--check`: 書き出さずに、生成した内容と `--dest` のファイルを比べる。差があれば差のある原則IDを出し、非ゼロで終わる
 - `--dest` のファイルやディレクトリが無いときは「検査できなかった」として非ゼロで終わる。`--check` を成功にはしない
