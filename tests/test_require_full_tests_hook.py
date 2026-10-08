@@ -159,6 +159,34 @@ class RequireFullTestsHookTests(unittest.TestCase):
         result = run_hook("gh pr create --fill", repository)
         self.assertEqual(decision(result), "deny", result.stdout + result.stderr)
 
+    def test_unreadable_input_that_looks_like_pr_creation_is_denied(self):
+        # 終了コード1は止める扱いにならないので、例外で抜けずにdenyを返す
+        result = subprocess.run(["python3", str(HOOK)], input='{"tool_input": {"command": "gh pr create"',
+                                text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(decision(result), "deny", result.stdout + result.stderr)
+
+    def test_unreadable_input_for_other_commands_is_passed_with_notice(self):
+        # hookの故障で、あらゆるBashを止めない
+        result = subprocess.run(["python3", str(HOOK)], input='{"tool_input": {"command": "git status"',
+                                text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(decision(result))
+        self.assertIn("require-full-tests-before-pr", result.stderr)
+
+    def test_broken_shared_detector_falls_back_and_denies_pr_creation(self):
+        hooks = self.base / "hooks"
+        hooks.mkdir()
+        shutil.copy2(HOOK, hooks / HOOK.name)
+        (hooks / "jp-doc-review.py").write_text("this is not python\n", encoding="utf-8")
+        repository = make_repository(self.base)
+        payload = {"tool_name": "Bash", "tool_input": {"command": "gh pr create --fill"}, "cwd": str(repository)}
+        stamp_path(repository).write_text(head(repository) + "\n", encoding="utf-8")
+        result = subprocess.run(["python3", str(hooks / HOOK.name)], input=json.dumps(payload),
+                                text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(decision(result), "deny", result.stdout + result.stderr)
+
     def test_hook_is_wired_for_bash_in_settings_template(self):
         settings = json.loads(SETTINGS_TEMPLATE.read_text(encoding="utf-8"))
         commands = [
