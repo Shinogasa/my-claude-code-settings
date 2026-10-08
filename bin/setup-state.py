@@ -341,10 +341,126 @@ def save_state(path, state):
     temporary.replace(state_path)
 
 
+# ここから下は、setup.sh が対象ごとにPythonを起動していた処理を1回の起動へまとめる一括処理（ADR 0030）。
+# 1件ずつ呼んでいたときと同じ判定・メッセージ・終了コードを保つ。
+
+
+def compact_snapshot(path):
+    """setup.sh が TARGET_SNAPSHOTS に保存するのと同じ形式のJSON文字列を返す。"""
+    return json.dumps(snapshot_path(path), sort_keys=True, separators=(",", ":"))
+
+
+def classify_targets(entries):
+    """(generated, state_path, source, destination) の列を、渡された順に分類する。
+
+    generated の対象だけ、前回の生成内容のchecksumを state から引いて判定に使う。
+    """
+    results = []
+    for generated, state_path, source, destination in entries:
+        recorded = None
+        if generated:
+            recorded = load_state(state_path)["generated"].get(destination) or None
+        results.append(classify(source, destination, recorded, generated))
+    return results
+
+
+def link_topology_error(source, destination):
+    """リンクの配置が危険なら理由を、問題が無ければ None を返す。"""
+    source = Path(source)
+    destination = Path(destination)
+    # 残るskills親symlinkは、旧形式と確定できず移行しなかったもの。
+    if destination.parent.name == "skills" and destination.parent.is_symlink():
+        return (
+            "skills parent symlink はrepo以外を指すか由来を確定できないため自動移行しない: "
+            f"{destination.parent}"
+        )
+    try:
+        source_resolved = source.resolve(strict=False)
+        destination_parent = destination.parent.resolve(strict=False)
+    except (OSError, RuntimeError) as error:
+        return f"link path resolution failed: {destination}: {error}"
+
+    # 宛先の親がソース配下を指すと、ln -s がソース自身へ自己参照リンクを作る。
+    candidate = destination_parent / destination.name
+    if (
+        candidate == source_resolved
+        or candidate.is_relative_to(source_resolved)
+        or source_resolved.is_relative_to(candidate)
+    ):
+        return (
+            "link source and destination overlap after symlink resolution: "
+            f"source={source} destination={destination}"
+        )
+    return None
+
+
+def apply_links(entries):
+    """(source, destination, 期待するsnapshot) の列を順にリンクし、終了コードを返す。
+
+    対象ごとに「snapshot再検査 → mkdir -p → 既存確認 → ln -s」の順を保ち、検査とリンクの
+    間を1件分に留める。mkdir と ln はPATHから呼ぶ。setup.sh と同じ外部コマンドを使い、
+    失敗時の出力もそれらに任せる。最初の失敗で止まり、後続の対象には触れない。
+    """
+    for source, destination, expected in entries:
+        if compact_snapshot(destination) != expected:
+            print(f"エラー: target changed after preflight: {destination}", file=sys.stderr)
+            return 1
+        if subprocess.run(["mkdir", "-p", os.path.dirname(destination)]).returncode != 0:
+            return 1
+        if os.path.islink(destination):
+            if classify(source, destination, None) == "linked":
+                continue
+            print(f"エラー: target changed before link apply: {destination}", file=sys.stderr)
+            return 1
+        if os.path.exists(destination):
+            print(f"エラー: target changed before link apply: {destination}", file=sys.stderr)
+            return 1
+        if subprocess.run(["ln", "-s", source, destination]).returncode != 0:
+            return 1
+    return 0
+
+
+def _groups(parser, values, size, name):
+    """平らな引数列を size 個ずつの組に分ける。端数があれば使い方の誤りとして止める。"""
+    if len(values) % size:
+        parser.error(f"{name} の引数は {size} 個ずつの組で渡してください")
+    return [tuple(values[index:index + size]) for index in range(0, len(values), size)]
+
+
+def run_batch_command(parser, args):
+    """一括処理サブコマンドを実行する。予期しない例外は従来どおりtracebackで落とす。"""
+    if args.command == "classify-targets":
+        entries = [
+            (generated == "true", state_path, source, destination)
+            for generated, state_path, source, destination
+            in _groups(parser, args.values, 4, args.command)
+        ]
+        for classification in classify_targets(entries):
+            print(classification)
+        return 0
+    if args.command == "snapshot-paths":
+        for path in args.values:
+            print(compact_snapshot(path))
+        return 0
+    if args.command == "check-link-topology":
+        for source, destination in _groups(parser, args.values, 2, args.command):
+            error = link_topology_error(source, destination)
+            if error is not None:
+                print(error, file=sys.stderr)
+                return 1
+        return 0
+    return apply_links(_groups(parser, args.values, 3, args.command))
+
+
+BATCH_COMMANDS = ("classify-targets", "snapshot-paths", "check-link-topology", "apply-links")
+
+
 def main():
-    """setup.sh用の移行サブコマンドを受け付ける。"""
+    """setup.sh用の移行・一括処理サブコマンドを受け付ける。"""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    for name in BATCH_COMMANDS:
+        commands.add_parser(name).add_argument("values", nargs="*")
     migration = commands.add_parser("migrate-legacy-skills-parent")
     migration.add_argument("parent")
     migration.add_argument("repo_skills")
@@ -354,6 +470,8 @@ def main():
     detection.add_argument("repo_skills")
     detection.add_argument("repo_root")
     args = parser.parse_args()
+    if args.command in BATCH_COMMANDS:
+        return run_batch_command(parser, args)
     try:
         if args.command == "detect-legacy-skills-parent":
             if is_legacy_skills_parent(args.parent, args.repo_skills, args.repo_root):
