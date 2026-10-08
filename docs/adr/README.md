@@ -88,7 +88,7 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0014](0014-codex-primary-session-model-routing.md) | Codex親セッションを工程境界で手動切替する | 2026-09-18 | superseded by 0015 |
 | [0015](0015-codex-parent-routing-runtime-boundary.md) | Codex親工程の標準経路を明示agentとfresh sessionにする | 2026-09-22 | superseded by 0016 |
 | [0016](0016-codex-parent-routing-pilot.md) | Codex親モデル切替の実運用pilotを限定的に行う | 2026-09-22 | accepted |
-| [0017](0017-programming-learning-integration.md) | 本人による実課題の完遂と専用リポジトリへの学習記録集約 | 2026-09-22 | accepted |
+| [0017](0017-programming-learning-integration.md) | 本人による実課題の完遂と専用リポジトリへの学習記録集約 | 2026-09-22 | accepted（上限の運用値は0027で変更） |
 | [0018](0018-codex-gpt6-routing-baseline.md) | Codexサブエージェントの基準ペアをGPT-6へ移す | 2026-09-28 | accepted |
 | [0019](0019-learning-store-lock-outside-git.md) | 学習storeの排他lockをGit metadataの外に置く | 2026-09-29 | superseded by 0020 |
 | [0020](0020-learning-store-directory-lock.md) | 学習store directoryを排他し旧CLIと書込方式を分離する | 2026-09-29 | accepted |
@@ -98,3 +98,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0024](0024-jp-doc-review-hook.md) | 日本語文書のレビューとスキルの読み込み確認をフックで行う | 2026-10-01 | accepted |
 | [0025](0025-jp-doc-review-at-pr-creation.md) | 日本語文書のレビューの時機をPR作成時に移す | 2026-10-04 | accepted |
 | [0026](0026-codex-separate-personal-home.md) | Codexの個人用に `CODEX_HOME` を分ける | 2026-10-04 | accepted |
+| [0027](0027-code-learning-focus-area-cap.md) | 本人が宣言した重点学習領域だけコード学習の上限を上げる | 2026-10-08 | accepted |

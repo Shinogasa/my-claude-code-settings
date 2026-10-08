@@ -63,6 +63,27 @@ class TestLearningBoundaryContract(unittest.TestCase):
                 self.assertIn("rules/learning-mode.md", consumer)
                 self.assertIn("共通方針", consumer)
 
+    def test_focus_area_raises_only_the_code_learning_cap(self):
+        # 重点学習領域だけコード学習を最大3にし、それ以外は従来の上限を保つ
+        self.assertIn("重点学習中", RULE)
+        self.assertIn("コード学習は最大3イベント", RULE)
+        self.assertIn("合計の上限は設けない", RULE)
+        self.assertIn("判定できないときは通常の上限", RULE)
+
+    def test_cap_reached_candidates_are_recorded_as_operations(self):
+        code_readme = (ROOT / "learning" / "code" / "README.md").read_text(encoding="utf-8")
+        for text in (RULE, code_readme):
+            with self.subTest(text=text[:30]):
+                self.assertIn("cap_reached", text)
+        self.assertIn("イベント数に数えない", RULE)
+
+    def test_global_instructions_do_not_duplicate_cap_values(self):
+        # 上限の数値は共通方針だけが持つ。CLAUDE.mdは宣言と参照だけを持つ
+        self.assertNotIn("上限2回", CLAUDE)
+        self.assertNotIn("最大1回", CLAUDE)
+        self.assertNotIn("最大2回", CLAUDE)
+        self.assertIn("重点学習中", CLAUDE)
+
     def test_multiple_options_do_not_force_predict_and_hit_rate_is_not_mastery(self):
         self.assertIn("複数案", RULE)
         self.assertIn("強制発火", RULE)
