@@ -369,27 +369,43 @@ external callを毎回のtestへ入れない。
 **着手条件**: 不足している表示項目と、それにより起きた具体的な問題を記録できたとき、
 またはCodex公式がcustom providerを公開したとき。
 
-### Everything Claude Code由来資産を棚卸しする
+### 定期: skills・commands・agents・rules の棚卸し → 次回 2027-01
 
-commit `0ca03372e3ecb09c00ffedb707dc819a4b664334` で、skills 8件、agents 8件、commands 10件、
-rules 3件、contexts 3件を含む34ファイルを導入した。自前`code-review`がCodex標準reviewと
-重複していたように、Codex native機能、Superpowers、現在の自前ruleとの競合がありうる。
+資産は足すだけでは減らない。使っていないものがコンテキストを圧迫し、モデルの進歩で不要になるものも出る。
+組み込みスキルを同名で上書きしていても気づけない（2026-10-07に `verify` などで判明）。定期的に見直す。
 
-**決めたこと**: Codex移行中には一括削除しない。導入元、現行upstream、実利用記録、
-代替機能、発火競合を資産ごとに確認し、keep / replace / removeへ分類する。
+**着手条件**（どれか1つ）
 
-**着手条件**: Codex互換性移行の実装とruntime smoke testが完了したとき。
+- 四半期ごと。前回は2026-10-07なので、次回は2027-01
+- Claude CodeまたはCodexで、使うモデルの世代を切り替えたとき
+- Claude Code本体を大きく更新したとき（組み込みスキルが増えると、手元の資産と名前がぶつかる）
 
-**rules 3ファイルについて分かっていること（2026-10-03）**: `ecc-coding-style.md`・`ecc-testing.md`・
-`ecc-development-workflow.md` は、どれも毎セッション読み込まれている。TypeScriptに依存する記述は4行だけだった
-（`use` プレフィックスのフック、テストのコード例2つ、npmの例）。残りは不変性、命名、AAAなど言語に依存しない内容で、
-利用者が主に使うKotlinにも合う。問題は言語ではなく、次の2点にある。
+**見ること**
 
-- `ecc-testing.md` のTDDの手順が、`superpowers:test-driven-development` と重なっている。
-  `ecc-development-workflow.md` の「planner agentで計画」「PRD等の文書を先に作る」も、今の運用と合っていない
-- 「カバレッジ80%、Unit・Integration・E2Eすべて必須」は、設定リポジトリのような作業には重い
+1. 利用: 直近60日の会話記録で、スキル（`"skill":"<名前>"`）、サブエージェント（`"subagent_type":"<名前>"`）、
+   スラッシュコマンド（`<command-name>/<名前></command-name>`）の呼び出しを数える。
+   **先に、確実に使った資産が検出できることを確かめる**（2026-10-07は `pr-create`、`jp-doc-reviewer`、`/rename` で確認した）。
+   検出できなければ、0件は「使っていない」の証拠にならない。Codexでの利用とSKILL.mdの直接読み込みは、この方法では数えられない
+2. 名前の衝突: 手元の資産が、組み込みスキルやpluginと同じ名前になっていないか。セッション開始時のスキル一覧で、
+   手元の説明文に置き換わっていないかを見る。組み込みの一覧を取る公式の手段は未確認
+3. コンテキスト: 常時読み込まれる rules と CLAUDE.md の文字数。増えていれば、`paths:` での遅延読み込みや削除を検討する
+4. モデルの進歩: モデルが自力でできるようになった指示（手順の念押し、汎用の規約）が残っていないか
 
-rulesだけを先に削ることも、`paths:` を付けることもしないと決めた。ほかのECC由来の資産と一緒に、この棚卸しで扱う。
+結果は棚卸しした日付と件数をこの項目に追記し、次回の日付を更新する。
+
+### Everything Claude Code由来資産の残り（agents 6件） → Codex再開待ち
+
+commit `0ca03372` でECCから取り込んだ資産を、2026-10-07に棚卸しした。直近60日のClaude Codeの会話記録206件で
+利用を数え、使っていないcommand 10件・skill 7件と、対応する `skills/source-command-*` 6件を削除した。
+rulesは、superpowersと重なる `ecc-testing.md` を削除し、`ecc-development-workflow.md` を重ならない部分だけに縮めた。
+
+`verify`・`code-review`・`security-review` は、Claude Code本体の組み込みスキルを同名で上書きしていた。
+消したことで組み込み版が使えるようになった。名前の衝突は、上の定期の棚卸しで確かめる。
+
+**残り**: agentsのうち、60日の利用が0件の6件（build-error-resolver、code-architect、code-simplifier、planner、
+refactor-cleaner、silent-failure-hunter）。`codex/agents/*.toml` がこの定義から生成されるため、消すとCodex側も変わる。
+
+**着手条件**: Codexの作業を再開したとき。Codexでの利用も合わせて数えてから決める。
 
 ### superpowers の自動注入をプラグイン同梱フックで賄えるか → 決めること
 
@@ -908,8 +924,8 @@ Python や Markdown だけを触る作業中も常に効いている。
 **着手条件**: 指示が守られない事例が実際に出たとき、または CLAUDE.md と rules の
 合計がさらに増えたとき。
 
-2026-10-03に、候補の3ファイルは中身ごと「Everything Claude Code由来資産を棚卸しする」の項目で扱うと決めた。
-`paths:` を付けるかどうかも、そちらで keep / replace / remove を決めた後に判断する。
+2026-10-07の棚卸しで `ecc-testing.md` を削除し、`ecc-development-workflow.md` を縮めた。
+候補は `ecc-coding-style.md` と `ecc-development-workflow.md` の2つになった。`paths:` を付けるかは、上の着手条件のとおり。
 
 ### コンテナ環境で PreToolUse フックが fail-open している → `cw-workspace-local` へ移管する（先方への追記待ち）
 

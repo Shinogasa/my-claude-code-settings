@@ -66,7 +66,6 @@ ALWAYS validate at system boundaries:
 - Booleans: prefer `is`, `has`, `should`, or `can` prefixes
 - Interfaces, types, and components: `PascalCase`
 - Constants: `UPPER_SNAKE_CASE`
-- Custom hooks: `camelCase` with a `use` prefix
 
 ## Code Smells to Avoid
 

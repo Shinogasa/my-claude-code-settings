@@ -119,7 +119,7 @@ class SetupCliTests(unittest.TestCase):
         result = run_setup(self.repository, self.home, "--claude")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.home / ".claude" / "CLAUDE.md").is_symlink())
-        self.assertTrue((self.home / ".claude" / "skills" / "api-design").is_symlink())
+        self.assertTrue((self.home / ".claude" / "skills" / "backend-patterns").is_symlink())
         self.assertFalse((self.home / ".codex" / "AGENTS.md").exists())
         self.assertFalse((self.home / ".agents").exists())
 
@@ -129,7 +129,7 @@ class SetupCliTests(unittest.TestCase):
         result = run_setup(self.repository, self.home, "--codex")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.home / ".codex" / "AGENTS.md").is_symlink())
-        self.assertTrue((self.home / ".agents" / "skills" / "api-design").is_symlink())
+        self.assertTrue((self.home / ".agents" / "skills" / "backend-patterns").is_symlink())
         self.assertTrue((self.home / ".agents" / "skills" / "codex-cli-best-practice").is_symlink())
         self.assertFalse((self.home / ".codex" / "prompts").exists())
         self.assertFalse((self.home / ".claude" / "CLAUDE.md").exists())
@@ -200,7 +200,7 @@ class SetupCliTests(unittest.TestCase):
             (skills / "removed-skill").symlink_to(self.repository / "skills" / "removed-skill")
         # 利用者が別の場所から張ったリンクは残す
         (claude_skills / "user-skill").symlink_to(elsewhere)
-        (claude_skills / "find-skills").symlink_to(agent_skills / "api-design")
+        (claude_skills / "find-skills").symlink_to(agent_skills / "backend-patterns")
 
         result = run_setup(self.repository, self.home, "--all")
 
@@ -208,7 +208,7 @@ class SetupCliTests(unittest.TestCase):
         for skills in (claude_skills, agent_skills):
             with self.subTest(skills=skills):
                 self.assertFalse((skills / "removed-skill").is_symlink())
-                self.assertTrue((skills / "api-design").is_symlink())
+                self.assertTrue((skills / "backend-patterns").is_symlink())
         self.assertTrue((claude_skills / "user-skill").is_symlink())
         self.assertTrue((claude_skills / "find-skills").is_symlink())
 

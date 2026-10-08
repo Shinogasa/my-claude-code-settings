@@ -77,16 +77,7 @@ Codexを一度起動してから再実行するようエラーを表示する。
 `~/.agents/` は Codex が自動生成しないため、Codex 検出時に `setup.sh` が作成する。
 
 Codex custom prompts は deprecated のため、`commands/` は `~/.codex/prompts/` へ配布しない。
-Claude Codeでは既存commandを維持し、Codexでは次のnative機能または共有skillを使う。
-
-| Claude command | Codexの入口 |
-|---|---|
-| `code-review` | Codex組み込み `/review` |
-| `quality-gate` | `verification-loop` |
-| `verify` | `verification-loop` |
-| `tdd` | `superpowers:test-driven-development` |
-
-その他のcommandは `skills/source-command-*` として共有し、Codexのskill discoveryから利用する。
+commandは `skills/source-command-*` として共有し、Codexのskill discoveryから利用する。
 
 ### Codex CLI の RTK
 
@@ -400,32 +391,15 @@ hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyring
 ├── claude-code-best-practice/   # ベストプラクティス（git submodule）
 ├── codex-cli-best-practice/      # Codexベストプラクティス（git submodule、補助資料）
 ├── skills/                      # カスタムスキル
-│   ├── api-design/              #   REST API設計パターン
-│   ├── architecture-decision-records/  # ADR記録
 │   ├── backend-patterns/        #   バックエンドパターン
 │   ├── claude-code-best-practice/  # 設定ベストプラクティス参照
 │   ├── code-learning/           #   実作業でのコード理解・変更・レビュー演習
 │   ├── coding-standards/        #   コーディング規約
-│   ├── database-migrations/     #   DBマイグレーション
-│   ├── deployment-patterns/     #   デプロイパターン
-│   ├── hexagonal-architecture/  #   ヘキサゴナルアーキテクチャ
 │   ├── learning-mode/           #   学習モードの手順と書式
-│   ├── security-review/         #   セキュリティレビュー
-│   ├── verification-loop/       #   検証ループ（Iron Law付き）
 │   └── yomiyasu/                #   日本語文書の書き直し（git submodule）
 ├── commands/                    # スラッシュコマンド
-│   ├── aside.md                 #   サイドクエスチョン
-│   ├── build-fix.md             #   ビルドエラー修正
-│   ├── code-review.md           #   コードレビュー
 │   ├── explain.md               #   プロジェクト説明
-│   ├── feature-dev.md           #   フィーチャー開発
-│   ├── plan.md                  #   実装計画
-│   ├── pr-create.md             #   PR作成
-│   ├── quality-gate.md          #   品質ゲート
-│   ├── refactor-clean.md        #   リファクタリング
-│   ├── tdd.md                   #   TDD（shimコマンド）
-│   ├── test-coverage.md         #   テストカバレッジ
-│   └── verify.md                #   検証（shimコマンド）
+│   └── pr-create.md             #   PR作成
 ├── agents/                      # サブエージェント定義
 │   ├── planner.md               #   実装計画（opus, bite-sized tasks）
 │   ├── code-architect.md        #   アーキテクチャ設計
@@ -447,8 +421,7 @@ hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyring
 │   ├── output-formatting.md     #   URL表示フォーマット
 │   ├── task-management.md       #   タスク管理手順
 │   ├── ecc-coding-style.md      #   コーディングスタイル
-│   ├── ecc-development-workflow.md  # 開発ワークフロー
-│   └── ecc-testing.md           #   テスト要件
+│   └── ecc-development-workflow.md  # 開発ワークフロー
 ├── hooks/                       # 危険コマンドブロック等のhooksスクリプト（Claude向けrtkフックはsettings.json.template側で管理）
 │   ├── block-commit-on-merged-pr.py # マージ済みPRのブランチへのコミットを止める
 │   ├── guard-dangerous-bash.sh  #   PreToolUse(Bash)フックのエントリポイント
@@ -678,9 +651,8 @@ python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_*.py' -
 
 | 取り入れた要素 | 適用先 | 内容 |
 |---|---|---|
-| Rationalization Prevention Tables | verification-loop, planner | エージェントの自己正当化を事前にブロックする対応表 |
+| Rationalization Prevention Tables | agents/planner.md | エージェントの自己正当化を事前にブロックする対応表 |
 | Bite-Sized Task Granularity | agents/planner.md | 2-5分粒度のタスク分解 + プレースホルダー禁止 |
-| Verification Iron Law | skills/verification-loop/ | 「証拠なしに完了を主張するな」の行動規範 |
 
 ## 参考
 
