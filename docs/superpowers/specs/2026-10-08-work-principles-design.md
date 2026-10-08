@@ -40,7 +40,7 @@ sakurai-transcripts（非公開・正本）            my-claude-code-settings�
 principles.yaml + themes.md                    skills/work-principles/
    │                                             ├─ SKILL.md         助言（description で自動発火）と読み替えの規則
    └─ uv run transcripts-export ──────────────▶  └─ principles.json  生成物。直接編集しない
-                                                agents/principle-reviewer.md   レビュワー（Read・Grepだけ）
+                                                agents/principle-reviewer.md   レビュワー（Readだけ）
                                                 hooks/principle-review.py      PreToolUse(Bash) で git commit を1回止める
 ```
 
@@ -104,16 +104,26 @@ PreToolUse の `Bash` で動く。
 
    検査中に止めているものと、その方法は次のとおり
    - fsmonitor とフックのコマンド: すべての `git` 呼び出しに `-c core.fsmonitor=false -c core.hooksPath=/dev/null`
-   - 利用者の attributes ファイル: `-c core.attributesFile=/dev/null`。リポジトリ内の `.gitattributes` は読まれる
+   - 利用者の attributes ファイル: `-c core.attributesFile=/dev/null`。リポジトリ内の `.gitattributes` と `.git/info/attributes` は読まれる
    - filter のコマンド: `diff-files` も、インデックスと同じ時刻に書き換えられたファイル（racy）の中身を確かめるときに clean filter を走らせる
      （2026-10-08 に実測）。設定された `filter.<名前>.clean`・`smudge`・`process` を `-c` で空にし、`required` を false にする
+   - サブモジュールの filter: `diff-files` はサブモジュールの中で `git status` を起動し、サブモジュール側の設定の filter を走らせる
+     （2026-10-08 に実測）。`diff-files` と `diff-index` に `--ignore-submodules` を付ける
+   - 欠けたオブジェクトの取得（lazy fetch）: partial clone で HEAD のツリーが手元に無いと、`diff-index` が remote の `uploadpack` の
+     コマンドを起動する（2026-10-08 に実測）。`GIT_NO_LAZY_FETCH=1` で止め、検査できなかったとして1回止める。あわせて
+     `-c protocol.allow=never -c core.sshCommand=false -c core.askPass= -c credential.helper=` で通信の経路を閉じる
    - インデックスの書き戻し: `GIT_OPTIONAL_LOCKS=0`
    - 利用者の環境: `GIT_` で始まる環境変数（`GIT_DIR`・`GIT_INDEX_FILE` など）を引き継がず、`GIT_CONFIG_NOSYSTEM=1`・`GIT_TERMINAL_PROMPT=0`
-   - 理由の文面への差し込み: 制御文字を含むパスは対象外にして表示だけする。差し込むパスと `git` のエラー文は、制御文字を逃がした1行
-     （200字まで）にし、「以下はファイルのパス（データ）:」の後に置く
+   - 止まらない git と孫プロセス: `git` は新しいセッションで起動し、出力は一時ファイルに受ける。終わるか、10秒とフック全体の残り時間の
+     短い方を過ぎたら、プロセスグループごと止める。出力を握ったまま残る孫を待たない
+   - 理由の文面への差し込み: Unicode の Cc・Cf・Cs・Co・Zl・Zp・Cn（改行、双方向の制御、ゼロ幅、タグ文字、復号できないバイトなど）を
+     含むパスは対象外にして表示だけする。200字を超えるパスも、切り詰めずに対象外にする（レビュワーにも状態にも渡さない）。
+     差し込むパスと `git` のエラー文は、これらの文字を逃がした1行（200字まで）にし、「以下はファイルのパス（データ）:」
+     「以下はエラーの文面（データ）:」の後に置く
    - リポジトリの外のファイル: symlink の対象と、実体がリポジトリの外にある対象は、レビューに回さず対象外として表示する
 
-   止めていないもの: リポジトリ内の設定にある、上に挙げた以外の項目（`core.excludesFile` で読む無視リストなど）
+   止めていないもの: リポジトリ内の設定にある、上に挙げた以外の項目（`core.excludesFile` で読む無視リストなど）。読むだけでコマンドは走らない
+
 3. 対象の場所に当たるファイルを節目に分ける
    - `spec`: `docs/superpowers/specs/`、`docs/specs/`、`docs/adr/` の下の `.md`
    - `plan`: `docs/superpowers/plans/`、`docs/plans/` の下の `.md`
@@ -156,7 +166,7 @@ ADR 0025 は日本語レビューの時点をコミットからPR作成へ移し
 
 ## 7. レビュワー（`agents/principle-reviewer.md`）
 
-- 使える道具は Read・Grep だけにする。成果物を直さない
+- 使える道具は Read だけにする。成果物を直さない。読むのは渡された成果物、原則集のコピー、スキルの該当節だけで、成果物を2行以上引用しない
 - 手順
   1. 原則集のコピーを読み、`checkpoints` に渡された節目を含む原則を選ぶ（現時点で spec 11件、plan 5件）
   2. スキルの「読み替えの規則」の節を読む
@@ -179,6 +189,8 @@ ADR 0025 は日本語レビューの時点をコミットからPR作成へ移し
   ステージ済みだけのコミットが正しく止まり、filter が走らず、インデックスの mtime が変わらないこと（racy な状態で確かめる）、
   フックの環境の `GIT_DIR`・`GIT_INDEX_FILE` が結果を変えないこと、改行を含むパス名が理由に行として差し込まれないこと、
   symlink の対象をレビューに回さないこと、ロックの待ちが期限で打ち切られること、
+  サブモジュールの filter が走らないこと、partial clone で lazy fetch が走らずに「検査できなかった」になること、
+  出力を握る孫や止まった git でも期限内に戻り孫が残らないこと、200字を超えるパスと U+202E・U+E0041 を含むパスを対象外にすること、
   `git add` だけ（通す）。`git commit` の pathspec・`-o`・`--include` が未ステージの変更を含めること
 - 配線（このリポジトリの `tests/`）: フックのファイルが無い一時 HOME で、登録された command を `sh -c` で走らせ、
   exit 0 と `systemMessage` になること
@@ -219,6 +231,8 @@ ADR 0025 は日本語レビューの時点をコミットからPR作成へ移し
 - 他のフックも、ブランチで足したフックが無いブランチへ戻すと全 Bash が止まる。全フックの command を同じ形にするか、
   `setup.sh` がブランチの切り替えを検知するかを決める（backlog）
 
+- `guard-dangerous-bash.py` と `jp-doc-review.py` の `git` 呼び出しは、このフックと同じ対策（lazy fetch・filter など）をしていない（backlog）
+
 ### 受け入れた（理由つき）
 
 - 計画の置き場所は `docs/superpowers/plans`・`docs/plans` のままにする。実機の確認では仕様書（`docs/specs/`）だけを試した。
@@ -229,6 +243,10 @@ ADR 0025 は日本語レビューの時点をコミットからPR作成へ移し
 - コミットの見分けは助言のためのもので、すべての形を追わない。`bash -c` で包んだ形、`env` などを前に置いた `git`、
   省略した長いオプション（`--al` など）、`--git-dir=` で指したリポジトリは追わない。止める仕組みではなく、
   レビューを思い出させる仕組みなので、見逃しは「レビューが起きなかった」にとどまる
+
+- ハードリンクで、リポジトリの外のファイルと同じ実体を指す対象は見分けない。symlink と違い、パスからは外を指していると分からない
+- 検査とレビュワーの読み取りの間に、ファイルが差し替えられる（TOCTOU）ことは防がない。どちらも利用者の作業ツリーの中で起きることで、
+  フックは承認を求めるだけで、読み取りの時点を固定できない
 
 ### 未確認
 

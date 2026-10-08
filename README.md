@@ -410,7 +410,7 @@ hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyring
 │   ├── security-reviewer.md     #   セキュリティレビュー
 │   ├── build-error-resolver.md  #   ビルドエラー解決
 │   ├── jp-doc-reviewer.md       #   日本語文書のレビュー（opus、yomiyasu）
-│   ├── principle-reviewer.md    #   仕様書・ADR・計画を仕事の原則に照らす（Read・Grepだけ）
+│   ├── principle-reviewer.md    #   仕様書・ADR・計画を仕事の原則に照らす（Readだけ）
 │   └── silent-failure-hunter.md #   サイレント障害検出
 ├── codex/                       # Codex固有アダプター
 │   ├── RTK.md                   #   RTK公式のCodex向けシェル指示

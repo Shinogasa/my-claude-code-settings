@@ -996,4 +996,11 @@ Python や Markdown だけを触る作業中も常に効いている。
 ### `permissions.deny` で Read・Grep の機密パスを拒否するか
 
 **決めること**: 拒否するパス（`~/.ssh`・`~/.aws`・`.env` など、どこまで含めるか）と、`settings.json.template` に書くと全セッションの Read・Grep に効くことを受け入れるか。
-`principle-reviewer` は Read・Grep だけを使うが、成果物に読み先を指示されても従わないことは指示文で頼んでいるだけで、仕組みでは止めていない（2026-10-08 のセキュリティレビュー）。
+`principle-reviewer` は Read だけを使うが、成果物に読み先を指示されても従わないことは指示文で頼んでいるだけで、仕組みでは止めていない（2026-10-08 のセキュリティレビュー）。
+
+### guard-dangerous-bash.py と jp-doc-review.py の git 呼び出しも、承認前に相手の設定で動く経路（lazy fetch・filter など）を塞ぐか
+
+**決めること**: `hooks/principle-review.py` の `_git`（GIT_ 環境変数を引き継がない、`GIT_NO_LAZY_FETCH=1`、fsmonitor・フック・通信の無効化、
+filter の打ち消し、新しいセッションで起動してグループごと止める）を共通の補助に切り出して使うか、それぞれに必要な分だけ足すか。
+どちらのフックも利用者がコマンドを承認する前に、作業中のリポジトリで `git` を実行する。原則レビューのフックでは、
+partial clone の lazy fetch とサブモジュールの filter が承認前に走ることを 2026-10-08 に実測した。ほかの2つは確かめていない。
