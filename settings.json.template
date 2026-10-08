@@ -53,7 +53,7 @@
           },
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/principle-review.py",
+            "command": "if [ -f ~/.claude/hooks/principle-review.py ]; then python3 ~/.claude/hooks/principle-review.py; else echo '{\"systemMessage\":\"原則レビューのフック（~/.claude/hooks/principle-review.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
             "timeout": 30
           }
         ]

@@ -46,6 +46,18 @@ class ClassifyTests(unittest.TestCase):
         self.assertFalse(f(["git", "commit", "-m", "-a"]))
         self.assertFalse(f(["git", "commit", "-m", "add all"]))
 
+    def test_includes_worktree(self):
+        f = principle_review.includes_worktree
+        for tokens in (["git", "commit", "-o", "-m", "x"], ["git", "commit", "--only"], ["git", "commit", "-i"],
+                       ["git", "commit", "-m", "x", "a.md"], ["git", "commit", "--", "a.md"],
+                       ["git", "-C", "r", "commit", "-am", "x"]):
+            with self.subTest(tokens):
+                self.assertTrue(f(tokens))
+        for tokens in (["git", "commit", "-m", "x"], ["git", "commit", "-uno", "-m", "x"],
+                       ["git", "commit", "--author", "a b", "-m", "x"], ["git", "commit", "-m", "-o"]):
+            with self.subTest(tokens):
+                self.assertFalse(f(tokens))
+
 
 def decision_of(output):
     return output.get("hookSpecificOutput", {}).get("permissionDecision")

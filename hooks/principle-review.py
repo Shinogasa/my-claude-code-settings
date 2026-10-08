@@ -4,6 +4,7 @@
 設計: docs/superpowers/specs/2026-10-08-work-principles-design.md、ADR 0026
 """
 import fcntl
+import functools
 import hashlib
 import importlib.util
 import json
@@ -17,14 +18,18 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+HOOK_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(HOOK_DIR))
 
-from hook_support import TranscriptError, emit, read_entries, tool_uses, with_messages  # noqa: E402
 
-_guard_spec = importlib.util.spec_from_file_location(
-    "guard_dangerous_bash", Path(__file__).resolve().parent / "guard-dangerous-bash.py")
-guard = importlib.util.module_from_spec(_guard_spec)
-_guard_spec.loader.exec_module(guard)
+@functools.lru_cache(maxsize=None)
+def guard():
+    """guard-dangerous-bash.py を読み込む。読み込めない失敗は main が「検査できなかった」として表示する。"""
+    spec = importlib.util.spec_from_file_location("guard_dangerous_bash", HOOK_DIR / "guard-dangerous-bash.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 
 TARGET_DIRS = {
     "spec": ("docs/superpowers/specs/", "docs/specs/", "docs/adr/"),
@@ -32,6 +37,46 @@ TARGET_DIRS = {
 }
 EXCLUDED_NAMES = {"README.md"}
 SHORT_FLAGS_WITH_VALUE = set("mFCct")  # この後ろの文字は値なので、-a の判定に使わない
+SHORT_FLAGS_WITH_ATTACHED_VALUE = set("uS")  # -uno・-S<鍵ID> のように、値を同じトークンにだけ取る
+# git commit の長いオプションのうち、値を次のトークンに取りうるもの。値を pathspec と取り違えない
+LONG_OPTS_WITH_VALUE = {"--message", "--file", "--author", "--date", "--cleanup", "--reuse-message",
+                        "--reedit-message", "--fixup", "--squash", "--template", "--trailer"}
+# 未ステージの変更もコミットに入れる git commit のオプション
+WORKTREE_LONG_OPTS = {"--all", "--only", "--include", "--pathspec-from-file"}
+WORKTREE_SHORT_FLAGS = set("aoi")
+# 対象を git add --dry-run で確かめられない git add のオプション
+INTERACTIVE_ADD_OPTS = {"-p", "--patch", "-i", "--interactive", "-e", "--edit"}
+INTERACTIVE_ADD_SHORT_FLAGS = set("pie")
+
+
+def commit_options(args: List[str]) -> Tuple[set, set, List[str]]:
+    """git commit の引数を、短いフラグの文字、長いオプションの名前、位置引数（pathspec）に分ける。"""
+    shorts, longs, positional = set(), set(), []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        index += 1
+        if token == "--":
+            positional.extend(args[index:])
+            break
+        if token.startswith("--"):
+            name = token.split("=", 1)[0]
+            longs.add(name)
+            if "=" not in token and name in LONG_OPTS_WITH_VALUE:
+                index += 1  # 値が次のトークンにある
+            continue
+        if token.startswith("-") and len(token) > 1:
+            for offset, char in enumerate(token[1:]):
+                shorts.add(char)
+                if char in SHORT_FLAGS_WITH_VALUE:
+                    if offset == len(token) - 2:
+                        index += 1  # 値が次のトークンにある
+                    break
+                if char in SHORT_FLAGS_WITH_ATTACHED_VALUE:
+                    break
+            continue
+        positional.append(token)
+    return shorts, longs, positional
 
 
 def classify(relative: str) -> Optional[str]:
@@ -46,25 +91,19 @@ def classify(relative: str) -> Optional[str]:
 
 def uses_all_flag(tokens: List[str]) -> bool:
     """git commit に -a / --all があるか。-m の値として書かれた -a は数えない。"""
-    skip_next = False
-    for token in tokens[2:]:
-        if skip_next:
-            skip_next = False
-            continue
-        if token == "--all":
-            return True
-        if token.startswith("-") and not token.startswith("--") and len(token) > 1:
-            for index, char in enumerate(token[1:]):
-                if char == "a":
-                    return True
-                if char in SHORT_FLAGS_WITH_VALUE:
-                    skip_next = index == len(token) - 2  # 値が次のトークンにある
-                    break
-    return False
+    shorts, longs, _positional = commit_options(guard().extract_subcommand(tokens)[1])
+    return "a" in shorts or "--all" in longs
+
+
+def includes_worktree(tokens: List[str]) -> bool:
+    """git commit が未ステージの変更もコミットに入れうるか。-a のほか、pathspec・-o・-i もそうなる。"""
+    shorts, longs, positional = commit_options(guard().extract_subcommand(tokens)[1])
+    return bool(shorts & WORKTREE_SHORT_FLAGS or longs & WORKTREE_LONG_OPTS or positional)
 
 
 REVIEWER_AGENT = "principle-reviewer"
 GIT_TIMEOUT_SECONDS = 10
+TIME_BUDGET_SECONDS = 25  # settings.json の timeout（30秒）より先に、自分で打ち切る
 STATE_RETENTION_DAYS = 7
 UNSAFE_ID_CHARS = re.compile(r"[^A-Za-z0-9_-]")
 
@@ -83,63 +122,137 @@ def data_path() -> Path:
     return Path(override) if override else Path.home() / ".claude" / "skills" / "work-principles" / "principles.json"
 
 
-def commit_targets(command: str, cwd: str) -> List[Tuple[str, bool]]:
-    """コマンド中の git commit ごとに、コミット先のディレクトリと -a の有無を返す。
+Add = Tuple[Optional[str], Tuple[str, ...]]  # (git add を実行するディレクトリ, サブコマンドより後の引数)
+Commit = Tuple[str, bool, Tuple[Add, ...]]  # (コミット先, 未ステージも入るか, 先に出た git add)
+
+
+def is_git_add(tokens: List[str]) -> bool:
+    return bool(tokens) and tokens[0] == "git" and guard().extract_subcommand(tokens)[0] in ("add", "stage")
+
+
+def commit_targets(command: str, cwd: str) -> List[Commit]:
+    """コマンド中の git commit ごとに、コミット先のディレクトリ、未ステージの扱い、先に出た git add を返す。
 
     ディレクトリの解決は guard-dangerous-bash.py の main と同じ手順で行う。
-    確定できない移動先（UNRESOLVED）は、guard がコミットごと止めるので、ここでは数えない。
+    コミット先を確定できない（UNRESOLVED）ときは、guard がコミットごと止めるので、ここでは数えない。
+    git add は、PreToolUse の時点ではまだ実行されていない。コミットより前に出た add は、
+    区切りの種類によらずそのコミットに結び付ける（実行されない add も含めて、広めに取る）。
     """
-    tokens = guard.tokenize_command(guard.strip_heredocs(command))
+    g = guard()
+    tokens = g.tokenize_command(g.strip_heredocs(command))
     if tokens is None:
         return []
     candidates = {os.path.abspath(cwd)}
     seen = set(candidates)
     cdpath_possible = "CDPATH" in command or bool(os.environ.get("CDPATH"))
-    targets: List[Tuple[str, bool]] = []
-    for previous_op, simple_command, next_op, _raw in guard.split_with_operators(tokens):
-        if guard.operator_kind(previous_op) in ("SEQ", "BREAK"):
+    adds: List[Add] = []
+    targets: List[Commit] = []
+    for previous_op, simple_command, next_op, _raw in g.split_with_operators(tokens):
+        if g.operator_kind(previous_op) in ("SEQ", "BREAK"):
             candidates = set(seen)
-        candidates = guard.apply_directory_change(previous_op, simple_command, next_op, candidates, cdpath_possible)
+        candidates = g.apply_directory_change(previous_op, simple_command, next_op, candidates, cdpath_possible)
         seen |= candidates
-        if guard.is_git_commit(simple_command):
-            all_flag = uses_all_flag(simple_command)
-            for target in guard.git_target_dirs(simple_command, candidates):
-                if target is not guard.UNRESOLVED:
-                    targets.append((target, all_flag))
+        if is_git_add(simple_command):
+            args = tuple(g.extract_subcommand(simple_command)[1])
+            adds.extend((target, args) for target in g.git_target_dirs(simple_command, candidates))
+        elif g.is_git_commit(simple_command):
+            unstaged = includes_worktree(simple_command)
+            for target in g.git_target_dirs(simple_command, candidates):
+                if target is not g.UNRESOLVED:
+                    targets.append((target, unstaged, tuple(adds)))
     return targets
 
 
-def _git(repo: str, *args: str) -> subprocess.CompletedProcess:
+def _git(repo: str, deadline: float, *args: str) -> subprocess.CompletedProcess:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise GitError(f"フック全体の時間予算（{TIME_BUDGET_SECONDS}秒）を使い切った")
     try:
         # メッセージで「リポジトリ外」を見分けるので、翻訳されないよう LC_ALL=C にする
         return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True,
-                              timeout=GIT_TIMEOUT_SECONDS, env={**os.environ, "LC_ALL": "C"})
+                              timeout=min(GIT_TIMEOUT_SECONDS, remaining), env={**os.environ, "LC_ALL": "C"})
     except (OSError, subprocess.SubprocessError) as error:
         raise GitError(f"git を実行できない: {error}") from error
 
 
-def changed_targets(repo: str, include_unstaged: bool) -> List[Tuple[str, str]]:
+def _git_paths(root: str, deadline: float, *args: str) -> List[str]:
+    """-z で区切られたパスの一覧を返す。日本語やスペースを含むパスも引用されない。"""
+    result = _git(root, deadline, *args)
+    if result.returncode != 0:
+        raise GitError(result.stderr.strip() or f"git {args[0]} に失敗した")
+    return list(filter(None, result.stdout.split("\0")))
+
+
+def _broad_paths(root: str, deadline: float) -> List[str]:
+    """git add が何を足すか確かめられないとき、足されうるものを広めに取る。"""
+    prefixes = [prefix for group in TARGET_DIRS.values() for prefix in group]
+    return [*_git_paths(root, deadline, "diff", "--name-only", "-z", "--diff-filter=d"),
+            *_git_paths(root, deadline, "ls-files", "-z", "--others", "--exclude-standard", "--", *prefixes)]
+
+
+def _dry_run_paths(directory: str, args: Tuple[str, ...], deadline: float) -> Optional[List[str]]:
+    """git add が足すファイルの絶対パスを返す。確かめられなければ None。"""
+    top = _git(directory, deadline, "rev-parse", "--show-toplevel")
+    result = _git(directory, deadline, "-c", "core.quotePath=false", "add", "--dry-run", "--ignore-missing", *args)
+    if top.returncode != 0 or result.returncode != 0:
+        return None
+    paths = []
+    for line in filter(None, result.stdout.split("\n")):
+        match = re.fullmatch(r"(add|remove) '(.*)'", line)
+        if not match:
+            return None  # 改行を含む名前など、行を解析できない
+        if match.group(1) == "add":  # remove は削除なので対象にしない
+            paths.append(str(Path(top.stdout.strip()) / match.group(2)))
+    return paths
+
+
+def _is_interactive_add(args: Tuple[str, ...]) -> bool:
+    for token in args:
+        if token == "--":
+            return False
+        if token in INTERACTIVE_ADD_OPTS:
+            return True
+        if token.startswith("-") and not token.startswith("--") and set(token[1:]) & INTERACTIVE_ADD_SHORT_FLAGS:
+            return True
+    return False
+
+
+def _added_paths(root: str, adds: Tuple[Add, ...], deadline: float) -> List[str]:
+    """先に出た git add が、このコミットのリポジトリに足しうるファイルの、ルートからの相対パスを返す。"""
+    relatives: List[str] = []
+    for directory, args in adds:
+        absolute = None
+        if directory is not None and not _is_interactive_add(args):
+            absolute = _dry_run_paths(directory, args, deadline)
+        if absolute is None:
+            relatives.extend(_broad_paths(root, deadline))
+            continue
+        for path in absolute:
+            relative = os.path.relpath(path, root)
+            if not relative.startswith(".." + os.sep) and relative != "..":
+                relatives.append(Path(relative).as_posix())
+    return relatives
+
+
+def changed_targets(repo: str, include_unstaged: bool, adds: Tuple[Add, ...], deadline: float) -> List[Tuple[str, str]]:
     """コミットに入る対象ファイルを、(絶対パス, 節目) で返す。リポジトリ外なら空。"""
-    top = _git(repo, "rev-parse", "--show-toplevel")
+    top = _git(repo, deadline, "rev-parse", "--show-toplevel")
     if top.returncode != 0:
         if "not a git repository" in top.stderr:
             return []
         raise GitError(top.stderr.strip() or "git rev-parse に失敗した")
     root = top.stdout.strip()
-    # -z で取り、日本語やスペースを含むパスが引用されないようにする。d（小文字）は削除を除く
-    queries = [["diff", "--cached", "--name-only", "-z", "--diff-filter=d"]]
+    # d（小文字）は削除を除く
+    relatives = _git_paths(root, deadline, "diff", "--cached", "--name-only", "-z", "--diff-filter=d")
     if include_unstaged:
-        queries.append(["diff", "--name-only", "-z", "--diff-filter=d"])
+        relatives += _git_paths(root, deadline, "diff", "--name-only", "-z", "--diff-filter=d")
+    relatives += _added_paths(root, adds, deadline)
     found: List[Tuple[str, str]] = []
-    for query in queries:
-        result = _git(root, *query)
-        if result.returncode != 0:
-            raise GitError(result.stderr.strip() or "git diff に失敗した")
-        for relative in filter(None, result.stdout.split("\0")):
-            checkpoint = classify(relative)
-            item = (str(Path(root) / relative), checkpoint)
-            if checkpoint and item not in found:
-                found.append(item)
+    for relative in relatives:
+        checkpoint = classify(relative)
+        item = (str(Path(root) / relative), checkpoint)
+        if checkpoint and item not in found:
+            found.append(item)
     return found
 
 
@@ -178,8 +291,14 @@ def read_state(key: str) -> dict:
         return fresh  # 壊れた状態は空に置き換える。対象は未記録になるので1回止まる
     if not isinstance(state, dict) or not isinstance(state.get("paths"), dict):
         return fresh
-    state.setdefault("error_shown", False)  # error_shown が欠けた状態でも KeyError にしない
-    return state
+    # 形の崩れた記録は捨てる。その対象は未記録になるので1回止まる
+    paths = {path: record for path, record in state["paths"].items() if _is_valid_record(record)}
+    return {**state, "paths": paths, "error_shown": state.get("error_shown", False)}
+
+
+def _is_valid_record(record: object) -> bool:
+    return (isinstance(record, dict) and type(record.get("offset")) is int
+            and isinstance(record.get("checked"), bool))
 
 
 def write_state(key: str, value: dict) -> None:
@@ -223,7 +342,8 @@ def review_request(pending: List[Tuple[str, str]]) -> str:
         *lines,
         f"Agentツールで {REVIEWER_AGENT} を起動し、上のパスと節目だけを渡す（会話の要約は渡さない）。",
         "返ってきた問いは要約せずにユーザーへ出す。直すかどうかはユーザーが決める。",
-        "レビューを依頼したら、同じコミットをやり直してよい（このファイルでは2回目は止めない）。",
+        "返ってきた問いをユーザーへ出してから、同じコミットをやり直してよい（このファイルでは2回目は止めない）。",
+        "Agent ツールが使えないときは、コミットせずに止まり、この文面を呼び出し元へ報告する。",
     ])
 
 
@@ -239,6 +359,8 @@ def data_problem() -> Optional[str]:
 
 
 def reviewer_started(payload: dict, offset: int) -> Optional[bool]:
+    from hook_support import TranscriptError, read_entries, tool_uses
+
     try:
         entries = read_entries(payload.get("transcript_path"), offset)
     except TranscriptError:
@@ -248,6 +370,9 @@ def reviewer_started(payload: dict, offset: int) -> Optional[bool]:
 
 
 def handle(payload: dict) -> dict:
+    from hook_support import with_messages
+
+    deadline = time.monotonic() + TIME_BUDGET_SECONDS
     tool_input = payload.get("tool_input")
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
     cwd = payload.get("cwd")
@@ -255,9 +380,9 @@ def handle(payload: dict) -> dict:
         raise ValueError("入力に command か cwd が無い")
     targets: List[Tuple[str, str]] = []
     errors: List[str] = []
-    for repo, all_flag in commit_targets(command, cwd):
+    for repo, include_unstaged, adds in commit_targets(command, cwd):
         try:
-            for item in changed_targets(repo, all_flag):
+            for item in changed_targets(repo, include_unstaged, adds, deadline):
                 if item not in targets:
                     targets.append(item)
         except GitError as error:
@@ -312,19 +437,26 @@ def handle(payload: dict) -> dict:
         return with_messages({}, messages)
 
 
+def _emit_message(text: str) -> None:
+    """hook_support を読み込めないときにも表示できるよう、標準ライブラリだけで書く。"""
+    print(json.dumps({"systemMessage": text}, ensure_ascii=False))
+
+
 def main(argv: List[str]) -> int:
     try:
         payload = json.loads(sys.stdin.read())
         if not isinstance(payload, dict):
             raise ValueError("入力がJSONオブジェクトではない")
     except ValueError as error:
-        emit(with_messages({}, [f"原則レビューを検査できなかった（入力を読めない: {error}）。止めずに通した"]))
+        _emit_message(f"原則レビューを検査できなかった（入力を読めない: {error}）。止めずに通した")
         return 0
     try:
-        emit(handle(payload))
-    except Exception as error:  # 検査できなかったことを黙って通さず、フックのエラーとして画面に出す
+        output = handle(payload)
+        if output:
+            print(json.dumps(output, ensure_ascii=False))
+    except Exception as error:  # 補助モジュールを読めない失敗も含め、黙って通さずに画面に出す
         print(f"principle-review: {type(error).__name__}: {error}", file=sys.stderr)
-        emit(with_messages({}, [f"原則レビューを検査できなかった（{type(error).__name__}: {error}）。止めずに通した"]))
+        _emit_message(f"原則レビューを検査できなかった（{type(error).__name__}: {error}）。止めずに通した")
     return 0
 
 
