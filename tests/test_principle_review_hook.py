@@ -104,6 +104,8 @@ class BlockOnceTests(HookCase):
         self.assertIn("principle-reviewer", reason)
         self.assertIn(f"spec: {path}", reason)
         self.assertIn("要約せず", reason)
+        self.assertIn("返ってきた問いをユーザーへ出してから、同じコミットをやり直してよい", reason)
+        self.assertIn("Agent ツールが使えないときは、コミットせずに止まり、この文面を呼び出し元へ報告する", reason)
         self.assertIsNone(decision_of(self.run_hook("git commit -m x")[1]))
 
     def test_edited_after_review_is_not_denied_again(self):
@@ -142,6 +144,74 @@ class BlockOnceTests(HookCase):
         (self.repo / "docs/specs/a.md").write_text("変更", encoding="utf-8")
         self.assertEqual(self.run_hook("git commit -m x"), (0, {}))
         self.assertEqual(decision_of(self.run_hook("git commit -am x")[1]), "deny")
+
+
+class AddInSameCommandTests(HookCase):
+    """git add と git commit を1つのコマンドで打つ形と、git commit に pathspec を渡す形。"""
+
+    def write(self, relative, text="本文", repo=None):
+        path = (repo or self.repo) / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_add_then_commit_of_untracked_spec_is_denied(self):
+        path = self.write("docs/specs/a.md")
+        output = self.run_hook("git add docs/specs/a.md && git commit -m x")[1]
+        self.assertEqual(decision_of(output), "deny")
+        self.assertIn(f"spec: {path}", output["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_add_all_then_commit_is_denied(self):
+        self.write("docs/specs/a.md")
+        self.assertEqual(decision_of(self.run_hook("git add -A && git commit -m x")[1]), "deny")
+
+    def test_add_dot_from_subdirectory_then_commit_is_denied(self):
+        self.write("docs/specs/a.md")
+        output = self.run_hook("git add . ; git commit -m x", cwd=self.repo / "docs" / "specs")[1]
+        self.assertEqual(decision_of(output), "deny")
+
+    def test_untracked_draft_is_ignored_when_only_other_files_are_added(self):
+        self.write("docs/specs/draft.md")
+        self.write("src/x.py")
+        self.assertEqual(self.run_hook("git add src/x.py && git commit -m x"), (0, {}))
+
+    def test_add_and_commit_in_the_other_repository(self):
+        other = self.base / "other"
+        other.mkdir()
+        git(other, "init", "-q", "-b", "work")
+        path = self.write("docs/specs/a.md", repo=other)
+        command = f"git -C {other} add docs/specs/a.md && git -C {other} commit -m x"
+        output = self.run_hook(command)[1]
+        self.assertEqual(decision_of(output), "deny")
+        self.assertIn(str(path), output["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_japanese_and_space_in_filename_via_add(self):
+        path = self.write("docs/specs/仕事の 原則.md")
+        output = self.run_hook('git add "docs/specs/仕事の 原則.md" && git commit -m x')[1]
+        self.assertEqual(decision_of(output), "deny")
+        self.assertIn(f"spec: {path}", output["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_commit_with_pathspec_counts_unstaged_change(self):
+        self.stage("docs/specs/a.md")
+        git(self.repo, "commit", "-q", "-m", "spec")
+        self.write("docs/specs/a.md", "変更")
+        self.assertEqual(decision_of(self.run_hook("git commit docs/specs/a.md -m x")[1]), "deny")
+
+    def test_commit_with_only_or_include_counts_unstaged_change(self):
+        self.stage("docs/specs/a.md")
+        git(self.repo, "commit", "-q", "-m", "spec")
+        self.write("docs/specs/a.md", "変更")
+        for command in ("git commit -o -m x -- docs/specs/a.md", "git commit --include -m x"):
+            with self.subTest(command):
+                self.assertEqual(decision_of(self.run_hook(command, session=command)[1]), "deny")
+
+    def test_add_alone_passes(self):
+        self.write("docs/specs/a.md")
+        self.assertEqual(self.run_hook("git add docs/specs/a.md"), (0, {}))
+
+    def test_interactive_add_falls_back_to_untracked_targets(self):
+        self.write("docs/specs/a.md")
+        self.assertEqual(decision_of(self.run_hook("git add -p && git commit -m x")[1]), "deny")
 
 
 class TargetRepositoryTests(HookCase):
@@ -191,6 +261,27 @@ class StateResilienceTests(HookCase):
         code, output = self.run_hook("", raw=payload)
         self.assertEqual(code, 0)
         self.assertIn("検査できなかった", json.dumps(output, ensure_ascii=False))
+
+    def test_malformed_path_record_is_dropped_and_denied(self):
+        path = self.stage("docs/specs/a.md")
+        self.write_session_state(json.dumps({"paths": {str(path): "x"}, "error_shown": False}))
+        self.assertEqual(decision_of(self.run_hook("git commit -m x")[1]), "deny")
+
+    def test_missing_helper_modules_exit_zero_with_message(self):
+        # hook_support と guard を読み込めないときも、黙って落ちずに「検査できなかった」と出す
+        lonely = self.base / "lonely"
+        lonely.mkdir()
+        copy = lonely / "principle-review.py"
+        copy.write_text(HOOK.read_text(encoding="utf-8"), encoding="utf-8")
+        payload = {"session_id": "s1", "cwd": str(self.repo), "tool_input": {"command": "git commit -m x"}}
+        result = subprocess.run([sys.executable, str(copy)], input=json.dumps(payload),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("検査できなかった", json.loads(result.stdout)["systemMessage"])
+
+    def test_git_after_the_deadline_is_a_git_error(self):
+        with self.assertRaises(principle_review.GitError):
+            principle_review._git(str(self.repo), time.monotonic() - 1, "status")
 
     def test_cleanup_keeps_the_lock_in_use(self):
         self.stage("docs/specs/a.md")

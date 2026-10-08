@@ -19,6 +19,13 @@ class PrinciplesDataTests(unittest.TestCase):
     def setUp(self):
         self.data = json.loads(DATA.read_text(encoding="utf-8"))
 
+    def test_top_level_and_theme_keys_are_exact(self):
+        # 公開しない欄が最上位やテーマに紛れ込んでいないことを、キーの集合の一致で確かめる
+        self.assertEqual(set(self.data), {"_generated", "themes", "principles"})
+        for theme in self.data["themes"]:
+            with self.subTest(theme.get("name")):
+                self.assertEqual(set(theme), {"name", "description", "note", "ids"})
+
     def test_generated_note_is_present(self):
         self.assertIn("直接編集しない", self.data["_generated"])
 

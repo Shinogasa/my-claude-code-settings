@@ -80,6 +80,11 @@ class ReviewerAgentTests(unittest.TestCase):
 
 
 SETTINGS = json.loads((REPO_ROOT / "settings.json.template").read_text(encoding="utf-8"))
+PRINCIPLE_REVIEW_COMMAND = (
+    "if [ -f ~/.claude/hooks/principle-review.py ]; then python3 ~/.claude/hooks/principle-review.py; "
+    "else echo '{\"systemMessage\":\"原則レビューのフック（~/.claude/hooks/principle-review.py）が見つからないので"
+    "検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi"
+)
 CONFLUENCE_MATCHER = "mcp__.*__(create|update)Confluence(Page|FooterComment|InlineComment)"
 
 
@@ -115,7 +120,7 @@ class WiringTests(unittest.TestCase):
             "~/.claude/hooks/warn-branch-behind-main.sh",
             "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash",
             "python3 ~/.claude/hooks/block-commit-on-merged-pr.py",
-            "python3 ~/.claude/hooks/principle-review.py",
+            PRINCIPLE_REVIEW_COMMAND,
         ])
 
     def test_agent_calls_are_recorded_and_existing_hooks_remain(self):

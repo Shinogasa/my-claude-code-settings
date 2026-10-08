@@ -5,11 +5,19 @@
 """
 import importlib.util
 import json
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-COMMAND = "python3 ~/.claude/hooks/principle-review.py"
+# フックの無いブランチへ設定リポジトリを戻しても、全 Bash を止めずに表示して通す
+COMMAND = (
+    "if [ -f ~/.claude/hooks/principle-review.py ]; then python3 ~/.claude/hooks/principle-review.py; "
+    "else echo '{\"systemMessage\":\"原則レビューのフック（~/.claude/hooks/principle-review.py）が見つからないので"
+    "検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi"
+)
 
 _spec = importlib.util.spec_from_file_location("codex_agents", REPO_ROOT / "bin" / "generate-codex-agents.py")
 codex_agents = importlib.util.module_from_spec(_spec)
@@ -22,8 +30,37 @@ class WiringTests(unittest.TestCase):
         bash = [entry for entry in settings["hooks"]["PreToolUse"] if entry["matcher"] == "Bash"]
         hooks = [hook for entry in bash for hook in entry["hooks"]]
         self.assertIn(COMMAND, [hook["command"] for hook in hooks])
-        # gitを最大3回×10秒呼ぶので、guardと同じ30秒を確保する
+        # フック自身が25秒の予算でgitを打ち切るので、guardと同じ30秒を確保する
         self.assertEqual([hook["timeout"] for hook in hooks if hook["command"] == COMMAND], [30])
+
+
+class MissingHookTests(unittest.TestCase):
+    """設定リポジトリをフックの無いブランチへ戻した状態を、一時 HOME で再現する。"""
+
+    def run_command(self, home):
+        # テンプレートに登録された文字列そのものを走らせる。テスト側の定数を走らせても検証にならない
+        settings = json.loads((REPO_ROOT / "settings.json.template").read_text(encoding="utf-8"))
+        registered = [hook["command"] for entry in settings["hooks"]["PreToolUse"] for hook in entry["hooks"]
+                      if "principle-review.py" in hook["command"]]
+        self.assertEqual(len(registered), 1, registered)
+        return subprocess.run(["sh", "-c", registered[0]], input="{}", capture_output=True, text=True,
+                              env={**os.environ, "HOME": str(home)})
+
+    def test_missing_hook_file_passes_with_message(self):
+        with tempfile.TemporaryDirectory() as home:
+            result = self.run_command(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertIn("見つからないので検査しなかった", output["systemMessage"])
+        self.assertNotIn("hookSpecificOutput", output)
+
+    def test_present_hook_file_is_run(self):
+        with tempfile.TemporaryDirectory() as home:
+            hooks = Path(home) / ".claude" / "hooks"
+            hooks.mkdir(parents=True)
+            (hooks / "principle-review.py").write_text("print('ran')\n", encoding="utf-8")
+            result = self.run_command(home)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "ran"))
 
 
 class ReviewerAgentTests(unittest.TestCase):
