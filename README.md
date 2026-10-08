@@ -396,6 +396,7 @@ hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyring
 │   ├── code-learning/           #   実作業でのコード理解・変更・レビュー演習
 │   ├── coding-standards/        #   コーディング規約
 │   ├── learning-mode/           #   学習モードの手順と書式
+│   ├── work-principles/         #   仕事の原則で助言する（principles.json は生成物）
 │   └── yomiyasu/                #   日本語文書の書き直し（git submodule）
 ├── commands/                    # スラッシュコマンド
 │   ├── explain.md               #   プロジェクト説明
@@ -409,6 +410,7 @@ hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyring
 │   ├── security-reviewer.md     #   セキュリティレビュー
 │   ├── build-error-resolver.md  #   ビルドエラー解決
 │   ├── jp-doc-reviewer.md       #   日本語文書のレビュー（opus、yomiyasu）
+│   ├── principle-reviewer.md    #   仕様書・ADR・計画を仕事の原則に照らす（Read・Grepだけ）
 │   └── silent-failure-hunter.md #   サイレント障害検出
 ├── codex/                       # Codex固有アダプター
 │   ├── RTK.md                   #   RTK公式のCodex向けシェル指示
@@ -428,6 +430,7 @@ hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyring
 │   ├── guard-dangerous-bash.py  #   危険コマンド判定の実処理
 │   ├── hook_support.py          #   会話記録の読み取りと出力の補助
 │   ├── jp-doc-review.py         #   PR作成前の日本語文書のレビュー依頼・Confluenceの事前チェック
+│   ├── principle-review.py      #   仕様書・計画を含むコミットを1回止め、原則レビューを依頼する
 │   └── skill-read-check.py      #   スキルの必読資料の読み漏れ確認
 ├── bin/                         # 起動ラッパー（PATHを通して使う）
 │   ├── ccp                      #   個人Anthropicアカウントで Claude Code を起動する
@@ -488,6 +491,24 @@ npx版を残すと、`npx skills update` がリンクをたどってsubmoduleの
 
 設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯と却下した案は
 `docs/adr/0024-jp-doc-review-hook.md` を参照。レビューの時機をPR作成時へ移した経緯は `docs/adr/0025-jp-doc-review-at-pr-creation.md` にある。
+
+## 原則レビュー（Claude Code専用）
+
+`hooks/principle-review.py` は、仕様書・ADR・実装計画の `.md` を含む `git commit` を、セッションとファイルの組ごとに1回だけ止める。
+対象は `docs/superpowers/specs/`・`docs/specs/`・`docs/adr/`（spec）と `docs/superpowers/plans/`・`docs/plans/`（plan）の下の `.md` で、
+同じコマンドの中の `git add` で足されるファイルも含める。止めたときは、`principle-reviewer` サブエージェントを起動し、
+返ってきた問いを要約せずにユーザーへ出すよう求める。直すかどうかはユーザーが決める。2回目のコミットは止めず、
+`principle-reviewer` が起動していなければ画面に表示する。
+
+状態は `~/.claude/state/principle-review/` に置き、7日で消す。次の形のコミットは見分けられず、止まらない。
+
+- `bash -c "git commit ..."` のように別のシェルで包んだ形
+- `rtk git commit` のように、`git` の前にコマンドを置いた形
+- `git merge`・`git cherry-pick` など、`git commit` を通らずに作るコミット
+
+助言スキル `skills/work-principles/` とレビュワーが読む `principles.json` は生成物で、直接編集しない。正本は非公開リポジトリにあり、
+そちらで `uv run transcripts-export` を実行して書き出す。設計は `docs/superpowers/specs/2026-10-08-work-principles-design.md`、
+判断の経緯は `docs/adr/0026-work-principles-delivery.md` を参照。
 
 ## claude-code-best-practice（submodule）
 

@@ -980,8 +980,15 @@ Python や Markdown だけを触る作業中も常に効いている。
 ### 原則レビューのフックと助言スキルを Codex に対応させる
 
 **決めること**: Codex のフック（`codex/hooks.json`）で同じ挙動を作るか、助言スキルだけを共有するか。
+`principle-reviewer` の指示文が名指しする原則集のパスは `~/.claude/skills/work-principles/` だけで、Codex では読む先が違う。対応するときに、ホスト別のパスを併記する。
 
-### 原則レビューのフックが `git add && git commit` を見逃す
+### フックの無いブランチへ戻すと全 Bash が止まる
 
-**決めること**: `git add` を含む複合コマンドで、これから積まれる対象をどう見つけるか（コマンドから追加先を読むか、`git add` と `git commit` の分離をエージェントへの指示に書くか）。
-実機の確認（2026-10-08）で、`git add <file> && git commit` の1コマンドは止まらなかった。
+**決めること**: 全フックの command を「ファイルが無ければ表示して通す」形にそろえるか、`setup.sh` がブランチの切り替えを検知して生成し直すか。
+設定リポジトリの作業ツリーを、あるフックを足す前のブランチへ戻すと、生成済みの `~/.claude/settings.json` がまだそのフックを呼び、
+ファイルが無いので exit 2 になって全 Bash が止まる。`principle-review.py` だけは command 側で避けた（仕様書 2026-10-08-work-principles-design.md の10章）。
+
+### `unittest discover` が一部のテストで止まる
+
+**決めること**: 原因の調査を先にするか、止まるモジュールを分けて走らせるか。
+`python3 -m unittest discover -s tests` を実行すると、`test_codex_model_switch`・`test_learning_store`・`test_setup_cli`・`test_setup_preflight` で止まる（2026-10-08、main 由来、原因は未調査）。
