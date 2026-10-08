@@ -115,6 +115,7 @@ class WiringTests(unittest.TestCase):
             "~/.claude/hooks/warn-branch-behind-main.sh",
             "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash",
             "python3 ~/.claude/hooks/block-commit-on-merged-pr.py",
+            "python3 ~/.claude/hooks/principle-review.py",
         ])
 
     def test_agent_calls_are_recorded_and_existing_hooks_remain(self):

@@ -50,6 +50,11 @@
             "type": "command",
             "command": "python3 ~/.claude/hooks/block-commit-on-merged-pr.py",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/principle-review.py",
+            "timeout": 30
           }
         ]
       },

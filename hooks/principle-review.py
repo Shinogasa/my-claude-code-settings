@@ -19,7 +19,7 @@ from typing import Iterator, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from hook_support import emit, with_messages  # noqa: E402
+from hook_support import TranscriptError, emit, read_entries, tool_uses, with_messages  # noqa: E402
 
 _guard_spec = importlib.util.spec_from_file_location(
     "guard_dangerous_bash", Path(__file__).resolve().parent / "guard-dangerous-bash.py")
@@ -226,6 +226,26 @@ def review_request(pending: List[Tuple[str, str]]) -> str:
     ])
 
 
+AGENT_TOOL_NAMES = {"Agent", "Task"}  # 古い版ではサブエージェントの起動ツールがTaskという名前だった
+
+
+def data_problem() -> Optional[str]:
+    try:
+        json.loads(data_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return f"原則集を読めない（{data_path()}: {type(error).__name__}）。setup.sh を実行したか確かめる"
+    return None
+
+
+def reviewer_started(payload: dict, offset: int) -> Optional[bool]:
+    try:
+        entries = read_entries(payload.get("transcript_path"), offset)
+    except TranscriptError:
+        return None
+    return any(name in AGENT_TOOL_NAMES and tool_input.get("subagent_type") == REVIEWER_AGENT
+               for name, tool_input in tool_uses(entries))
+
+
 def handle(payload: dict) -> dict:
     tool_input = payload.get("tool_input")
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
@@ -249,13 +269,33 @@ def handle(payload: dict) -> dict:
     with session_lock(key):
         cleanup_old_state()
         state = read_state(key)
+        problem = data_problem()
+        problems = errors + ([problem] if problem else [])
+        if problems:
+            if not state["error_shown"]:
+                state["error_shown"] = True
+                write_state(key, state)
+                return deny("原則レビューを検査できなかったので1回止めた。\n" + "\n".join(f"- {p}" for p in problems))
+            return with_messages({}, ["原則レビューを検査できないまま通した:", *problems])
         pending = [(path, checkpoint) for path, checkpoint in targets if path not in state["paths"]]
         if pending:
             for path, _checkpoint in pending:
                 state["paths"][path] = {"offset": transcript_size(payload), "checked": False}
             write_state(key, state)
             return deny(review_request(pending))
-    return {}
+        messages = []
+        for path, _checkpoint in targets:
+            record = state["paths"][path]
+            if record["checked"]:
+                continue
+            record["checked"] = True
+            started = reviewer_started(payload, record["offset"])
+            if started is None:
+                messages.append(f"{REVIEWER_AGENT} の起動を確かめられなかった（会話記録を読めない）: {path}")
+            elif not started:
+                messages.append(f"{REVIEWER_AGENT} が起動していないまま通した: {path}")
+        write_state(key, state)
+        return with_messages({}, messages)
 
 
 def main(argv: List[str]) -> int:
