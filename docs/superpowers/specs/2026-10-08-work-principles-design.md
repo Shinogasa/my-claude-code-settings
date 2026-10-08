@@ -148,8 +148,27 @@ ADR 0025 は日本語レビューの時点をコミットからPR作成へ移し
 - Claude 自身の振る舞いへ常に反映させるルール
 - 原則集の内容の変更（正本の側で行う）
 
-## 10. 未確認事項
+## 10. 未確認事項と確認の結果
 
-- `hooks/jp-doc-review.py` の `pre-tool-use-bash` は、今も `git commit` で止めることがあるか。ADR 0025 でレビューの時点をPR作成時へ移したが、
-  登録は残っている。同じコミットで2つのフックが止めると、理由が2つ並ぶ。実装計画の最初に挙動を確かめる
-- `docs/superpowers/plans/` 以外に実装計画を置くリポジトリがあるか。あれば対象の場所に足す
+### 解消済み
+
+- `hooks/jp-doc-review.py` の `pre-tool-use-bash` が `git commit` で止めるか。止めない。
+  `handle_pre_tool_use_bash` が `is_pr_create` で `gh pr create` だけを扱うことを、2026-10-08 にコードで確かめた。
+  2つのフックが同じコミットで止めることは無く、理由が2つ並ぶ事態は起きない
+- `docs/superpowers/plans/` 以外に実装計画を置くリポジトリがあるか。実機の確認では仕様書（`docs/specs/`）だけを試し、
+  計画の置き場所は試していない。置き場所を足す必要が出たかは未確認。対象は `docs/superpowers/plans`・`docs/plans` のまま
+- フックの実機確認（2026-10-08、`bin/claude-headless -p`、`--permission-mode acceptEdits`）
+  - 仕様書（`docs/specs/test.md`）の1回目のコミットが、原則レビューの理由つきで止まった。
+    `principle-reviewer` が Agent ツールで起動し、問いが要約されずにユーザーへ返り、同じコミットの2回目が通った
+  - `principle-reviewer` を起動せずに2回目をコミットすると通り、`principle-reviewer が起動していないまま通した: <パス>` の通知が
+    ストリームに `system` / `informational` として出た
+  - 実行条件: 非対話の `claude -p` では、`rtk` の書き換えのせいで `--allowedTools "Bash(git *)"` だけでは `git add` が通らない。
+    `"Bash(rtk git *)" "Bash(rtk *)" "Agent"` も足した。レビュワーが `~/.claude/skills/work-principles/` を読むには
+    `--add-dir ~/.claude/skills/work-principles` も要った（足さないと読み取りが拒否され、レビュワーは「読めなかった」と報告して終わる）
+
+### 残っている穴
+
+- `git add <file> && git commit` を1つのコマンドで実行すると、フックは止めない。
+  `PreToolUse` の時点では `git diff --cached` がまだ空で、対象が見つからないため（実機で2回再現）。
+  `git add` と `git commit` を別のコマンドに分けると止まる
+- レビュワーの指示文が名指ししているパスは `~/.claude/` 配下だけで、Claude Code 専用である。Codex では読む先が違う（backlog の Codex 対応で扱う）
