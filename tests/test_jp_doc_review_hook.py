@@ -270,6 +270,56 @@ class PrReviewTests(HookCase):
         self.commit_file("docs/a.md", JP_LONG)
         self.assertEqual(decision_of(self.pr('bash -c "gh pr create --fill"')), "deny")
 
+    def make_git_repo(self, name):
+        """日本語の文書を含まない、別の実リポジトリ（mainだけ）を作る。"""
+        root = self.base / name
+        root.mkdir()
+        for args in (("init", "-q", "-b", "main"), ("config", "user.email", "t@example.invalid"),
+                     ("config", "user.name", "t"), ("commit", "-q", "--allow-empty", "-m", "x")):
+            subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True,
+                           env={**os.environ, **GIT_ISOLATION})
+        return root
+
+    def test_pr_create_after_cd_reviews_the_target_repository(self):
+        # cwdのリポジトリではなく、cd の移動先でPRを作る（2026-10-08、PR作成時に止まらなかった）
+        path = self.commit_file("docs/a.md", JP_LONG)
+        other = self.make_git_repo("other")
+        for index, command in enumerate((f"cd {self.git_repo} && gh pr create --fill",
+                                         "cd ../git-repo && git push && gh pr create --fill")):
+            with self.subTest(command=command):
+                result = self.pr(command, session=f"s{index}", cwd=str(other))
+                self.assertEqual(decision_of(result), "deny")
+                self.assertIn(str(path), self.reason(result))
+
+    def test_pr_create_after_cd_to_another_repository_does_not_review_cwd(self):
+        self.commit_file("docs/a.md", JP_LONG)
+        other = self.make_git_repo("other")
+        self.assertEqual(self.pr(f"cd {other} && gh pr create --fill"), (0, {}, ""))
+
+    def test_wrapped_pr_create_after_cd_reviews_the_target_repository(self):
+        self.commit_file("docs/a.md", JP_LONG)
+        other = self.make_git_repo("other")
+        result = self.pr(f"bash -c 'cd {self.git_repo} && gh pr create --fill'", cwd=str(other))
+        self.assertEqual(decision_of(result), "deny")
+
+    def test_unresolved_cd_before_pr_create_stops_every_time(self):
+        # 移動先を文字列から決められないときは、検査できなかったとして止め、cd の書き直しを求める
+        other = self.make_git_repo("other")
+        for command in ('cd "$TARGET" && gh pr create --fill', "cd - && gh pr create --fill"):
+            with self.subTest(command=command):
+                for _ in range(2):
+                    result = self.pr(command, cwd=str(other))
+                    self.assertEqual(decision_of(result), "deny")
+                    self.assertIn("cd", self.reason(result))
+
+    def test_pr_create_in_one_of_several_repositories_stops(self):
+        # cd が失敗しても後ろが走る形では、PRを作るリポジトリを1つに決められない
+        self.commit_file("docs/a.md", JP_LONG)
+        other = self.make_git_repo("other")
+        result = self.pr(f"cd {self.git_repo} ; gh pr create --fill", cwd=str(other))
+        self.assertEqual(decision_of(result), "deny")
+        self.assertIn(str(self.git_repo), self.reason(result))
+
     def test_subagent_pr_create_passes_with_message(self):
         self.commit_file("docs/a.md", JP_LONG)
         code, output, _ = self.pr(agent_type="general-purpose")
