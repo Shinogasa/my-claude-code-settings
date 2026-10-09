@@ -980,6 +980,22 @@ Python や Markdown だけを触る作業中も常に効いている。
 
 ---
 
+## リンク先のディレクトリへの混入
+
+### P3: ツールが書き込んだファイルが、未追跡のままリポジトリに現れる
+
+**着手条件**: 同じ形の混入がもう一度起きたとき。それまでは `.gitignore` に1件ずつ足して対処する。
+**決めること**: 次の2つのどちらで止めるか、両方を使うか。
+- リンクの粒度: `rules/`・`commands/` はディレクトリごとリンクしている。skillsと同じように、中身を1件ずつリンクする形に変える
+- 検出: `setup.sh` かコミット前の検査で、リンク対象のディレクトリにある未追跡のファイルを警告する
+
+これまでに2回起きた。`rules/*.rules` は、Codexが `~/.codex/rules` を通して書き込んでいた。このリンクはディレクトリごとに張っている。
+`skills/synced/` は、claude.aiから同期されたスキルで、2026-10-08に作られた。
+`~/.claude/skills` と `~/.agents/skills` はskillごとのリンクなので、どの経路で書き込まれたかは分かっていない。
+書き込んでいるのはツール本体なので、エージェント向けのルールでは止められない。
+
+---
+
 ## 仕事の原則集
 
 `jp-doc-review` の課題は、上の「日本語文書レビュー（yomiyasu）の続き」にある（P1）。ここには重ねて書かない。
@@ -1022,6 +1038,18 @@ partial clone の lazy fetch とサブモジュールの filter が承認前に�
 **決めること**: Git 2.45 未満を「検査できなかった」扱いにするか、`protocol.{file,ssh,git,http,https,ext}.allow=never` を明示するか。
 `GIT_NO_LAZY_FETCH` は Git 2.45.0 以降で効く。それ未満では lazy fetch を止められず、リポジトリの設定のコマンドが承認前に走りうる。
 `-c protocol.allow=never` も、リポジトリの `protocol.<名前>.allow=always` に上書きされる（仕様書 2026-10-08-work-principles-design.md の6章・10章）。
+
+### mainのマージで入ってきたレビュー済みのADRを、原則レビューが新規として止める
+
+**決めること**: マージコミットでは、マージ元ですでにコミット済みのADRを対象から外すか（`MERGE_HEAD` の有無で判定するなど）。
+2026-10-09に、PR #71のブランチへmainをマージして、ADRのコンフリクトを解消した。すると、mainですでにレビュー済みのADR 0029が新規の追加として扱われ、コミットが止まった。
+このときは、ユーザーの判断でレビューを省いた。
+
+### worktreeでは `.githooks/patterns-local.txt` が無く、pre-commit がマージコミットを止める
+
+**決めること**: worktreeを作るときに本体からコピーするか、pre-commitが `git rev-parse --git-common-dir` で本体の作業ツリーにある定義を探すか。
+`patterns-local.txt` はgitignoreされていて、`git worktree add` では持ち込まれない（`rules/parallel-worktree.md` の「分離した後にやること」）。
+2026-10-09に、PR #71のworktreeでマージコミットを作ろうとしたところ、pre-commitに止められた。
 
 ### リポジトリのルートに制御文字・書式文字があるとレビュワーがファイルを開けない
 
