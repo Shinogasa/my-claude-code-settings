@@ -125,6 +125,26 @@ class SetupCliTests(unittest.TestCase):
         self.assertIn("worktree", result.stderr)
         self.assertFalse((self.home / ".claude" / "rules").exists())
 
+    def test_refuses_worktree_even_with_git_dir_env(self):
+        worktree = self.make_worktree_repository()
+        (self.home / ".claude").mkdir()
+        main_git_dir = str(self.base / "main-repository" / ".git")
+        result = run_setup(worktree, self.home, "--claude",
+                           extra_env={"SETUP_REAL_GIT": shutil.which("git"),
+                                      "GIT_DIR": main_git_dir, "GIT_COMMON_DIR": main_git_dir})
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("worktree", result.stderr)
+        self.assertFalse((self.home / ".claude" / "rules").exists())
+
+    def test_stops_when_worktree_check_fails(self):
+        # .git があるのに判定できない（古いgit、safe.directory違反など）。stubのrev-parseは128を返す
+        git(self.repository, "init", "-q")
+        (self.home / ".claude").mkdir()
+        result = run_setup(self.repository, self.home, "--claude")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("判定できません", result.stderr)
+        self.assertFalse((self.home / ".claude" / "rules").exists())
+
     def test_main_working_tree_passes_guard(self):
         git(self.repository, "init", "-q")
         (self.home / ".claude").mkdir()
