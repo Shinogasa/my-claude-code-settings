@@ -6,7 +6,9 @@
 判断の経緯: docs/adr/0024-jp-doc-review-hook.md
 """
 import fcntl
+import functools
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -17,10 +19,20 @@ import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Set, Tuple
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+HOOK_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(HOOK_DIR))
 from hook_support import TranscriptError, emit, read_entries, tool_uses, with_messages  # noqa: E402
+
+
+@functools.lru_cache(maxsize=None)
+def guard():
+    """guard-dangerous-bash.py を読み込む。cd の移動先の解決を、コミットの判定とそろえるために使う。"""
+    spec = importlib.util.spec_from_file_location("guard_dangerous_bash", HOOK_DIR / "guard-dangerous-bash.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 MIN_JP_CHARS = 100
 DRAFT_SUFFIXES = {"markdown": ".md", "adf": ".json"}  # それ以外（html、指定なし）は .html
@@ -305,6 +317,50 @@ def is_pr_create(command: str, depth: int = 0) -> bool:
     return False
 
 
+def pr_create_dirs(command: str, cwd: str) -> Set[Optional[str]]:
+    """gh pr create を実行するときに、シェルがいる可能性のあるディレクトリの集合を返す。
+
+    同じコマンドの中の cd は、guard-dangerous-bash.py の main と同じ手順で追う。移動先を確定できなければ、
+    集合に guard().UNRESOLVED（None）が入る。is_pr_create が見つけたのにここで見つからない形
+    （ヒアドキュメントの本文の行頭など）は、従来どおり cwd で判定する。
+    """
+    dirs = _pr_create_dirs(command, {os.path.abspath(cwd)}, 0)
+    return dirs or {os.path.abspath(cwd)}
+
+
+def _pr_create_dirs(command: str, start: Set[Optional[str]], depth: int) -> Set[Optional[str]]:
+    g = guard()
+    tokens = g.tokenize_command(g.strip_heredocs(command))
+    if tokens is None:
+        return {g.UNRESOLVED}
+    candidates, seen, dirs = set(start), set(start), set()
+    cdpath_possible = "CDPATH" in command or bool(os.environ.get("CDPATH"))
+    for previous_op, words, next_op, _raw in g.split_with_operators(tokens):
+        if g.operator_kind(previous_op) in ("SEQ", "BREAK"):
+            candidates = set(seen)
+        candidates = g.apply_directory_change(previous_op, words, next_op, candidates, cdpath_possible)
+        seen |= candidates
+        if words[:3] == PR_CREATE_WORDS:
+            dirs |= candidates
+        elif depth == 0 and words and Path(words[0]).name in SHELLS and "-c" in words[1:-1]:
+            dirs |= _pr_create_dirs(words[words.index("-c", 1) + 1], candidates, depth + 1)
+    return dirs
+
+
+def _target_reason(dirs: Set[Optional[str]], roots: List[Path]) -> str:
+    """PRを作るリポジトリを1つに決められないときの、止める理由。"""
+    if None in dirs:
+        lines = ["PRを作るリポジトリを決められなかった。同じコマンドの中の cd の移動先を、文字列から確定できない"
+                 "（変数、cd -、pushd / popd、まだ無いディレクトリなど）。"]
+    else:
+        lines = ["PRを作るリポジトリを1つに決められなかった。cd の後ろが && でないと、cd が失敗しても後ろが走る。"
+                 "次のどれでもPRが作られうる。"]
+        lines += [f"- {root}" for root in roots if not CONTROL_CHAR.search(str(root))]
+    lines += ["日本語の文書のレビュー対象を決められないので、このPRはまだ作っていない。",
+              "cd <リポジトリの絶対パス> && gh pr create ... の形で、もう一度実行して。"]
+    return "\n".join(lines)
+
+
 def _pr_base(command: str) -> Optional[str]:
     """gh pr create の --base / -B の値。指定が無ければ None。"""
     try:
@@ -423,8 +479,22 @@ def handle_pre_tool_use_bash(payload: dict) -> None:
     cwd = payload.get("cwd")
     if not isinstance(cwd, str) or not cwd:
         raise ValueError("入力にcwdが無く、PRを作るリポジトリを決められない")
-    root, kind = _find_git_root(Path(os.path.realpath(cwd)))
-    if root is None or kind == "submodule":
+    dirs = pr_create_dirs(command, cwd)
+    found = (_find_git_root(Path(os.path.realpath(path))) for path in dirs if path is not None)
+    roots = {root: kind for root, kind in found if root is not None}
+    if None in dirs or len(roots) > 1:
+        # 検査できなかったことを「問題なし」に畳まない。書き直せば判定できるので、毎回止める
+        reason = _target_reason(dirs, sorted(roots))
+        if payload.get("agent_type"):
+            emit({"systemMessage": reason.replace("このPRはまだ作っていない。", "")})
+            return
+        emit({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}})
+        return
+    if not roots:
+        return
+    [(root, kind)] = roots.items()
+    if kind == "submodule":
         return
     with session_lock(key):
         _handle_pr_create(key, payload, root, command)
