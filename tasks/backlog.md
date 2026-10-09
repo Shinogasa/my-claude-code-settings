@@ -1045,12 +1045,6 @@ partial clone の lazy fetch とサブモジュールの filter が承認前に�
 2026-10-09に、PR #71のブランチへmainをマージして、ADRのコンフリクトを解消した。すると、mainですでにレビュー済みのADR 0029が新規の追加として扱われ、コミットが止まった。
 このときは、ユーザーの判断でレビューを省いた。
 
-### worktreeでは `.githooks/patterns-local.txt` が無く、pre-commit がマージコミットを止める
-
-**決めること**: worktreeを作るときに本体からコピーするか、pre-commitが `git rev-parse --git-common-dir` で本体の作業ツリーにある定義を探すか。
-`patterns-local.txt` はgitignoreされていて、`git worktree add` では持ち込まれない（`rules/parallel-worktree.md` の「分離した後にやること」）。
-2026-10-09に、PR #71のworktreeでマージコミットを作ろうとしたところ、pre-commitに止められた。
-
 ### リポジトリのルートに制御文字・書式文字があるとレビュワーがファイルを開けない
 
 **決めること**: `has_control` を絶対パスに当てて除外するか。
