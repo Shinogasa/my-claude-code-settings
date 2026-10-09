@@ -55,7 +55,7 @@ cdの移動先は、絶対パスで書き直せば必ず判定できる。2回�
 - 移動先を確定できない書き方では、PRを作るたびに止まる。書き直しの手間が増える
 - jp-doc-review.pyがguard-dangerous-bash.pyに依存する。guardを読み込めないと、フックのエラーとして画面に出る
 - ヒアドキュメントの本文の行頭にPR作成のコマンドがある場合は、guardがその本文を除くので、従来どおりcwdで判定する
-- `require-full-tests-before-pr.py` は、まだcwdだけでリポジトリを決めている（backlog）
+- `require-full-tests-before-pr.py` も `pr_create_dirs` を読み込み、移動先のリポジトリごとに全件テストの記録を確かめる。移動先を確定できなければ止める
 
 ## 根拠
 

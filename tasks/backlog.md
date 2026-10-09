@@ -49,15 +49,6 @@ PR作成時の日本語レビュー、マージ済みPRの照会、`claude-headl
 設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯はADR 0024・0025・0031。
 最初の実装はClaude Codeだけを対象にした。
 
-### P2: 全件テストの記録を確かめるフックも、PRを作るリポジトリをcwdだけで決めている
-
-`hooks/require-full-tests-before-pr.py` は、PRを作るリポジトリを入力の `cwd` から決める。
-日本語文書のレビューで直したのと同じ問題があり、`cd <別のリポジトリ> && gh pr create` では、cwd側のリポジトリの記録を確かめる。
-コードを読んで確かめた。テストでの再現はまだしていない。
-
-**決めること**: ADR 0031と同じく `guard-dangerous-bash.py` のディレクトリ解決を使うか。
-`jp-doc-review.py` の `pr_create_dirs` を読み込んで使えば、2つのフックの判定がそろう。
-
 ### P2: Codexでも日本語文書のレビューを動かす
 
 Codexの公式ドキュメント（2026-10-01確認）では、PreToolUse・PostToolUseが `apply_patch` とMCPツールにも動き、
