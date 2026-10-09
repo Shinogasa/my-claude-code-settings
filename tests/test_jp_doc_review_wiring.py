@@ -120,6 +120,7 @@ class WiringTests(unittest.TestCase):
             "~/.claude/hooks/warn-branch-behind-main.sh",
             "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash",
             "python3 ~/.claude/hooks/block-commit-on-merged-pr.py",
+            "python3 ~/.claude/hooks/require-full-tests-before-pr.py",
             PRINCIPLE_REVIEW_COMMAND,
         ])
 
