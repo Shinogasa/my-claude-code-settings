@@ -55,8 +55,12 @@ def make_stub_commands(base: Path) -> Path:
     git = bindir / "git"
     git.write_text(
         "#!/bin/sh\n"
-        # worktreeの判定だけは本物のgitに渡す。SETUP_REAL_GITが無ければ今までどおり
-        "if [ -n \"${SETUP_REAL_GIT:-}\" ] && [ \"$3\" = rev-parse ]; then exec \"$SETUP_REAL_GIT\" \"$@\"; fi\n"
+        # worktreeの判定（読み取りだけ）はログに残さない。SETUP_REAL_GITがあれば本物のgitに渡し、
+        # 無ければGitの作業ツリーでないときと同じ128を返して、判定を素通りさせる
+        "if [ \"$3\" = rev-parse ]; then\n"
+        "  if [ -n \"${SETUP_REAL_GIT:-}\" ]; then exec \"$SETUP_REAL_GIT\" \"$@\"; fi\n"
+        "  exit 128\n"
+        "fi\n"
         "printf '%s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\n"
         "if [ \"${SETUP_GIT_EXIT:-0}\" != 0 ]; then exit \"$SETUP_GIT_EXIT\"; fi\n"
         "if [ \"$*\" = \"-C $SETUP_SUBMODULE_REPOSITORY submodule update --init --recursive\" ]; then mkdir -p \"$SETUP_SUBMODULE_ROOT/claude-code-best-practice\" \"$SETUP_SUBMODULE_ROOT/codex-cli-best-practice\"; fi\n"

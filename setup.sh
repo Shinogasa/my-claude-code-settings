@@ -4,6 +4,22 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# worktreeで実行するとリンク先がworktreeへ移り、消した時点で全リンクが切れる（ADR 0031）。
+# Gitの作業ツリーでない、またはgitが使えないときは判定できないので、今までどおり進める。
+refuse_worktree() {
+  local dirs git_dir common_dir
+  dirs="$(git -C "$SCRIPT_DIR" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || return 0
+  git_dir="$(printf '%s\n' "$dirs" | sed -n 1p)"
+  common_dir="$(printf '%s\n' "$dirs" | sed -n 2p)"
+  if [ -z "$git_dir" ] || [ -z "$common_dir" ] || [ "$git_dir" = "$common_dir" ]; then
+    return 0
+  fi
+  echo "エラー: setup.sh を worktree で実行しようとしました。何も変更していません。" >&2
+  echo "  本体の作業ツリー（$(dirname "$common_dir")）で実行し直してください。" >&2
+  exit 1
+}
+refuse_worktree
 CLAUDE_DIR="$HOME/.claude"
 CODEX_DIR="$HOME/.codex"
 # 個人用の CODEX_HOME（ADR 0026）。無ければ個人用への配布だけを飛ばす
