@@ -1023,6 +1023,18 @@ partial clone の lazy fetch とサブモジュールの filter が承認前に�
 `GIT_NO_LAZY_FETCH` は Git 2.45.0 以降で効く。それ未満では lazy fetch を止められず、リポジトリの設定のコマンドが承認前に走りうる。
 `-c protocol.allow=never` も、リポジトリの `protocol.<名前>.allow=always` に上書きされる（仕様書 2026-10-08-work-principles-design.md の6章・10章）。
 
+### mainのマージで入ってきたレビュー済みのADRを、原則レビューが新規として止める
+
+**決めること**: マージコミットでは、マージ元ですでにコミット済みのADRを対象から外すか（`MERGE_HEAD` の有無で判定するなど）。
+2026-10-09、PR #71 のブランチへ main をマージしてADRのコンフリクトを解消したとき、main ですでにレビュー済みの ADR 0029 が新規の追加として扱われ、コミットが止まった。
+このときは、ユーザーの判断でレビューを省いた。
+
+### worktreeでは `.githooks/patterns-local.txt` が無く、pre-commit がマージコミットを止める
+
+**決めること**: worktreeを作るときに本体からコピーするか、pre-commit が `git rev-parse --git-common-dir` で本体の作業ツリーにある定義を探すか。
+`patterns-local.txt` はgitignoreされていて、`git worktree add` では持ち込まれない（`rules/parallel-worktree.md` の「分離した後にやること」）。
+2026-10-09、PR #71 のworktreeでマージコミットを作ろうとして止まった。
+
 ### リポジトリのルートに制御文字・書式文字があるとレビュワーがファイルを開けない
 
 **決めること**: `has_control` を絶対パスに当てて除外するか。
