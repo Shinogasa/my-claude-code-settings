@@ -349,15 +349,13 @@ def _pr_create_dirs(command: str, start: Set[Optional[str]], depth: int) -> Set[
 
 def _target_reason(dirs: Set[Optional[str]], roots: List[Path]) -> str:
     """PRを作るリポジトリを1つに決められないときの、止める理由。"""
-    if None in dirs:
+    if guard().UNRESOLVED in dirs:
         lines = ["PRを作るリポジトリを決められなかった。同じコマンドの中の cd の移動先を、文字列から確定できない"
                  "（変数、cd -、pushd / popd、まだ無いディレクトリなど）。"]
     else:
         lines = ["PRを作るリポジトリを1つに決められなかった。cd の後ろが && でないと、cd が失敗しても後ろが走る。"
                  "次のどれでもPRが作られうる。"]
         lines += [f"- {root}" for root in roots if not CONTROL_CHAR.search(str(root))]
-    lines += ["日本語の文書のレビュー対象を決められないので、このPRはまだ作っていない。",
-              "cd <リポジトリの絶対パス> && gh pr create ... の形で、もう一度実行して。"]
     return "\n".join(lines)
 
 
@@ -480,16 +478,21 @@ def handle_pre_tool_use_bash(payload: dict) -> None:
     if not isinstance(cwd, str) or not cwd:
         raise ValueError("入力にcwdが無く、PRを作るリポジトリを決められない")
     dirs = pr_create_dirs(command, cwd)
-    found = (_find_git_root(Path(os.path.realpath(path))) for path in dirs if path is not None)
+    unresolved = guard().UNRESOLVED
+    found = (_find_git_root(Path(os.path.realpath(path))) for path in dirs if path is not unresolved)
     roots = {root: kind for root, kind in found if root is not None}
-    if None in dirs or len(roots) > 1:
+    if unresolved in dirs or len(roots) > 1:
         # 検査できなかったことを「問題なし」に畳まない。書き直せば判定できるので、毎回止める
         reason = _target_reason(dirs, sorted(roots))
         if payload.get("agent_type"):
-            emit({"systemMessage": reason.replace("このPRはまだ作っていない。", "")})
+            emit({"systemMessage": f"{reason}\n日本語の文書をレビューしないまま、サブエージェントのPR作成を通した。"})
             return
         emit({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}})
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": f"{reason}\n日本語の文書のレビュー対象を決められないので、このPRはまだ作っていない。\n"
+                                        "cd <リポジトリの絶対パス> && gh pr create ... の形で、もう一度実行して。",
+        }})
         return
     if not roots:
         return

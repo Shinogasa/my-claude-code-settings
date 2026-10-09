@@ -46,20 +46,17 @@ PR作成時の日本語レビュー、マージ済みPRの照会、`claude-headl
 
 ## 日本語文書レビュー（yomiyasu）の続き
 
-設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯はADR 0024と0025。
+設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯はADR 0024・0025・0031。
 最初の実装はClaude Codeだけを対象にした。
 
-### P1: `cd <別のリポジトリ> && gh pr create` でPR作成時のレビューが止まらなかった
+### P2: 全件テストの記録を確かめるフックも、PRを作るリポジトリを cwd だけで決めている
 
-2026-10-08、sakurai-transcripts を cwd にしたセッションから `cd ~/garage/my-claude-code-settings && gh pr create ...` を実行して PR #68 を作った。
-仕様書とADR（日本語のMarkdown）を含むのに、`pre-tool-use-bash` は止めなかった。
+`hooks/require-full-tests-before-pr.py` は、PRを作るリポジトリを入力の `cwd` から決める。
+日本語文書のレビューで直したのと同じく、`cd <別のリポジトリ> && gh pr create` では、cwd 側のリポジトリの記録を確かめる。
+コードを読んで確かめた。テストでの再現はまだしていない。
 
-コードを読んだ範囲では、`handle_pre_tool_use_bash` はPRを作るリポジトリを、入力の `cwd` から `_find_git_root` で決めている。
-コマンド中の `cd` を見ていないので、cwd 側のリポジトリ（差分に日本語文書が無い）を調べた可能性がある。原因はまだ再現で確かめていない。
-ADR 0025 の背景で挙げた、コミットでの `cd` による取り違えと同じ型にあたる。
-
-**決めること**: PRを作るリポジトリの解決に、`guard-dangerous-bash.py` のディレクトリ解決（`apply_directory_change`・`git_target_dirs`）を再利用するか。
-`gh` の `-R` / `--repo` の指定も扱うか。
+**決めること**: ADR 0031と同じく `guard-dangerous-bash.py` のディレクトリ解決を使うか。
+`jp-doc-review.py` の `pr_create_dirs` を読み込んで使えば、2つのフックの判定がそろう。
 
 ### P2: Codexでも日本語文書のレビューを動かす
 
