@@ -12,6 +12,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from git_fixture import git  # noqa: E402
 
 
 def copy_repository(base: Path) -> Path:
@@ -52,7 +54,10 @@ def make_stub_commands(base: Path) -> Path:
     ssh_add.chmod(0o755)
     git = bindir / "git"
     git.write_text(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\n"
+        "#!/bin/sh\n"
+        # worktreeの判定だけは本物のgitに渡す。SETUP_REAL_GITが無ければ今までどおり
+        "if [ -n \"${SETUP_REAL_GIT:-}\" ] && [ \"$3\" = rev-parse ]; then exec \"$SETUP_REAL_GIT\" \"$@\"; fi\n"
+        "printf '%s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\n"
         "if [ \"${SETUP_GIT_EXIT:-0}\" != 0 ]; then exit \"$SETUP_GIT_EXIT\"; fi\n"
         "if [ \"$*\" = \"-C $SETUP_SUBMODULE_REPOSITORY submodule update --init --recursive\" ]; then mkdir -p \"$SETUP_SUBMODULE_ROOT/claude-code-best-practice\" \"$SETUP_SUBMODULE_ROOT/codex-cli-best-practice\"; fi\n"
         "exit 0\n",
@@ -93,6 +98,35 @@ class SetupCliTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def make_worktree_repository(self) -> Path:
+        main = self.base / "main-repository"
+        main.mkdir()
+        git(main, "init", "-q")
+        git(main, "-c", "user.name=test", "-c", "user.email=test@example.invalid",
+            "commit", "-q", "--allow-empty", "-m", "init")
+        worktree = self.base / "worktree-repository"
+        git(main, "worktree", "add", "-q", "--detach", str(worktree))
+        for entry in self.repository.iterdir():
+            shutil.move(str(entry), worktree / entry.name)
+        return worktree
+
+    def test_refuses_to_run_in_worktree(self):
+        worktree = self.make_worktree_repository()
+        # ほかの前提検査で止まらないようにし、止まる理由をworktreeの判定だけにする
+        (self.home / ".claude").mkdir()
+        result = run_setup(worktree, self.home, "--claude",
+                           extra_env={"SETUP_REAL_GIT": shutil.which("git")})
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("worktree", result.stderr)
+        self.assertFalse((self.home / ".claude" / "rules").exists())
+
+    def test_main_working_tree_passes_guard(self):
+        git(self.repository, "init", "-q")
+        (self.home / ".claude").mkdir()
+        result = run_setup(self.repository, self.home, "--claude",
+                           extra_env={"SETUP_REAL_GIT": shutil.which("git")})
+        self.assertNotIn("worktree", result.stderr)
 
     def test_selector_is_required_without_mutating_home(self):
         result = run_setup(self.repository, self.home)
