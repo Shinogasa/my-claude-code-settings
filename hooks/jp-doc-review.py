@@ -472,6 +472,19 @@ def handle_pre_tool_use_bash(payload: dict) -> None:
         raise ValueError("Bashの入力にcommand（文字列）が無い")
     if not is_pr_create(command):
         return
+    try:
+        _check_pr_create(payload, command)
+    except Exception as error:  # PR作成と分かった後の失敗は、終了コード1で通さず止める側に倒す
+        print(f"jp-doc-review pre-tool-use-bash: {type(error).__name__}: {error}", file=sys.stderr)
+        emit({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": f"日本語の文書のレビュー対象を確かめられなかったので、このPRはまだ作っていない"
+                                        f"（{type(error).__name__}: {error}）。原因を直してから、もう一度 gh pr create を実行して。",
+        }})
+
+
+def _check_pr_create(payload: dict, command: str) -> None:
     key = session_key(payload)
     cleanup_old_state()
     cwd = payload.get("cwd")
