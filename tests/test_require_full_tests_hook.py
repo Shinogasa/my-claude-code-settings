@@ -150,6 +150,27 @@ class RequireFullTestsHookTests(unittest.TestCase):
         result = run_hook("gh pr create --fill", repository)
         self.assertEqual(decision(result), "deny", result.stdout + result.stderr)
 
+    def test_pr_creation_in_cd_target_without_run_script_is_allowed(self):
+        # cwd ではなく、cd した先のリポジトリでPRを作る。cwd 側の記録で止めない
+        target = make_repository(self.base / "target")
+        other = make_repository(self.base / "other", with_run_script=False)
+        result = run_hook(f"cd {other} && gh pr create --fill", target)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(decision(result), result.stdout)
+
+    def test_pr_creation_in_cd_target_without_record_is_denied(self):
+        target = make_repository(self.base / "target")
+        other = make_repository(self.base / "other", with_run_script=False)
+        result = run_hook(f"cd {target} && gh pr create --fill", other)
+        self.assertEqual(decision(result), "deny", result.stdout + result.stderr)
+        self.assertIn("bash tests/run.sh --all", result.stdout)
+
+    def test_unresolved_cd_target_is_denied(self):
+        # 移動先を確定できなければ、検査できなかったとして止める
+        other = make_repository(self.base / "other", with_run_script=False)
+        result = run_hook('cd "$HOME/somewhere" && gh pr create --fill', other)
+        self.assertEqual(decision(result), "deny", result.stdout + result.stderr)
+
     def test_unreadable_head_is_denied_instead_of_passed(self):
         # 検査できなかったことを「問題なし」に畳まない
         repository = make_repository(self.base)
