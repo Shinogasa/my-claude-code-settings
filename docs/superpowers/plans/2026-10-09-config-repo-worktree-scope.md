@@ -6,7 +6,7 @@
 
 **決めた人:** ユーザー（2026-10-09、経緯はADR 0031）。作業前の確認を省く案は、ADR 0031の「検討した代替案」に保留として記録済み。
 
-**Architecture:** pre-commitは、worktreeでは本体の作業ツリーにある `patterns-local.txt` を読む。`setup.sh` は、`--git-dir` と `--git-common-dir` が一致しなければ何も変更せずに止まる。規約（`rules/parallel-worktree.md`、`CLAUDE.md`）を、本体で作業するパスの一覧と作業前の確認手順に書き換える。
+**Architecture:** pre-commitは、worktreeでは本体の作業ツリーにある `patterns-local.txt` を読む。`setup.sh` は、`--git-dir` と `--git-common-dir` が一致しなければ何も変更せずに止まる。規約（`rules/parallel-worktree.md`、`CLAUDE.md`）を書き換え、本体で作業するパスの一覧と作業前の確認手順を載せる。
 
 **Tech Stack:** bash、Python 3（標準ライブラリだけ）、unittest、Git 2.55
 
@@ -317,7 +317,7 @@ git commit -m "fix: setup.shをworktreeで実行したら何も変更せずに�
 
 - [ ] **Step 3: backlogの節を消す**
 
-- [ ] **Step 4: コミットする**（日本語文書のレビュー、原則レビューのhookが止めたら、指示に従う）
+- [ ] **Step 4: コミットする**（日本語文書のレビューや原則レビューのhookに止められたら、その指示に従う）
 
 ```bash
 git add rules/parallel-worktree.md CLAUDE.md tasks/backlog.md
