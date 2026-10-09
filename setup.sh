@@ -386,6 +386,11 @@ classify_targets() {
   position=0
   while IFS= read -r classification; do
     [ "$position" -lt "${#indices[@]}" ] || return 1
+    # 知らない値を「conflict ではない」として通さない。
+    case "$classification" in
+      missing|linked|managed-update|conflict) ;;
+      *) return 1 ;;
+    esac
     TARGET_CLASSIFICATIONS[${indices[$position]}]="$classification"
     position=$((position + 1))
   done <<< "$output"
