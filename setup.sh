@@ -417,6 +417,8 @@ read_current_snapshots() {
   [ "${#TARGET_DESTINATIONS[@]}" -gt 0 ] || return 0
   output="$(python3 "$STATE_TOOL" snapshot-paths -- "${TARGET_DESTINATIONS[@]}")" || return 1
   while IFS= read -r snapshot; do
+    # 空の出力も1行として数えられてしまうので、空のsnapshotは検査できなかったものとして扱う。
+    [ -n "$snapshot" ] || return 1
     CURRENT_SNAPSHOTS+=("$snapshot")
   done <<< "$output"
   # 件数が合わなければ、検査できなかった対象があるとして失敗させる。
