@@ -63,7 +63,7 @@ cleanup_staged_files() {
 trap cleanup_staged_files EXIT
 
 declare -a TARGET_HOSTS TARGET_SOURCES TARGET_DESTINATIONS TARGET_GENERATED
-declare -a TARGET_SNAPSHOTS
+declare -a TARGET_SNAPSHOTS TARGET_CLASSIFICATIONS CURRENT_SNAPSHOTS
 declare -a CONFLICT_HOSTS CONFLICT_SOURCES CONFLICT_DESTINATIONS
 declare -a CONFLICT_TARGET_INDICES
 
@@ -110,6 +110,8 @@ detect_legacy_skill_parents() {
 # 移行予定の親の配下は、移行後に「まだ存在しない」状態になる。事前検査ではそう扱う。
 is_pending_skill_child() {
   local parent candidate
+  # 移行予定が無い通常の実行では、対象ごとに dirname を起動しない（ADR 0030）
+  [ "${#PENDING_SKILL_PARENTS[@]}" -gt 0 ] || return 1
   parent="$(dirname "$1")"
   for candidate in ${PENDING_SKILL_PARENTS[@]+"${PENDING_SKILL_PARENTS[@]}"}; do
     [ "$candidate" != "$parent" ] || return 0
@@ -360,40 +362,40 @@ validate_sources() {
   fi
 }
 
-recorded_checksum() {
-  local host="$1" destination="$2"
-  python3 - "$STATE_TOOL" "$(state_path "$host")" "$destination" <<'PY'
-import importlib.util
-import sys
-
-tool, state_path, destination = sys.argv[1:]
-spec = importlib.util.spec_from_file_location("setup_state", tool)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-print(module.load_state(state_path)["generated"].get(destination, ""))
-PY
-}
-
-classify_target() {
-  local index="$1" source="${TARGET_SOURCES[$1]}" destination="${TARGET_DESTINATIONS[$1]}"
-  local recorded=""
-  if is_pending_skill_child "$destination"; then
-    printf 'missing\n'
-    return
-  fi
-  if [ "${TARGET_GENERATED[$index]}" = true ]; then
-    recorded="$(recorded_checksum "${TARGET_HOSTS[$index]}" "$destination")"
-  fi
-  python3 - "$STATE_TOOL" "$source" "$destination" "$recorded" "${TARGET_GENERATED[$index]}" <<'PY'
-import importlib.util
-import sys
-
-tool, source, destination, recorded, generated = sys.argv[1:]
-spec = importlib.util.spec_from_file_location("setup_state", tool)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-print(module.classify(source, destination, recorded or None, generated == "true"))
-PY
+# 全対象を1回のPython起動で分類し、TARGET_CLASSIFICATIONS に添字をそろえて入れる（ADR 0030）。
+# 移行予定の親の配下は、移行後に「まだ存在しない」状態になるので missing とする。
+classify_targets() {
+  local index position output classification state=""
+  local -a arguments=() indices=()
+  TARGET_CLASSIFICATIONS=()
+  for index in "${!TARGET_SOURCES[@]}"; do
+    if is_pending_skill_child "${TARGET_DESTINATIONS[$index]}"; then
+      TARGET_CLASSIFICATIONS[index]=missing
+      continue
+    fi
+    state=""
+    if [ "${TARGET_GENERATED[$index]}" = true ]; then
+      state="$(state_path "${TARGET_HOSTS[$index]}")"
+    fi
+    indices+=("$index")
+    arguments+=("${TARGET_GENERATED[$index]}" "$state" \
+      "${TARGET_SOURCES[$index]}" "${TARGET_DESTINATIONS[$index]}")
+  done
+  [ "${#indices[@]}" -gt 0 ] || return 0
+  output="$(python3 "$STATE_TOOL" classify-targets -- "${arguments[@]}")" || return 1
+  position=0
+  while IFS= read -r classification; do
+    [ "$position" -lt "${#indices[@]}" ] || return 1
+    # 知らない値を「conflict ではない」として通さない。
+    case "$classification" in
+      missing|linked|managed-update|conflict) ;;
+      *) return 1 ;;
+    esac
+    TARGET_CLASSIFICATIONS[${indices[$position]}]="$classification"
+    position=$((position + 1))
+  done <<< "$output"
+  # 件数が合わなければ、分類できなかった対象があるとして失敗させる。
+  [ "$position" -eq "${#indices[@]}" ]
 }
 
 current_kind() {
@@ -405,25 +407,29 @@ current_kind() {
 
 snapshot_target() {
   local index="$1"
-  python3 - "$STATE_TOOL" "${TARGET_DESTINATIONS[$index]}" <<'PY'
-import importlib.util
-import json
-import sys
+  python3 "$STATE_TOOL" snapshot-paths -- "${TARGET_DESTINATIONS[$index]}"
+}
 
-spec = importlib.util.spec_from_file_location("setup_state", sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-print(json.dumps(module.snapshot_path(sys.argv[2]), sort_keys=True, separators=(",", ":")))
-PY
+# 全対象の現在のsnapshotを1回のPython起動で取り、CURRENT_SNAPSHOTS に添字をそろえて入れる。
+read_current_snapshots() {
+  local output snapshot
+  CURRENT_SNAPSHOTS=()
+  [ "${#TARGET_DESTINATIONS[@]}" -gt 0 ] || return 0
+  output="$(python3 "$STATE_TOOL" snapshot-paths -- "${TARGET_DESTINATIONS[@]}")" || return 1
+  while IFS= read -r snapshot; do
+    # 空の出力も1行として数えられてしまうので、空のsnapshotは検査できなかったものとして扱う。
+    [ -n "$snapshot" ] || return 1
+    CURRENT_SNAPSHOTS+=("$snapshot")
+  done <<< "$output"
+  # 件数が合わなければ、検査できなかった対象があるとして失敗させる。
+  [ "${#CURRENT_SNAPSHOTS[@]}" -eq "${#TARGET_DESTINATIONS[@]}" ]
 }
 
 snapshot_targets() {
-  local index snapshot
   TARGET_SNAPSHOTS=()
-  for index in "${!TARGET_DESTINATIONS[@]}"; do
-    snapshot="$(snapshot_target "$index")" || return 1
-    TARGET_SNAPSHOTS+=("$snapshot")
-  done
+  read_current_snapshots || return 1
+  [ "${#CURRENT_SNAPSHOTS[@]}" -gt 0 ] || return 0
+  TARGET_SNAPSHOTS=("${CURRENT_SNAPSHOTS[@]}")
 }
 
 validate_target_snapshot() {
@@ -437,8 +443,12 @@ validate_target_snapshot() {
 
 validate_target_snapshots() {
   local index
+  read_current_snapshots || return 1
   for index in "${!TARGET_DESTINATIONS[@]}"; do
-    validate_target_snapshot "$index" || return 1
+    if [ "${CURRENT_SNAPSHOTS[$index]}" != "${TARGET_SNAPSHOTS[$index]}" ]; then
+      red "target changed after preflight: ${TARGET_DESTINATIONS[$index]}"
+      return 1
+    fi
   done
 }
 
@@ -460,49 +470,18 @@ validate_directory_path() {
   done
 }
 
+# 判定の中身は setup-state.py の link_topology_error にある。全リンク対象を1回で検査する。
 validate_link_target_topology() {
   local index
+  local -a arguments=()
   for index in "${!TARGET_SOURCES[@]}"; do
     [ "${TARGET_GENERATED[$index]}" = false ] || continue
     # 移行予定の配下は移行後の再検査で実物を検査する。今は旧親リンク経由でrepoへ解決される。
     ! is_pending_skill_child "${TARGET_DESTINATIONS[$index]}" || continue
-    python3 - "${TARGET_SOURCES[$index]}" "${TARGET_DESTINATIONS[$index]}" <<'PY' || return 1
-from pathlib import Path
-import sys
-
-source, destination = (Path(value) for value in sys.argv[1:])
-# 残るskills親symlinkは、旧形式と確定できず移行しなかったもの。
-if destination.parent.name == "skills" and destination.parent.is_symlink():
-    print(
-        f"skills parent symlink はrepo以外を指すか由来を確定できないため自動移行しない: {destination.parent}",
-        file=sys.stderr,
-    )
-    raise SystemExit(1)
-try:
-    source_resolved = source.resolve(strict=False)
-    destination_parent = destination.parent.resolve(strict=False)
-except (OSError, RuntimeError) as error:
-    print(
-        f"link path resolution failed: {destination}: {error}",
-        file=sys.stderr,
-    )
-    raise SystemExit(1)
-
-# 宛先の親がソース配下を指すと、ln -s がソース自身へ自己参照リンクを作る。
-candidate = destination_parent / destination.name
-if (
-    candidate == source_resolved
-    or candidate.is_relative_to(source_resolved)
-    or source_resolved.is_relative_to(candidate)
-):
-    print(
-        "link source and destination overlap after symlink resolution: "
-        f"source={source} destination={destination}",
-        file=sys.stderr,
-    )
-    raise SystemExit(1)
-PY
+    arguments+=("${TARGET_SOURCES[$index]}" "${TARGET_DESTINATIONS[$index]}")
   done
+  [ "${#arguments[@]}" -gt 0 ] || return 0
+  python3 "$STATE_TOOL" check-link-topology -- "${arguments[@]}" || return 1
 }
 
 validate_state_path() {
@@ -569,10 +548,10 @@ preflight() {
   CONFLICT_SOURCES=()
   CONFLICT_DESTINATIONS=()
   CONFLICT_TARGET_INDICES=()
-  local index classification
+  local index
+  classify_targets || return 2
   for index in "${!TARGET_SOURCES[@]}"; do
-    classification="$(classify_target "$index")" || return 2
-    if [ "$classification" = conflict ]; then
+    if [ "${TARGET_CLASSIFICATIONS[$index]}" = conflict ]; then
       CONFLICT_HOSTS+=("${TARGET_HOSTS[$index]}")
       CONFLICT_SOURCES+=("${TARGET_SOURCES[$index]}")
       CONFLICT_DESTINATIONS+=("${TARGET_DESTINATIONS[$index]}")
@@ -648,33 +627,6 @@ PY
     TARGET_SNAPSHOTS[target_index]='{"kind":"missing"}'
     green "backup: $destination -> $backup"
   done
-}
-
-link_target() {
-  local index="$1" source="$2" destination="$3"
-  validate_target_snapshot "$index" || return 1
-  mkdir -p "$(dirname "$destination")" || return 1
-  if [ -L "$destination" ]; then
-    if [ "$(python3 - "$STATE_TOOL" "$source" "$destination" <<'PY'
-import importlib.util
-import sys
-
-spec = importlib.util.spec_from_file_location("setup_state", sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-print(module.classify(sys.argv[2], sys.argv[3], None))
-PY
-)" = linked ]; then
-      return
-    fi
-    red "target changed before link apply: $destination"
-    return 1
-  fi
-  if [ -e "$destination" ]; then
-    red "target changed before link apply: $destination"
-    return 1
-  fi
-  ln -s "$source" "$destination" || return 1
 }
 
 prepare_claude_files() {
@@ -796,12 +748,19 @@ print_claude_path_guidance() {
   esac
 }
 
+# リンクの適用は setup-state.py の apply_links が1回の起動で行う。対象ごとに
+# snapshot再検査 → mkdir -p → 既存確認 → ln -s の順で進め、最初の失敗で止まる（ADR 0030）。
 apply_targets() {
-  local index host state_file
+  local index
+  local -a arguments=()
   for index in "${!TARGET_SOURCES[@]}"; do
     [ "${TARGET_GENERATED[$index]}" = false ] || continue
-    link_target "$index" "${TARGET_SOURCES[$index]}" "${TARGET_DESTINATIONS[$index]}"
+    arguments+=("${TARGET_SOURCES[$index]}" "${TARGET_DESTINATIONS[$index]}" \
+      "${TARGET_SNAPSHOTS[$index]}")
   done
+  if [ "${#arguments[@]}" -gt 0 ]; then
+    python3 "$STATE_TOOL" apply-links -- "${arguments[@]}" || return 1
+  fi
   if selected_claude; then
     commit_claude_files \
       "$(state_path claude)" \
