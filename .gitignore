@@ -49,6 +49,7 @@ docs/blog/
 # 代償として自動承認の設定はマシン間で同期されない。新しいマシンでは承認をやり直す。
 rules/*.rules
 
-# claude.ai から同期されたスキル（anthropic-skills:*）。~/.claude/skills がこのリポジトリの
-# skills/ を指しているため、Claude Code がここへ書き込む。配布元の生成物なので追跡しない。
+# claude.ai から同期されたスキル（anthropic-skills:*）。配布元の生成物なので追跡しない。
+# ~/.claude/skills と ~/.agents/skills は実ディレクトリで、skillごとにリンクしているため、
+# どの経路でここへ書き込まれたかは未特定（2026-10-08 19:14 に作成されていた）。
 skills/synced/
