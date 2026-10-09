@@ -814,6 +814,42 @@ class StateFileTests(HookCase):
                 self.assertEqual(len(state), len(page_ids))
 
 
+class PrFailClosedTests(HookCase):
+    """PR作成と分かった後に検査できなかったときは、エラーで通さず止める（終了コード1は止めたことにならない）。"""
+
+    def pr_payload(self, **overrides):
+        return {"session_id": "s1", "cwd": str(self.repo), "tool_name": "Bash",
+                "tool_input": {"command": "gh pr create --fill", "description": "d"}, **overrides}
+
+    def assert_denied(self, result):
+        code, output, _ = result
+        self.assertEqual(code, 0)
+        self.assertEqual(decision_of(result), "deny")
+        self.assertIn("確かめられなかった", output["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_missing_guard_stops_pr_create(self):
+        # guard-dangerous-bash.py を読み込めない配置を、フックだけを別の置き場へ写して作る
+        hooks = self.base / "hooks-without-guard"
+        hooks.mkdir()
+        for name in ("jp-doc-review.py", "hook_support.py"):
+            shutil.copy(HOOK.parent / name, hooks / name)
+        result = subprocess.run([sys.executable, str(hooks / "jp-doc-review.py"), "pre-tool-use-bash"],
+                                input=json.dumps(self.pr_payload()), capture_output=True, text=True,
+                                env=self.hook_env())
+        output = json.loads(result.stdout) if result.stdout.strip() else {}
+        self.assert_denied((result.returncode, output, result.stderr))
+
+    def test_missing_cwd_stops_pr_create(self):
+        payload = self.pr_payload()
+        del payload["cwd"]
+        self.assert_denied(self.run_hook("pre-tool-use-bash", payload))
+
+    def test_other_bash_with_missing_cwd_is_not_blocked(self):
+        payload = self.pr_payload(tool_input={"command": "ls", "description": "d"})
+        del payload["cwd"]
+        self.assertEqual(self.run_hook("pre-tool-use-bash", payload), (0, {}, ""))
+
+
 class ErrorTests(HookCase):
     def test_invalid_json_fails_loudly_without_blocking(self):
         code, output, stderr = self.run_hook("pre-tool-use-bash", None, raw="{broken")
