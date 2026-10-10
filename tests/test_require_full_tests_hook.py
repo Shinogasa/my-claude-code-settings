@@ -59,10 +59,10 @@ def run_all_without_uv(repository: Path, base: Path) -> subprocess.CompletedProc
                           capture_output=True, env=env, check=False)
 
 
-def run_hook(command: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+def run_hook(command: str, cwd: Path, env=None) -> subprocess.CompletedProcess[str]:
     payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd)}
     return subprocess.run(["python3", str(HOOK)], input=json.dumps(payload), text=True,
-                          capture_output=True, check=False)
+                          capture_output=True, check=False, env={**os.environ, **(env or {})})
 
 
 def decision(result: subprocess.CompletedProcess[str]):
@@ -170,6 +170,20 @@ class RequireFullTestsHookTests(unittest.TestCase):
         other = make_repository(self.base / "other", with_run_script=False)
         result = run_hook('cd "$HOME/somewhere" && gh pr create --fill', other)
         self.assertEqual(decision(result), "deny", result.stdout + result.stderr)
+
+    def test_pr_creation_through_rtk_is_checked(self):
+        # rtk hook claude はコマンドを rtk gh ... へ書き換える。書き換え後を受け取っても判定する
+        repository = make_repository(self.base)
+        result = run_hook("rtk gh pr create --fill", repository)
+        self.assertEqual(decision(result), "deny", result.stdout + result.stderr)
+
+    def test_exhausted_time_budget_is_denied(self):
+        # settings.json の timeout で打ち切られると、Claude Code は通してしまう。先に自分で止める
+        repository = make_repository(self.base)
+        stamp_path(repository).write_text(head(repository) + "\n", encoding="utf-8")
+        result = run_hook("gh pr create --fill", repository, env={"REQUIRE_FULL_TESTS_TIME_BUDGET": "0"})
+        self.assertEqual(decision(result), "deny", result.stdout + result.stderr)
+        self.assertIn("時間予算", result.stdout)
 
     def test_unreadable_head_is_denied_instead_of_passed(self):
         # 検査できなかったことを「問題なし」に畳まない

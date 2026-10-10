@@ -71,6 +71,7 @@ class HookCase(unittest.TestCase):
             [sys.executable, str(HOOK), event],
             input=raw if raw is not None else json.dumps(payload, ensure_ascii=False),
             capture_output=True, text=True, env=self.hook_env(), preexec_fn=lambda: os.umask(0o022),
+            timeout=30,  # ロック待ちなどでフックが戻らないとき、テスト全体を止めずに失敗させる
         )
         output = json.loads(result.stdout) if result.stdout.strip() else {}
         return result.returncode, output, result.stderr
@@ -320,6 +321,40 @@ class PrReviewTests(HookCase):
         result = self.pr(f"cd {self.git_repo} ; gh pr create --fill", cwd=str(other))
         self.assertEqual(decision_of(result), "deny")
         self.assertIn(str(self.git_repo), self.reason(result))
+
+    def test_pr_create_through_rtk_is_detected(self):
+        # rtk hook claude はコマンドを rtk gh ... へ書き換える。書き換え後を受け取っても判定する
+        path = self.commit_file("docs/a.md", JP_LONG)
+        other = self.make_git_repo("other")
+        for index, (command, cwd) in enumerate((("rtk gh pr create --fill", self.git_repo),
+                                                (f"cd {self.git_repo} && rtk gh pr create --fill", other))):
+            with self.subTest(command=command):
+                result = self.pr(command, session=f"s{index}", cwd=str(cwd))
+                self.assertEqual(decision_of(result), "deny")
+                self.assertIn(str(path), self.reason(result))
+
+    def test_exhausted_time_budget_stops_every_time(self):
+        # settings.json の timeout で打ち切られると、Claude Code は通してしまう。先に自分で止める
+        self.commit_file("docs/a.md", JP_LONG)
+        self.env_overrides["JP_DOC_REVIEW_TIME_BUDGET"] = "0"
+        for _ in range(2):
+            result = self.pr()
+            self.assertEqual(decision_of(result), "deny")
+            self.assertIn("時間予算", self.reason(result))
+
+    def test_waiting_for_the_lock_counts_against_time_budget(self):
+        import fcntl
+        self.commit_file("docs/a.md", JP_LONG)
+        self.env_overrides["JP_DOC_REVIEW_TIME_BUDGET"] = "1"
+        self.state.mkdir(mode=0o700, parents=True)
+        with open(self.state / "s1.lock", "w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            started = time.monotonic()
+            result = self.pr()
+            elapsed = time.monotonic() - started
+        self.assertEqual(decision_of(result), "deny")
+        self.assertIn("ロック", self.reason(result))
+        self.assertLess(elapsed, 5)
 
     def diff_file_in(self, reason):
         match = re.search(r"(/\S+\.diff)", reason)
