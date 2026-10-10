@@ -8,6 +8,7 @@ docs/research/2026-10-02-claude-code-hook-payloads.md に記録している。
 """
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -319,6 +320,38 @@ class PrReviewTests(HookCase):
         result = self.pr(f"cd {self.git_repo} ; gh pr create --fill", cwd=str(other))
         self.assertEqual(decision_of(result), "deny")
         self.assertIn(str(self.git_repo), self.reason(result))
+
+    def diff_file_in(self, reason):
+        match = re.search(r"(/\S+\.diff)", reason)
+        self.assertIsNotNone(match, reason)
+        return Path(match.group(1))
+
+    def test_deny_reason_points_to_diff_file_of_branch_changes(self):
+        # レビュワーのBashはリンターだけなので、git diff を自分で実行できない。差分はファイルで渡す
+        self.commit_file("docs/a.md", JP_LONG)
+        reason = self.reason(self.pr())
+        diff = self.diff_file_in(reason)
+        self.assertNotIn("git diff", reason)
+        self.assertTrue(diff.is_file())
+        self.assertIn(self.state, diff.parents)
+        self.assertEqual(stat.S_IMODE(diff.stat().st_mode), 0o600)
+        text = diff.read_text(encoding="utf-8")
+        self.assertIn("docs/a.md", text)
+        self.assertIn("+" + JP_LONG[:20], text)
+
+    def test_reviewer_can_read_but_not_edit_diff_file(self):
+        doc = self.commit_file("docs/a.md", JP_LONG)
+        diff = self.diff_file_in(self.reason(self.pr()))
+        agent = {"session_id": "s1", "cwd": str(self.git_repo), "tool_name": "Agent",
+                 "tool_input": {"subagent_type": "jp-doc-reviewer", "description": "d",
+                                "prompt": f"次を直して。\n- {doc}\n差分: {diff}"}}
+        self.assertEqual(self.run_hook("pre-tool-use-agent", agent), (0, {}, ""))
+        for path, expected in ((doc, None), (diff, "deny")):
+            with self.subTest(path=path):
+                edit = {"session_id": "s1", "tool_name": "Edit", "agent_type": "jp-doc-reviewer",
+                        "cwd": str(self.git_repo),
+                        "tool_input": {"file_path": str(path), "old_string": "a", "new_string": "b"}}
+                self.assertEqual(decision_of(self.run_hook("pre-tool-use-reviewer-edit", edit)), expected)
 
     def test_subagent_pr_create_passes_with_message(self):
         self.commit_file("docs/a.md", JP_LONG)
