@@ -1,5 +1,5 @@
 ---
-adr: 31
+adr: 32
 date: 2026-10-09
 status: accepted
 ---

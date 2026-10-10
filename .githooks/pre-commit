@@ -18,15 +18,42 @@ fork ネットワーク・既存クローン・コード検索インデックス
 バイパスは `git commit --no-verify`。意図的に行う分には構わないが、常用すると
 このフックは存在しないのと同じになる。
 """
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 HOOK_DIR = Path(__file__).resolve().parent
 COMMON_PATTERNS = HOOK_DIR / "patterns-common.txt"
 LOCAL_PATTERNS = HOOK_DIR / "patterns-local.txt"
 LOCAL_EXAMPLE = HOOK_DIR / "patterns-local.txt.example"
+
+
+def find_local_patterns(hook_dir: Path = HOOK_DIR) -> Optional[Path]:
+    """固有名詞の禁止パターンの定義を探す。
+
+    worktree には gitignore されたファイルが持ち込まれないので、自分の階層に無ければ
+    本体の作業ツリーの定義を使う（ADR 0031）。見つからなければ None を返し、呼び出し側で止める。
+    """
+    own = hook_dir / LOCAL_PATTERNS.name
+    if own.exists():
+        return own
+    # フックの実行中は GIT_DIR などが渡ってくる。外して、hook_dir から解決し直す
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(hook_dir), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, check=True, env=env,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    common_dir = result.stdout.strip()
+    if not common_dir:
+        return None
+    candidate = Path(common_dir).parent / ".githooks" / LOCAL_PATTERNS.name
+    return candidate if candidate.exists() else None
 
 # パターン定義ファイル自身は検査対象外。正規表現の字面が自己マッチしうるため。
 EXCLUDED_PREFIXES = (".githooks/patterns-",)
@@ -115,16 +142,18 @@ def main():
 
     # 欠損時は fail closed。黙って通すと「検査したつもり」で漏洩が素通りする
     # ＝ 気付けない故障になるため、必ず止めて復旧手順を出す。
-    if not LOCAL_PATTERNS.exists():
+    local_path = find_local_patterns()
+    if local_path is None:
         print(red(f"ブロック: {LOCAL_PATTERNS.name} がありません。"), file=sys.stderr)
         print("  固有名詞の禁止パターンが未設定のため検査を実行できません。", file=sys.stderr)
-        print("  次を実行して初期化してください:", file=sys.stderr)
-        print(f"    cp {LOCAL_EXAMPLE.name} {LOCAL_PATTERNS.name}  # .githooks/ 配下", file=sys.stderr)
-        print("    (または bash setup.sh)", file=sys.stderr)
+        print("  本体の作業ツリーの .githooks/ で次を実行して初期化してください", file=sys.stderr)
+        print("  （worktreeでは、本体の定義を読みます）:", file=sys.stderr)
+        print(f"    cp {LOCAL_EXAMPLE.name} {LOCAL_PATTERNS.name}", file=sys.stderr)
+        print("    (または本体で bash setup.sh)", file=sys.stderr)
         return 1
 
     common = load_patterns(COMMON_PATTERNS)
-    local = load_patterns(LOCAL_PATTERNS)
+    local = load_patterns(local_path)
 
     # 有効なローカルパターンが0件でも止めはしないが、黙認もしない。
     # 「設定したつもりで空」は検査をすり抜ける典型なので必ず可視化する。
