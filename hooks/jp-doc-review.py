@@ -72,6 +72,11 @@ def drafts_dir() -> Path:
     return state_dir() / "drafts"
 
 
+def diffs_dir() -> Path:
+    """PR作成時の差分の置き場。レビュワーは読むだけで、Editはできない（_protected_paths）。"""
+    return state_dir() / "diffs"
+
+
 def yomiyasu_skill() -> Path:
     override = os.environ.get("JP_DOC_REVIEW_YOMIYASU_SKILL")
     return Path(override) if override else Path.home() / ".claude" / "skills" / "yomiyasu" / "SKILL.md"
@@ -233,7 +238,7 @@ def cleanup_old_state() -> None:
     except FileNotFoundError:
         pass
     limit = now - STATE_RETENTION_DAYS * 86400
-    for directory in (state_dir(), drafts_dir()):
+    for directory in (state_dir(), drafts_dir(), diffs_dir()):
         if not directory.is_dir():
             continue
         for entry in directory.iterdir():
@@ -431,7 +436,17 @@ def pr_candidates(root: Path, base_ref: str) -> Tuple[List[str], List[str], int]
     return authored, others, unsafe
 
 
-def _pr_reason(base_ref: str, authored: List[str], others: List[str]) -> str:
+def _write_pr_diff(key: str, root: Path, base_ref: str, paths: List[str]) -> Path:
+    """候補のファイルについて、ブランチで変わった差分を書き出す。レビュワーのBashは git diff を実行できない。"""
+    merge_base = _git(root, "merge-base", base_ref, "HEAD").strip()
+    diff = _git(root, "diff", "--no-color", merge_base, "HEAD", "--", *paths)
+    digest = hashlib.sha256(f"{root}\0{base_ref}".encode("utf-8")).hexdigest()
+    path = diffs_dir() / f"{key}-{digest[:12]}.diff"
+    _write_private(path, diff)
+    return path
+
+
+def _pr_reason(base_ref: str, authored: List[str], others: List[str], diff: Path) -> str:
     lines = ["日本語の文書を含むPRを作る前に、レビューが要る。このPRはまだ作っていない。"]
     if authored:
         lines += [f"Agentツールで、subagent_typeを{REVIEWER_AGENT}にしたサブエージェントを1回起動し、次のファイルを渡して。",
@@ -442,7 +457,8 @@ def _pr_reason(base_ref: str, authored: List[str], others: List[str]) -> str:
                   *(f"- {path}" for path in others)]
     lines += [
         "依頼文には、対象のパスを絶対パスでそのまま書く。書かれていないファイルは、レビュワーが直せない。",
-        f"レビュワーには、ブランチで変わった行（git diff {base_ref}...HEAD -- <ファイル>）だけを直させること。",
+        f"{base_ref} から変わった行の差分を、{diff} に書き出した。依頼文にはこのパスも書き、",
+        "レビュワーには、この差分で足された行だけを直させること。差分のファイルは読むだけで、レビュワーは直せない。",
         "直したらコミットしてpushし、もう一度 gh pr create を実行して。2回目は止めない。",
         "レビュワーの報告を受けたら、変えた点と書き手に確かめたい点をユーザーに伝えて。",
     ]
@@ -567,11 +583,12 @@ def _handle_pr_create(key: str, payload: dict, root: Path, command: str) -> None
         emit({"systemMessage": f"サブエージェントは{REVIEWER_AGENT}を起動できないので、このPR作成は止めない。"
                                f"次の日本語の文書は、レビューしないままPRになる: {names}"})
         return
+    diff = _write_pr_diff(key, root, base_ref, candidates)
     write_json(_pr_state_path(key), {**state, state_id: {"paths": candidates, "transcript_offset": _transcript_size(payload)}})
     emit(with_messages({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
-        "permissionDecisionReason": _pr_reason(base or base_ref, authored, others),
+        "permissionDecisionReason": _pr_reason(base or base_ref, authored, others, diff),
     }}, messages))
 
 
@@ -764,7 +781,7 @@ def _read_allowed(key: str) -> Optional[List[str]]:
 
 def _protected_paths() -> List[str]:
     """レビュワーのEditで書き換えさせないものの実体。制限の仕組みそのもの。許可リストに入っていても守る。"""
-    paths = [yomiyasu_skill().parent, Path(__file__).resolve().parent, reviewer_definition(),
+    paths = [yomiyasu_skill().parent, Path(__file__).resolve().parent, reviewer_definition(), diffs_dir(),
              *(claude_home() / name for name in PROTECTED_CLAUDE_HOME_FILES)]
     return [os.path.realpath(path) for path in paths]
 
