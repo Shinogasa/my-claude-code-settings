@@ -55,12 +55,35 @@ UNSAFE_ID_CHARS = re.compile(r"[^A-Za-z0-9_-]")
 # PR作成の判定に使う。区切りの文字だけでできた語を、コマンドの区切りとみなす
 SEPARATOR_CHARS = ";&|()<>\n"
 ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-COMMAND_PREFIXES = {"command", "builtin", "exec", "env", "time", "nohup", "noglob"}
+COMMAND_PREFIXES = {"command", "builtin", "exec", "env", "time", "nohup", "noglob", "rtk"}  # rtk hook claude が rtk を前に付ける
 PR_CREATE_WORDS = ["gh", "pr", "create"]
 SHELLS = {"bash", "sh", "zsh"}
 CLAUDE_TRAILER = re.compile(r"^Co-Authored-By:\s*Claude\b", re.IGNORECASE | re.MULTILINE)
 GIT_TIMEOUT_SECONDS = 10
+TIME_BUDGET_SECONDS = 20  # settings.json の timeout（30秒）より先に、自分で止める。打ち切られたフックは止めたことにならない
+LOCK_POLL_SECONDS = 0.05
+STARTED = time.monotonic()
+_deadline: Optional[float] = None  # PR作成の検査中だけ決める。ほかのイベントは従来どおり待つ
 CONTROL_CHAR = re.compile(r"[\x00-\x1f\x7f]")
+
+
+class BudgetError(Exception):
+    """時間予算を使い切った。GitErrorと分け、1回だけ止めて2回目は通す扱いにしない。"""
+
+
+def time_budget() -> float:
+    override = os.environ.get("JP_DOC_REVIEW_TIME_BUDGET")
+    return float(override) if override is not None else TIME_BUDGET_SECONDS
+
+
+def _remaining(step: str) -> Optional[float]:
+    """時間予算の残り（秒）。予算を決めていなければ None。使い切っていれば BudgetError。"""
+    if _deadline is None:
+        return None
+    remaining = _deadline - time.monotonic()
+    if remaining <= 0:
+        raise BudgetError(f"時間予算（{time_budget():g}秒）を、{step}で使い切った")
+    return remaining
 
 
 def state_dir() -> Path:
@@ -182,11 +205,24 @@ def session_lock(key: str) -> Iterator[None]:
     lock_path = state_dir() / f"{key}.lock"
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        _acquire(fd)
         os.utime(lock_path)  # 使っているロックを、古い状態の掃除で消さないようにする
         yield
     finally:
         os.close(fd)
+
+
+def _acquire(fd: int) -> None:
+    """ロックを取る。時間予算があるときは、待つ時間も予算から払う。"""
+    if _deadline is None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            time.sleep(min(LOCK_POLL_SECONDS, _remaining("ロックの待ち")))
 
 
 def _write_private(path: Path, text: str) -> None:
@@ -277,9 +313,14 @@ class GitError(Exception):
 
 
 def _git(root: Path, *args: str) -> str:
+    step = f"git {args[0]}"
+    remaining = _remaining(step)
+    timeout = GIT_TIMEOUT_SECONDS if remaining is None else min(GIT_TIMEOUT_SECONDS, remaining)
     try:
-        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
-                                timeout=GIT_TIMEOUT_SECONDS)
+        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        _remaining(step)  # 予算の側で切れたなら BudgetError にする
+        raise GitError(f"git {' '.join(args)}: {type(error).__name__}") from error
     except (OSError, subprocess.SubprocessError) as error:
         raise GitError(f"git {' '.join(args)}: {type(error).__name__}") from error
     if result.returncode != 0:
@@ -345,6 +386,8 @@ def _pr_create_dirs(command: str, start: Set[Optional[str]], depth: int) -> Set[
             candidates = set(seen)
         candidates = g.apply_directory_change(previous_op, words, next_op, candidates, cdpath_possible)
         seen |= candidates
+        if words[:1] == ["rtk"]:
+            words = words[1:]  # rtk hook claude が書き換えた形
         if words[:3] == PR_CREATE_WORDS:
             dirs |= candidates
         elif depth == 0 and words and Path(words[0]).name in SHELLS and "-c" in words[1:-1]:
@@ -488,6 +531,8 @@ def handle_pre_tool_use_bash(payload: dict) -> None:
         raise ValueError("Bashの入力にcommand（文字列）が無い")
     if not is_pr_create(command):
         return
+    global _deadline
+    _deadline = STARTED + time_budget()
     try:
         _check_pr_create(payload, command)
     except Exception as error:  # PR作成と分かった後の失敗は、終了コード1で通さず止める側に倒す

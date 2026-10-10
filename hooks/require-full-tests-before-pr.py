@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +28,8 @@ RUN_SCRIPT = Path("tests") / "run.sh"
 MARKER = "TESTS_ALL_PASSED_STAMP"
 STAMP_NAME = "tests-all-passed"
 GIT_TIMEOUT_SECONDS = 5
+TIME_BUDGET_SECONDS = 20  # settings.json の timeout（30秒）より先に、自分で止める。打ち切られたフックは止めたことにならない
+STARTED = time.monotonic()
 RUN_ALL = "bash tests/run.sh --all"
 
 
@@ -44,10 +47,21 @@ class CheckError(Exception):
     """記録とHEADを照らし合わせられなかったことを表す。"""
 
 
+def _remaining() -> float:
+    budget = float(os.environ.get("REQUIRE_FULL_TESTS_TIME_BUDGET", TIME_BUDGET_SECONDS))
+    remaining = STARTED + budget - time.monotonic()
+    if remaining <= 0:
+        raise CheckError(f"時間予算（{budget:g}秒）を使い切った")
+    return remaining
+
+
 def _git(cwd: Path, *args: str) -> str:
     try:
         result = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True,
-                                timeout=GIT_TIMEOUT_SECONDS)
+                                timeout=min(GIT_TIMEOUT_SECONDS, _remaining()))
+    except subprocess.TimeoutExpired as error:
+        _remaining()  # 予算の側で切れたなら、そう伝える
+        raise CheckError(f"git {' '.join(args)}: {type(error).__name__}") from error
     except (OSError, subprocess.SubprocessError) as error:
         raise CheckError(f"git {' '.join(args)}: {type(error).__name__}") from error
     if result.returncode != 0:
