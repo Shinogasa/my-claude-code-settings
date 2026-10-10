@@ -8,6 +8,7 @@ docs/research/2026-10-02-claude-code-hook-payloads.md に記録している。
 """
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -70,6 +71,7 @@ class HookCase(unittest.TestCase):
             [sys.executable, str(HOOK), event],
             input=raw if raw is not None else json.dumps(payload, ensure_ascii=False),
             capture_output=True, text=True, env=self.hook_env(), preexec_fn=lambda: os.umask(0o022),
+            timeout=30,  # ロック待ちなどでフックが戻らないとき、テスト全体を止めずに失敗させる
         )
         output = json.loads(result.stdout) if result.stdout.strip() else {}
         return result.returncode, output, result.stderr
@@ -269,6 +271,122 @@ class PrReviewTests(HookCase):
     def test_wrapped_pr_create_is_detected(self):
         self.commit_file("docs/a.md", JP_LONG)
         self.assertEqual(decision_of(self.pr('bash -c "gh pr create --fill"')), "deny")
+
+    def make_git_repo(self, name):
+        """日本語の文書を含まない、別の実リポジトリ（mainだけ）を作る。"""
+        root = self.base / name
+        root.mkdir()
+        for args in (("init", "-q", "-b", "main"), ("config", "user.email", "t@example.invalid"),
+                     ("config", "user.name", "t"), ("commit", "-q", "--allow-empty", "-m", "x")):
+            subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True,
+                           env={**os.environ, **GIT_ISOLATION})
+        return root
+
+    def test_pr_create_after_cd_reviews_the_target_repository(self):
+        # cwdのリポジトリではなく、cd の移動先でPRを作る（2026-10-08、PR作成時に止まらなかった）
+        path = self.commit_file("docs/a.md", JP_LONG)
+        other = self.make_git_repo("other")
+        for index, command in enumerate((f"cd {self.git_repo} && gh pr create --fill",
+                                         "cd ../git-repo && git push && gh pr create --fill")):
+            with self.subTest(command=command):
+                result = self.pr(command, session=f"s{index}", cwd=str(other))
+                self.assertEqual(decision_of(result), "deny")
+                self.assertIn(str(path), self.reason(result))
+
+    def test_pr_create_after_cd_to_another_repository_does_not_review_cwd(self):
+        self.commit_file("docs/a.md", JP_LONG)
+        other = self.make_git_repo("other")
+        self.assertEqual(self.pr(f"cd {other} && gh pr create --fill"), (0, {}, ""))
+
+    def test_wrapped_pr_create_after_cd_reviews_the_target_repository(self):
+        self.commit_file("docs/a.md", JP_LONG)
+        other = self.make_git_repo("other")
+        result = self.pr(f"bash -c 'cd {self.git_repo} && gh pr create --fill'", cwd=str(other))
+        self.assertEqual(decision_of(result), "deny")
+
+    def test_unresolved_cd_before_pr_create_stops_every_time(self):
+        # 移動先を文字列から決められないときは、検査できなかったとして止め、cd の書き直しを求める
+        other = self.make_git_repo("other")
+        for command in ('cd "$TARGET" && gh pr create --fill', "cd - && gh pr create --fill"):
+            with self.subTest(command=command):
+                for _ in range(2):
+                    result = self.pr(command, cwd=str(other))
+                    self.assertEqual(decision_of(result), "deny")
+                    self.assertIn("cd", self.reason(result))
+
+    def test_pr_create_in_one_of_several_repositories_stops(self):
+        # cd が失敗しても後ろが走る形では、PRを作るリポジトリを1つに決められない
+        self.commit_file("docs/a.md", JP_LONG)
+        other = self.make_git_repo("other")
+        result = self.pr(f"cd {self.git_repo} ; gh pr create --fill", cwd=str(other))
+        self.assertEqual(decision_of(result), "deny")
+        self.assertIn(str(self.git_repo), self.reason(result))
+
+    def test_pr_create_through_rtk_is_detected(self):
+        # rtk hook claude はコマンドを rtk gh ... へ書き換える。書き換え後を受け取っても判定する
+        path = self.commit_file("docs/a.md", JP_LONG)
+        other = self.make_git_repo("other")
+        for index, (command, cwd) in enumerate((("rtk gh pr create --fill", self.git_repo),
+                                                (f"cd {self.git_repo} && rtk gh pr create --fill", other))):
+            with self.subTest(command=command):
+                result = self.pr(command, session=f"s{index}", cwd=str(cwd))
+                self.assertEqual(decision_of(result), "deny")
+                self.assertIn(str(path), self.reason(result))
+
+    def test_exhausted_time_budget_stops_every_time(self):
+        # settings.json の timeout で打ち切られると、Claude Code は通してしまう。先に自分で止める
+        self.commit_file("docs/a.md", JP_LONG)
+        self.env_overrides["JP_DOC_REVIEW_TIME_BUDGET"] = "0"
+        for _ in range(2):
+            result = self.pr()
+            self.assertEqual(decision_of(result), "deny")
+            self.assertIn("時間予算", self.reason(result))
+
+    def test_waiting_for_the_lock_counts_against_time_budget(self):
+        import fcntl
+        self.commit_file("docs/a.md", JP_LONG)
+        self.env_overrides["JP_DOC_REVIEW_TIME_BUDGET"] = "1"
+        self.state.mkdir(mode=0o700, parents=True)
+        with open(self.state / "s1.lock", "w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            started = time.monotonic()
+            result = self.pr()
+            elapsed = time.monotonic() - started
+        self.assertEqual(decision_of(result), "deny")
+        self.assertIn("ロック", self.reason(result))
+        self.assertLess(elapsed, 5)
+
+    def diff_file_in(self, reason):
+        match = re.search(r"(/\S+\.diff)", reason)
+        self.assertIsNotNone(match, reason)
+        return Path(match.group(1))
+
+    def test_deny_reason_points_to_diff_file_of_branch_changes(self):
+        # レビュワーのBashはリンターだけなので、git diff を自分で実行できない。差分はファイルで渡す
+        self.commit_file("docs/a.md", JP_LONG)
+        reason = self.reason(self.pr())
+        diff = self.diff_file_in(reason)
+        self.assertNotIn("git diff", reason)
+        self.assertTrue(diff.is_file())
+        self.assertIn(self.state, diff.parents)
+        self.assertEqual(stat.S_IMODE(diff.stat().st_mode), 0o600)
+        text = diff.read_text(encoding="utf-8")
+        self.assertIn("docs/a.md", text)
+        self.assertIn("+" + JP_LONG[:20], text)
+
+    def test_reviewer_can_read_but_not_edit_diff_file(self):
+        doc = self.commit_file("docs/a.md", JP_LONG)
+        diff = self.diff_file_in(self.reason(self.pr()))
+        agent = {"session_id": "s1", "cwd": str(self.git_repo), "tool_name": "Agent",
+                 "tool_input": {"subagent_type": "jp-doc-reviewer", "description": "d",
+                                "prompt": f"次を直して。\n- {doc}\n差分: {diff}"}}
+        self.assertEqual(self.run_hook("pre-tool-use-agent", agent), (0, {}, ""))
+        for path, expected in ((doc, None), (diff, "deny")):
+            with self.subTest(path=path):
+                edit = {"session_id": "s1", "tool_name": "Edit", "agent_type": "jp-doc-reviewer",
+                        "cwd": str(self.git_repo),
+                        "tool_input": {"file_path": str(path), "old_string": "a", "new_string": "b"}}
+                self.assertEqual(decision_of(self.run_hook("pre-tool-use-reviewer-edit", edit)), expected)
 
     def test_subagent_pr_create_passes_with_message(self):
         self.commit_file("docs/a.md", JP_LONG)
@@ -762,6 +880,42 @@ class StateFileTests(HookCase):
                     self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
                 state = json.loads((self.state / "s1.confluence.json").read_text(encoding="utf-8"))
                 self.assertEqual(len(state), len(page_ids))
+
+
+class PrFailClosedTests(HookCase):
+    """PR作成と分かった後に検査できなかったときは、エラーで通さず止める（終了コード1は止めたことにならない）。"""
+
+    def pr_payload(self, **overrides):
+        return {"session_id": "s1", "cwd": str(self.repo), "tool_name": "Bash",
+                "tool_input": {"command": "gh pr create --fill", "description": "d"}, **overrides}
+
+    def assert_denied(self, result):
+        code, output, _ = result
+        self.assertEqual(code, 0)
+        self.assertEqual(decision_of(result), "deny")
+        self.assertIn("確かめられなかった", output["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_missing_guard_stops_pr_create(self):
+        # guard-dangerous-bash.py を読み込めない配置を、フックだけを別の置き場へ写して作る
+        hooks = self.base / "hooks-without-guard"
+        hooks.mkdir()
+        for name in ("jp-doc-review.py", "hook_support.py"):
+            shutil.copy(HOOK.parent / name, hooks / name)
+        result = subprocess.run([sys.executable, str(hooks / "jp-doc-review.py"), "pre-tool-use-bash"],
+                                input=json.dumps(self.pr_payload()), capture_output=True, text=True,
+                                env=self.hook_env())
+        output = json.loads(result.stdout) if result.stdout.strip() else {}
+        self.assert_denied((result.returncode, output, result.stderr))
+
+    def test_missing_cwd_stops_pr_create(self):
+        payload = self.pr_payload()
+        del payload["cwd"]
+        self.assert_denied(self.run_hook("pre-tool-use-bash", payload))
+
+    def test_other_bash_with_missing_cwd_is_not_blocked(self):
+        payload = self.pr_payload(tool_input={"command": "ls", "description": "d"})
+        del payload["cwd"]
+        self.assertEqual(self.run_hook("pre-tool-use-bash", payload), (0, {}, ""))
 
 
 class ErrorTests(HookCase):

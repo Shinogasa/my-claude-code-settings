@@ -6,7 +6,9 @@
 判断の経緯: docs/adr/0024-jp-doc-review-hook.md
 """
 import fcntl
+import functools
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -17,10 +19,20 @@ import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Set, Tuple
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+HOOK_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(HOOK_DIR))
 from hook_support import TranscriptError, emit, read_entries, tool_uses, with_messages  # noqa: E402
+
+
+@functools.lru_cache(maxsize=None)
+def guard():
+    """guard-dangerous-bash.py を読み込む。cd の移動先の解決を、コミットの判定とそろえるために使う。"""
+    spec = importlib.util.spec_from_file_location("guard_dangerous_bash", HOOK_DIR / "guard-dangerous-bash.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 MIN_JP_CHARS = 100
 DRAFT_SUFFIXES = {"markdown": ".md", "adf": ".json"}  # それ以外（html、指定なし）は .html
@@ -43,12 +55,35 @@ UNSAFE_ID_CHARS = re.compile(r"[^A-Za-z0-9_-]")
 # PR作成の判定に使う。区切りの文字だけでできた語を、コマンドの区切りとみなす
 SEPARATOR_CHARS = ";&|()<>\n"
 ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-COMMAND_PREFIXES = {"command", "builtin", "exec", "env", "time", "nohup", "noglob"}
+COMMAND_PREFIXES = {"command", "builtin", "exec", "env", "time", "nohup", "noglob", "rtk"}  # rtk hook claude が rtk を前に付ける
 PR_CREATE_WORDS = ["gh", "pr", "create"]
 SHELLS = {"bash", "sh", "zsh"}
 CLAUDE_TRAILER = re.compile(r"^Co-Authored-By:\s*Claude\b", re.IGNORECASE | re.MULTILINE)
 GIT_TIMEOUT_SECONDS = 10
+TIME_BUDGET_SECONDS = 20  # settings.json の timeout（30秒）より先に、自分で止める。打ち切られたフックは止めたことにならない
+LOCK_POLL_SECONDS = 0.05
+STARTED = time.monotonic()
+_deadline: Optional[float] = None  # PR作成の検査中だけ決める。ほかのイベントは従来どおり待つ
 CONTROL_CHAR = re.compile(r"[\x00-\x1f\x7f]")
+
+
+class BudgetError(Exception):
+    """時間予算を使い切った。GitErrorと分け、1回だけ止めて2回目は通す扱いにしない。"""
+
+
+def time_budget() -> float:
+    override = os.environ.get("JP_DOC_REVIEW_TIME_BUDGET")
+    return float(override) if override is not None else TIME_BUDGET_SECONDS
+
+
+def _remaining(step: str) -> Optional[float]:
+    """時間予算の残り（秒）。予算を決めていなければ None。使い切っていれば BudgetError。"""
+    if _deadline is None:
+        return None
+    remaining = _deadline - time.monotonic()
+    if remaining <= 0:
+        raise BudgetError(f"時間予算（{time_budget():g}秒）を、{step}で使い切った")
+    return remaining
 
 
 def state_dir() -> Path:
@@ -58,6 +93,11 @@ def state_dir() -> Path:
 
 def drafts_dir() -> Path:
     return state_dir() / "drafts"
+
+
+def diffs_dir() -> Path:
+    """PR作成時の差分の置き場。レビュワーは読むだけで、Editはできない（_protected_paths）。"""
+    return state_dir() / "diffs"
 
 
 def yomiyasu_skill() -> Path:
@@ -165,11 +205,24 @@ def session_lock(key: str) -> Iterator[None]:
     lock_path = state_dir() / f"{key}.lock"
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        _acquire(fd)
         os.utime(lock_path)  # 使っているロックを、古い状態の掃除で消さないようにする
         yield
     finally:
         os.close(fd)
+
+
+def _acquire(fd: int) -> None:
+    """ロックを取る。時間予算があるときは、待つ時間も予算から払う。"""
+    if _deadline is None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            time.sleep(min(LOCK_POLL_SECONDS, _remaining("ロックの待ち")))
 
 
 def _write_private(path: Path, text: str) -> None:
@@ -221,7 +274,7 @@ def cleanup_old_state() -> None:
     except FileNotFoundError:
         pass
     limit = now - STATE_RETENTION_DAYS * 86400
-    for directory in (state_dir(), drafts_dir()):
+    for directory in (state_dir(), drafts_dir(), diffs_dir()):
         if not directory.is_dir():
             continue
         for entry in directory.iterdir():
@@ -260,9 +313,14 @@ class GitError(Exception):
 
 
 def _git(root: Path, *args: str) -> str:
+    step = f"git {args[0]}"
+    remaining = _remaining(step)
+    timeout = GIT_TIMEOUT_SECONDS if remaining is None else min(GIT_TIMEOUT_SECONDS, remaining)
     try:
-        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
-                                timeout=GIT_TIMEOUT_SECONDS)
+        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        _remaining(step)  # 予算の側で切れたなら BudgetError にする
+        raise GitError(f"git {' '.join(args)}: {type(error).__name__}") from error
     except (OSError, subprocess.SubprocessError) as error:
         raise GitError(f"git {' '.join(args)}: {type(error).__name__}") from error
     if result.returncode != 0:
@@ -303,6 +361,50 @@ def is_pr_create(command: str, depth: int = 0) -> bool:
             continue
         segment.append(word)
     return False
+
+
+def pr_create_dirs(command: str, cwd: str) -> Set[Optional[str]]:
+    """gh pr create を実行するときに、シェルがいる可能性のあるディレクトリの集合を返す。
+
+    同じコマンドの中の cd は、guard-dangerous-bash.py の main と同じ手順で追う。移動先を確定できなければ、
+    集合に guard().UNRESOLVED（None）が入る。is_pr_create が見つけたのにここで見つからない形
+    （ヒアドキュメントの本文の行頭など）は、従来どおり cwd で判定する。
+    """
+    dirs = _pr_create_dirs(command, {os.path.abspath(cwd)}, 0)
+    return dirs or {os.path.abspath(cwd)}
+
+
+def _pr_create_dirs(command: str, start: Set[Optional[str]], depth: int) -> Set[Optional[str]]:
+    g = guard()
+    tokens = g.tokenize_command(g.strip_heredocs(command))
+    if tokens is None:
+        return {g.UNRESOLVED}
+    candidates, seen, dirs = set(start), set(start), set()
+    cdpath_possible = "CDPATH" in command or bool(os.environ.get("CDPATH"))
+    for previous_op, words, next_op, _raw in g.split_with_operators(tokens):
+        if g.operator_kind(previous_op) in ("SEQ", "BREAK"):
+            candidates = set(seen)
+        candidates = g.apply_directory_change(previous_op, words, next_op, candidates, cdpath_possible)
+        seen |= candidates
+        if words[:1] == ["rtk"]:
+            words = words[1:]  # rtk hook claude が書き換えた形
+        if words[:3] == PR_CREATE_WORDS:
+            dirs |= candidates
+        elif depth == 0 and words and Path(words[0]).name in SHELLS and "-c" in words[1:-1]:
+            dirs |= _pr_create_dirs(words[words.index("-c", 1) + 1], candidates, depth + 1)
+    return dirs
+
+
+def _target_reason(dirs: Set[Optional[str]], roots: List[Path]) -> str:
+    """PRを作るリポジトリを1つに決められないときの、止める理由。"""
+    if guard().UNRESOLVED in dirs:
+        lines = ["PRを作るリポジトリを決められなかった。同じコマンドの中の cd の移動先を、文字列から確定できない"
+                 "（変数、cd -、pushd / popd、まだ無いディレクトリなど）。"]
+    else:
+        lines = ["PRを作るリポジトリを1つに決められなかった。cd の後ろが && でないと、cd が失敗しても後ろが走る。"
+                 "次のどれでもPRが作られうる。"]
+        lines += [f"- {root}" for root in roots if not CONTROL_CHAR.search(str(root))]
+    return "\n".join(lines)
 
 
 def _pr_base(command: str) -> Optional[str]:
@@ -377,7 +479,17 @@ def pr_candidates(root: Path, base_ref: str) -> Tuple[List[str], List[str], int]
     return authored, others, unsafe
 
 
-def _pr_reason(base_ref: str, authored: List[str], others: List[str]) -> str:
+def _write_pr_diff(key: str, root: Path, base_ref: str, paths: List[str]) -> Path:
+    """候補のファイルについて、ブランチで変わった差分を書き出す。レビュワーのBashは git diff を実行できない。"""
+    merge_base = _git(root, "merge-base", base_ref, "HEAD").strip()
+    diff = _git(root, "diff", "--no-color", merge_base, "HEAD", "--", *paths)
+    digest = hashlib.sha256(f"{root}\0{base_ref}".encode("utf-8")).hexdigest()
+    path = diffs_dir() / f"{key}-{digest[:12]}.diff"
+    _write_private(path, diff)
+    return path
+
+
+def _pr_reason(base_ref: str, authored: List[str], others: List[str], diff: Path) -> str:
     lines = ["日本語の文書を含むPRを作る前に、レビューが要る。このPRはまだ作っていない。"]
     if authored:
         lines += [f"Agentツールで、subagent_typeを{REVIEWER_AGENT}にしたサブエージェントを1回起動し、次のファイルを渡して。",
@@ -388,7 +500,8 @@ def _pr_reason(base_ref: str, authored: List[str], others: List[str]) -> str:
                   *(f"- {path}" for path in others)]
     lines += [
         "依頼文には、対象のパスを絶対パスでそのまま書く。書かれていないファイルは、レビュワーが直せない。",
-        f"レビュワーには、ブランチで変わった行（git diff {base_ref}...HEAD -- <ファイル>）だけを直させること。",
+        f"{base_ref} から変わった行の差分を、{diff} に書き出した。依頼文にはこのパスも書き、",
+        "レビュワーには、この差分で足された行だけを直させること。差分のファイルは読むだけで、レビュワーは直せない。",
         "直したらコミットしてpushし、もう一度 gh pr create を実行して。2回目は止めない。",
         "レビュワーの報告を受けたら、変えた点と書き手に確かめたい点をユーザーに伝えて。",
     ]
@@ -418,13 +531,47 @@ def handle_pre_tool_use_bash(payload: dict) -> None:
         raise ValueError("Bashの入力にcommand（文字列）が無い")
     if not is_pr_create(command):
         return
+    global _deadline
+    _deadline = STARTED + time_budget()
+    try:
+        _check_pr_create(payload, command)
+    except Exception as error:  # PR作成と分かった後の失敗は、終了コード1で通さず止める側に倒す
+        print(f"jp-doc-review pre-tool-use-bash: {type(error).__name__}: {error}", file=sys.stderr)
+        emit({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": f"日本語の文書のレビュー対象を確かめられなかったので、このPRはまだ作っていない"
+                                        f"（{type(error).__name__}: {error}）。原因を直してから、もう一度 gh pr create を実行して。",
+        }})
+
+
+def _check_pr_create(payload: dict, command: str) -> None:
     key = session_key(payload)
     cleanup_old_state()
     cwd = payload.get("cwd")
     if not isinstance(cwd, str) or not cwd:
         raise ValueError("入力にcwdが無く、PRを作るリポジトリを決められない")
-    root, kind = _find_git_root(Path(os.path.realpath(cwd)))
-    if root is None or kind == "submodule":
+    dirs = pr_create_dirs(command, cwd)
+    unresolved = guard().UNRESOLVED
+    found = (_find_git_root(Path(os.path.realpath(path))) for path in dirs if path is not unresolved)
+    roots = {root: kind for root, kind in found if root is not None}
+    if unresolved in dirs or len(roots) > 1:
+        # 検査できなかったことを「問題なし」に畳まない。書き直せば判定できるので、毎回止める
+        reason = _target_reason(dirs, sorted(roots))
+        if payload.get("agent_type"):
+            emit({"systemMessage": f"{reason}\n日本語の文書をレビューしないまま、サブエージェントのPR作成を通した。"})
+            return
+        emit({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": f"{reason}\n日本語の文書のレビュー対象を決められないので、このPRはまだ作っていない。\n"
+                                        "cd <リポジトリの絶対パス> && gh pr create ... の形で、もう一度実行して。",
+        }})
+        return
+    if not roots:
+        return
+    [(root, kind)] = roots.items()
+    if kind == "submodule":
         return
     with session_lock(key):
         _handle_pr_create(key, payload, root, command)
@@ -481,11 +628,12 @@ def _handle_pr_create(key: str, payload: dict, root: Path, command: str) -> None
         emit({"systemMessage": f"サブエージェントは{REVIEWER_AGENT}を起動できないので、このPR作成は止めない。"
                                f"次の日本語の文書は、レビューしないままPRになる: {names}"})
         return
+    diff = _write_pr_diff(key, root, base_ref, candidates)
     write_json(_pr_state_path(key), {**state, state_id: {"paths": candidates, "transcript_offset": _transcript_size(payload)}})
     emit(with_messages({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
-        "permissionDecisionReason": _pr_reason(base or base_ref, authored, others),
+        "permissionDecisionReason": _pr_reason(base or base_ref, authored, others, diff),
     }}, messages))
 
 
@@ -678,7 +826,7 @@ def _read_allowed(key: str) -> Optional[List[str]]:
 
 def _protected_paths() -> List[str]:
     """レビュワーのEditで書き換えさせないものの実体。制限の仕組みそのもの。許可リストに入っていても守る。"""
-    paths = [yomiyasu_skill().parent, Path(__file__).resolve().parent, reviewer_definition(),
+    paths = [yomiyasu_skill().parent, Path(__file__).resolve().parent, reviewer_definition(), diffs_dir(),
              *(claude_home() / name for name in PROTECTED_CLAUDE_HOME_FILES)]
     return [os.path.realpath(path) for path in paths]
 

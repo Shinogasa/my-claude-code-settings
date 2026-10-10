@@ -46,20 +46,8 @@ PR作成時の日本語レビュー、マージ済みPRの照会、`claude-headl
 
 ## 日本語文書レビュー（yomiyasu）の続き
 
-設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯はADR 0024と0025。
+設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯はADR 0024・0025・0032。
 最初の実装はClaude Codeだけを対象にした。
-
-### P1: `cd <別のリポジトリ> && gh pr create` でPR作成時のレビューが止まらなかった
-
-2026-10-08、sakurai-transcripts を cwd にしたセッションから `cd ~/garage/my-claude-code-settings && gh pr create ...` を実行して PR #68 を作った。
-仕様書とADR（日本語のMarkdown）を含むのに、`pre-tool-use-bash` は止めなかった。
-
-コードを読んだ範囲では、`handle_pre_tool_use_bash` はPRを作るリポジトリを、入力の `cwd` から `_find_git_root` で決めている。
-コマンド中の `cd` を見ていないので、cwd 側のリポジトリ（差分に日本語文書が無い）を調べた可能性がある。原因はまだ再現で確かめていない。
-ADR 0025 の背景で挙げた、コミットでの `cd` による取り違えと同じ型にあたる。
-
-**決めること**: PRを作るリポジトリの解決に、`guard-dangerous-bash.py` のディレクトリ解決（`apply_directory_change`・`git_target_dirs`）を再利用するか。
-`gh` の `-R` / `--repo` の指定も扱うか。
 
 ### P2: Codexでも日本語文書のレビューを動かす
 
@@ -917,6 +905,24 @@ PR作成時のレビューは止めた記録を消さない形に直したので
 
 **決めること**: 調べ方。フックに呼び出しの記録（時刻、PID、tool_use_id）を一時的に出させ、対話のセッションとバックグラウンドのセッションで回数を数える。
 2回呼ばれていると分かったら、状態を持つフックをすべて、2回呼ばれても同じ結果になる形にそろえるかを決める。
+
+### P2: `rtk hook claude` の書き換えの後の入力を、ほかのフックが受け取るか
+
+`rtk hook claude` は、`gh pr create` を `rtk gh pr create` のように書き換える。2026-10-10の実機確認では、
+`jp-doc-review.py` が書き換えの前と後のどちらを受け取ったかを確かめられなかった（ADR 0032の決定8）。
+`guard-dangerous-bash.py` は `rtk` を前置きとして扱っていない。書き換えの後を受け取っているなら、
+`rtk git commit` で、保護ブランチへのコミットと `--no-verify` の判定を抜けられる。
+
+**決めること**: 調べ方（フックに、受け取ったcommandを一時的に記録させ、実機で1回見る）。
+書き換えの後を受け取っていたら、`guard-dangerous-bash.py` の前置きに `rtk` を足す。
+
+### P3: 2026-10-10に、PreToolUseのフックが10秒前後かかった
+
+同じBashで、`rtk hook claude` に9.7秒かかり、`jp-doc-review.py pre-tool-use-bash` は10秒のtimeoutで打ち切られた。
+同じ入力をフックへ直接渡すと、1秒かからなかった。原因は分かっていない。ADR 0032の決定7で、
+予算を使い切ったときは、どこで使い切ったかが止める理由に出るようにした。
+
+**決めること**: 次に起きたら、止める理由に出た処理（gitの呼び出しかロックの待ちか）から調べるか。
 
 ---
 
