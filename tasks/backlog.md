@@ -885,12 +885,12 @@ PR作成時のレビューは止めた記録を消さない形に直したので
 `guard-dangerous-bash.py` は `rtk` を前置きとして扱っていない。書き換えの後を受け取っているなら、
 `rtk git commit` で、保護ブランチへのコミットと `--no-verify` の判定を抜けられる。
 
-**決めること**: 調べ方（フックに受け取った command を一時的に記録させ、実機で1回見る）。
+**決めること**: 調べ方（フックに、受け取ったcommandを一時的に記録させ、実機で1回見る）。
 書き換えの後を受け取っていたら、`guard-dangerous-bash.py` の前置きに `rtk` を足す。
 
 ### P3: 2026-10-10に、PreToolUseのフックが10秒前後かかった
 
-同じBashで、`rtk hook claude` が9.7秒、`jp-doc-review.py pre-tool-use-bash` が10秒の timeout で打ち切られた。
+同じBashで、`rtk hook claude` に9.7秒かかり、`jp-doc-review.py pre-tool-use-bash` は10秒のtimeoutで打ち切られた。
 同じ入力をフックへ直接渡すと、1秒かからなかった。原因は分かっていない。ADR 0031の決定7で、
 予算を使い切ったときは、どこで使い切ったかが止める理由に出るようにした。
 
