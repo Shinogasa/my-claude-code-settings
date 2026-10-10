@@ -4,6 +4,30 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# worktreeで実行するとリンク先がworktreeへ移り、消した時点で全リンクが切れる（ADR 0031）。
+# .git が無ければGitの作業ツリーではない（tarballなど）ので、判定せずに進める。
+# .git があるのに判定できないときは、通さずに止める（判定できないことを「問題なし」に畳まない）。
+refuse_worktree() {
+  local dirs git_dir common_dir
+  [ -e "$SCRIPT_DIR/.git" ] || return 0
+  # 呼び出し元の GIT_DIR などに判定を左右させない
+  dirs="$(env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE \
+    git -C "$SCRIPT_DIR" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || dirs=""
+  git_dir="$(printf '%s\n' "$dirs" | sed -n 1p)"
+  common_dir="$(printf '%s\n' "$dirs" | sed -n 2p)"
+  if [ -z "$git_dir" ] || [ -z "$common_dir" ]; then
+    echo "エラー: worktree で実行されたかどうかを判定できません。何も変更していません。" >&2
+    echo "  git rev-parse --git-common-dir が失敗しました。Git 2.31以降か、safe.directory の設定を確かめてください。" >&2
+    exit 1
+  fi
+  [ "$git_dir" = "$common_dir" ] && return 0
+  echo "エラー: setup.sh を worktree で実行しようとしました。何も変更していません。" >&2
+  echo "  本体の作業ツリー（$(dirname "$common_dir")）で実行し直してください。" >&2
+  exit 1
+}
+refuse_worktree
+
 CLAUDE_DIR="$HOME/.claude"
 CODEX_DIR="$HOME/.codex"
 # 個人用の CODEX_HOME（ADR 0026）。無ければ個人用への配布だけを飛ばす
