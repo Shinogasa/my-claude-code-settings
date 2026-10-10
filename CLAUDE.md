@@ -149,8 +149,8 @@ TDDの流れが終わるまで、これらのコミットをsquashしたり書�
 - **バグ修正**: バグレポートを受けたらログ・テストから自律的に修正する
 - **学習アウトプット**: ★ Delta / ★ Code Delta の実証記録はbinding済みの専用学習storeへ保存する（運用は `learning/README.md`）。このリポジトリ内の旧記録は読み取り専用。保存前に業務固有情報を抽象化する（`skills/learning-mode/SKILL.md` の抽象化ルール参照）
 - **並列作業**: 複数のエージェントが同じリポジトリで動くときは、worktreeで分離する。
-  サブエージェント起動時は `isolation: "worktree"` を既定とする。ただし本リポジトリ
-  自身は対象外（理由は同ファイル参照）。詳細は `rules/parallel-worktree.md` を参照
+  サブエージェント起動時は `isolation: "worktree"` を既定とする。ただし本リポジトリでは、
+  動作中の設定に効くパスを触る作業だけ本体で行う（同ファイル参照）。詳細は `rules/parallel-worktree.md` を参照
 
 ## タスク管理
 

@@ -73,7 +73,10 @@ def make_stub_commands(base: Path) -> Path:
         path.chmod(0o755)
     git = bindir / "git"
     git.write_text(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\n"
+        "#!/bin/sh\n"
+        # setup.shのworktree判定（読み取りだけ）は記録せず、本物のgitで判定させる（ADR 0031）
+        f"if [ \"${{3:-}}\" = rev-parse ]; then exec \"{REAL_GIT}\" \"$@\"; fi\n"
+        "printf '%s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\n"
         "if [ \"${SETUP_GIT_EXIT:-0}\" != 0 ]; then exit \"$SETUP_GIT_EXIT\"; fi\n"
         "if [ \"${SETUP_REAL_GIT:-}\" != '' ] && [ \"${3:-}\" = ls-files ]; then exec \"$SETUP_REAL_GIT\" \"$@\"; fi\n"
         "if [ \"$*\" = \"-C $SETUP_SUBMODULE_REPOSITORY submodule update --init --recursive\" ]; then mkdir -p \"$SETUP_SUBMODULE_ROOT/claude-code-best-practice\" \"$SETUP_SUBMODULE_ROOT/codex-cli-best-practice\"; fi\n"
