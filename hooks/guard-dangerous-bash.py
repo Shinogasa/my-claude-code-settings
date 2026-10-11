@@ -305,7 +305,11 @@ def skip_options(tokens: list, index: int) -> int:
 
 
 def skip_rtk_wrapper(tokens: list, index: int) -> int:
-    """`rtk [opts] [proxy [opts]]` の後ろ、実際のコマンドの位置を返す。rtk のオプションは値を取らない。"""
+    """`rtk [opts] [proxy [opts]]` の後ろ、実際のコマンドの位置を返す。
+
+    rtk 0.50.0 のオプションは値を取らない。値を取るオプションが増えたら、その値をコマンドと
+    取り違えて素通しするので、ここを見直す。
+    """
     index = skip_options(tokens, index)
     if index < len(tokens) and tokens[index] == "proxy":
         index = skip_options(tokens, index + 1)
