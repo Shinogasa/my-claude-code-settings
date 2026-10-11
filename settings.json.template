@@ -43,17 +43,17 @@
           },
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash",
+            "command": "if [ -f ~/.claude/hooks/jp-doc-review.py ]; then python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash; else echo '{\"systemMessage\":\"フック（~/.claude/hooks/jp-doc-review.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/block-commit-on-merged-pr.py",
+            "command": "if [ -f ~/.claude/hooks/block-commit-on-merged-pr.py ]; then python3 ~/.claude/hooks/block-commit-on-merged-pr.py; else echo '{\"systemMessage\":\"フック（~/.claude/hooks/block-commit-on-merged-pr.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/require-full-tests-before-pr.py",
+            "command": "if [ -f ~/.claude/hooks/require-full-tests-before-pr.py ]; then python3 ~/.claude/hooks/require-full-tests-before-pr.py; else echo '{\"systemMessage\":\"フック（~/.claude/hooks/require-full-tests-before-pr.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
             "timeout": 30
           },
           {
@@ -68,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-agent",
+            "command": "if [ -f ~/.claude/hooks/jp-doc-review.py ]; then python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-agent; else echo '{\"systemMessage\":\"フック（~/.claude/hooks/jp-doc-review.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
             "timeout": 10
           }
         ]
@@ -78,7 +78,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-confluence",
+            "command": "if [ -f ~/.claude/hooks/jp-doc-review.py ]; then python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-confluence; else echo '{\"systemMessage\":\"フック（~/.claude/hooks/jp-doc-review.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
             "timeout": 10
           }
         ]
@@ -89,7 +89,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/skill-read-check.py stop",
+            "command": "if [ -f ~/.claude/hooks/skill-read-check.py ]; then python3 ~/.claude/hooks/skill-read-check.py stop; else echo '{\"systemMessage\":\"フック（~/.claude/hooks/skill-read-check.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
             "timeout": 10
           }
         ]
@@ -100,7 +100,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/skill-read-check.py subagent-stop",
+            "command": "if [ -f ~/.claude/hooks/skill-read-check.py ]; then python3 ~/.claude/hooks/skill-read-check.py subagent-stop; else echo '{\"systemMessage\":\"フック（~/.claude/hooks/skill-read-check.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
             "timeout": 10
           }
         ]
