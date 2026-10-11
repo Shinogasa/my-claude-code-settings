@@ -341,6 +341,8 @@ class PrReviewTests(HookCase):
             result = self.pr()
             self.assertEqual(decision_of(result), "deny")
             self.assertIn("時間予算", self.reason(result))
+            # 予算切れが続いてもPRを作れるよう、フックを通らない抜け道を示す
+            self.assertIn("自分の端末で gh pr create", self.reason(result))
 
     def test_waiting_for_the_lock_counts_against_time_budget(self):
         import fcntl

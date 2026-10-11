@@ -184,6 +184,7 @@ class RequireFullTestsHookTests(unittest.TestCase):
         result = run_hook("gh pr create --fill", repository, env={"REQUIRE_FULL_TESTS_TIME_BUDGET": "0"})
         self.assertEqual(decision(result), "deny", result.stdout + result.stderr)
         self.assertIn("時間予算", result.stdout)
+        self.assertIn("自分の端末で gh pr create", result.stdout)
 
     def test_unreadable_head_is_denied_instead_of_passed(self):
         # 検査できなかったことを「問題なし」に畳まない
