@@ -44,7 +44,7 @@
           {
             "type": "command",
             "command": "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash",
-            "timeout": 10
+            "timeout": 30
           },
           {
             "type": "command",
@@ -54,7 +54,7 @@
           {
             "type": "command",
             "command": "python3 ~/.claude/hooks/require-full-tests-before-pr.py",
-            "timeout": 15
+            "timeout": 30
           },
           {
             "type": "command",

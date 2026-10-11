@@ -148,6 +148,19 @@ class WiringTests(unittest.TestCase):
                         if hook["command"] != "rtk hook claude":
                             self.assertIsInstance(hook.get("timeout"), int)
 
+    def test_pr_hooks_stop_themselves_before_the_timeout(self):
+        # timeout で打ち切られたフックは止めたことにならない。予算は timeout より5秒以上短くする
+        for name, command in (("jp-doc-review.py", "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash"),
+                              ("require-full-tests-before-pr.py", "python3 ~/.claude/hooks/require-full-tests-before-pr.py")):
+            with self.subTest(hook=name):
+                spec = importlib.util.spec_from_file_location(name.replace("-", "_")[:-3], REPO_ROOT / "hooks" / name)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                [timeout] = [hook["timeout"] for group in SETTINGS["hooks"]["PreToolUse"]
+                             for hook in group["hooks"] if hook["command"] == command]
+                self.assertGreaterEqual(timeout, 30)
+                self.assertLessEqual(module.TIME_BUDGET_SECONDS, timeout - 5)
+
     def test_codex_wiring_is_untouched(self):
         codex = (REPO_ROOT / "codex" / "hooks.json").read_text(encoding="utf-8")
         self.assertNotIn("jp-doc-review", codex)
