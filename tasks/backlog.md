@@ -437,18 +437,6 @@ Codex を主ホストとして使う頻度が上がったとき。
 
 ---
 
-## PR作成の判定（is_pr_create）の取りこぼし
-
-### P3: `gh -R x pr create` などをPR作成と判定できない
-
-`hooks/jp-doc-review.py` の `is_pr_create` は、コマンドの先頭3語が `gh pr create` かだけを見る。
-`gh -R org/repo pr create`、`gh --repo x pr create`、`/usr/bin/gh pr create`、`timeout 60 gh pr create` などを見逃す。
-日本語レビューのhookと、全件テストの記録を確かめるhook（ADR 0029）の両方が、この関数を使っている。
-2026-10-09のsecurity-reviewerの指摘3。
-
-**決めること**: どこまでの書き方を拾うか。少なくとも `-R` / `--repo` の読み飛ばしと、パス付きの `gh` は拾いたい。
-エイリアスやスクリプト経由は、静的な判定では拾えないので対象外にするか。
-
 ## 学習モード
 
 ### コード学習の候補が拾われていない → 着手条件待ち
@@ -1055,12 +1043,6 @@ Python や Markdown だけを触る作業中も常に効いている。
 **決めること**: Codex のフック（`codex/hooks.json`）で同じ挙動を作るか、助言スキルだけを共有するか。
 `principle-reviewer` の指示文が名指しする原則集のパスは `~/.claude/skills/work-principles/` だけで、Codex では読む先が違う。対応するときに、ホスト別のパスを併記する。
 
-### フックの無いブランチへ戻すと全 Bash が止まる
-
-**決めること**: 全フックの command を「ファイルが無ければ表示して通す」形にそろえるか、`setup.sh` がブランチの切り替えを検知して生成し直すか。
-設定リポジトリの作業ツリーを、あるフックを足す前のブランチへ戻すと、生成済みの `~/.claude/settings.json` がまだそのフックを呼び、
-ファイルが無いので exit 2 になって全 Bash が止まる。`principle-review.py` だけは command 側で避けた（仕様書 2026-10-08-work-principles-design.md の10章）。
-
 ### `unittest discover` が一部のテストで止まる
 
 **決めること**: 原因の調査を先にするか、止まるモジュールを分けて走らせるか。
@@ -1083,14 +1065,3 @@ partial clone の lazy fetch とサブモジュールの filter が承認前に�
 **決めること**: Git 2.45 未満を「検査できなかった」扱いにするか、`protocol.{file,ssh,git,http,https,ext}.allow=never` を明示するか。
 `GIT_NO_LAZY_FETCH` は Git 2.45.0 以降で効く。それ未満では lazy fetch を止められず、リポジトリの設定のコマンドが承認前に走りうる。
 `-c protocol.allow=never` も、リポジトリの `protocol.<名前>.allow=always` に上書きされる（仕様書 2026-10-08-work-principles-design.md の6章・10章）。
-
-### mainのマージで入ってきたレビュー済みのADRを、原則レビューが新規として止める
-
-**決めること**: マージコミットでは、マージ元ですでにコミット済みのADRを対象から外すか（`MERGE_HEAD` の有無で判定するなど）。
-2026-10-09に、PR #71のブランチへmainをマージして、ADRのコンフリクトを解消した。すると、mainですでにレビュー済みのADR 0029が新規の追加として扱われ、コミットが止まった。
-このときは、ユーザーの判断でレビューを省いた。
-
-### リポジトリのルートに制御文字・書式文字があるとレビュワーがファイルを開けない
-
-**決めること**: `has_control` を絶対パスに当てて除外するか。
-いまは相対パスにだけ当てているので、ルートに制御文字・書式文字があると、パスは escape して表示され、レビュワーがファイルを開けない（仕様書の10章）。
