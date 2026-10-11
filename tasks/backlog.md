@@ -1061,11 +1061,6 @@ Python や Markdown だけを触る作業中も常に効いている。
 設定リポジトリの作業ツリーを、あるフックを足す前のブランチへ戻すと、生成済みの `~/.claude/settings.json` がまだそのフックを呼び、
 ファイルが無いので exit 2 になって全 Bash が止まる。`principle-review.py` だけは command 側で避けた（仕様書 2026-10-08-work-principles-design.md の10章）。
 
-### `unittest discover` が一部のテストで止まる
-
-**決めること**: 原因の調査を先にするか、止まるモジュールを分けて走らせるか。
-`python3 -m unittest discover -s tests` を実行すると、`test_codex_model_switch`・`test_learning_store`・`test_setup_cli`・`test_setup_preflight` で止まる（2026-10-08、main 由来、原因は未調査）。
-
 ### `permissions.deny` で Read・Grep の機密パスを拒否するか
 
 **決めること**: 拒否するパス（`~/.ssh`・`~/.aws`・`.env` など、どこまで含めるか）と、`settings.json.template` に書くと全セッションの Read・Grep に効くことを受け入れるか。
