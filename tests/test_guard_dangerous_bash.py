@@ -920,6 +920,35 @@ class TestPrefixesAndChains(TrackingFixture):
             with self.subTest(command=command):
                 self.assert_allowed(command, self.main_repo)
 
+class TestRtkWrapper(TrackingFixture):
+    """設定が使わせている rtk の形（codex/RTK.md）で、git の判定を見失わないこと。
+
+    RTK.md は「Always prefix shell commands with `rtk`」と指示し、`rtk proxy <cmd>` も載せている。
+    それ以外のラッパーと rtk のサブコマンド（err / summary / run など）は対象外。
+    """
+
+    def assert_allowed(self, command, cwd):
+        result = run_guard_in(command, cwd, cwd)
+        self.assertEqual(result.returncode, ALLOW, f"{command}: {result.stderr}")
+
+    def test_rtk_forms_taught_by_rtk_md_do_not_hide_git(self):
+        for command in ('rtk git commit -m "x"',
+                        'rtk -v git commit -m "x"',
+                        'rtk --ultra-compact git commit -m "x"',
+                        'rtk proxy git commit -m "x"',
+                        'rtk git push --no-verify origin work'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.main_repo)
+
+    def test_ordinary_rtk_commands_are_not_over_blocked(self):
+        for command, cwd in (('rtk git status', self.main_repo),
+                             ('rtk git commit -m "x"', self.feature),
+                             ('rtk env', self.main_repo),
+                             ('rtk gain', self.main_repo)):
+            with self.subTest(command=command):
+                self.assert_allowed(command, cwd)
+
+
 class TestFinalReviewFindings(TrackingFixture):
     """最終確認の指摘: 実行されない cd、リダイレクト除去の副作用、引用符付きの演算子。"""
 
