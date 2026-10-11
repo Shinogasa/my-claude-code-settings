@@ -56,7 +56,8 @@ UNSAFE_ID_CHARS = re.compile(r"[^A-Za-z0-9_-]")
 SEPARATOR_CHARS = ";&|()<>\n"
 ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 COMMAND_PREFIXES = {"command", "builtin", "exec", "env", "time", "nohup", "noglob", "rtk"}  # rtk hook claude が rtk を前に付ける
-PR_CREATE_WORDS = ["gh", "pr", "create"]
+PR_CREATE_WORDS = ["pr", "create"]  # gh の後の、フラグを除いた最初の2語
+GH_FLAGS_WITH_VALUE = {"-R", "--repo"}  # 値を次の語に取る gh のフラグ。値を pr / create と取り違えない
 SHELLS = {"bash", "sh", "zsh"}
 CLAUDE_TRAILER = re.compile(r"^Co-Authored-By:\s*Claude\b", re.IGNORECASE | re.MULTILINE)
 GIT_TIMEOUT_SECONDS = 10
@@ -341,8 +342,24 @@ def _shell_words(command: str) -> List[str]:
     return words
 
 
+def _is_gh_pr_create(words: List[str]) -> bool:
+    """単純コマンドの語が gh pr create か。gh はパス付きでもよく、gh の後のフラグ（-R / --repo は値ごと）は読み飛ばす。"""
+    if not words or Path(words[0]).name != "gh":
+        return False
+    positionals: List[str] = []
+    rest = iter(words[1:])
+    for word in rest:
+        if word in GH_FLAGS_WITH_VALUE:
+            next(rest, None)
+        elif not word.startswith("-"):
+            positionals.append(word)
+            if len(positionals) == len(PR_CREATE_WORDS):
+                break
+    return positionals == PR_CREATE_WORDS
+
+
 def is_pr_create(command: str, depth: int = 0) -> bool:
-    """コマンドの位置に PR_CREATE_WORDS があるか。bash -c などの文字列の中も1段だけ調べる。
+    """コマンドの位置に gh pr create があるか。bash -c などの文字列の中も1段だけ調べる。
 
     引用符の中（コミットメッセージや echo の文字列）は1語として扱うので、PRの作成とみなさない。
     """
@@ -353,7 +370,7 @@ def is_pr_create(command: str, depth: int = 0) -> bool:
             segment = []
             while words and (ENV_ASSIGNMENT.match(words[0]) or words[0] in COMMAND_PREFIXES):
                 words = words[1:]
-            if words[:3] == PR_CREATE_WORDS:
+            if _is_gh_pr_create(words):
                 return True
             if depth == 0 and words and Path(words[0]).name in SHELLS and "-c" in words[1:-1]:
                 if is_pr_create(words[words.index("-c", 1) + 1], depth + 1):
@@ -388,7 +405,7 @@ def _pr_create_dirs(command: str, start: Set[Optional[str]], depth: int) -> Set[
         seen |= candidates
         if words[:1] == ["rtk"]:
             words = words[1:]  # rtk hook claude が書き換えた形
-        if words[:3] == PR_CREATE_WORDS:
+        if _is_gh_pr_create(words):
             dirs |= candidates
         elif depth == 0 and words and Path(words[0]).name in SHELLS and "-c" in words[1:-1]:
             dirs |= _pr_create_dirs(words[words.index("-c", 1) + 1], candidates, depth + 1)
