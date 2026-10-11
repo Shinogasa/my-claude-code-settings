@@ -357,9 +357,9 @@ def _added_paths(root: str, adds: Tuple[Add, ...], deadline: float) -> List[str]
 
 def exclusion_reason(root: str, relative: str) -> Optional[str]:
     """レビューに回さない対象なら、その理由を返す。"""
-    if has_control(relative):
-        return "パスに制御文字を含む"
     absolute = Path(root) / relative
+    if has_control(str(absolute)):  # ルートに含む場合も、escape したパスではレビュワーがファイルを開けない
+        return "パスに制御文字を含む"
     if len(str(absolute)) > MAX_SHOWN_LENGTH:
         return "パスが長すぎる"  # 切り詰めたパスをレビュワーに渡したり、記録したりしない
     if absolute.is_symlink():
