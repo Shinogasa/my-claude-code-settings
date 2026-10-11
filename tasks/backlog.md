@@ -1066,8 +1066,8 @@ Python や Markdown だけを触る作業中も常に効いている。
 **決めること**: 壁時計のしきい値を負荷に強くするか（余裕を広げる・フックの期限から導く）、時間に敏感なテストを並列から外すか。
 `run.sh --all` と同じファイル一覧を並列で11回流し、2回落ちた（2026-10-11）。単独や直列の discover では落ちていない。
 
-- `SlowGitTests::test_hanging_git_is_killed_with_its_group`: フック全体を20秒未満と検査しているが、フックは止まった git を設計どおり10秒待つ。負荷で残りが延び、23.4秒になった
-- `UntrustedPathTests::test_only_excluded_paths_pass_with_message`: 素通しを期待した場面で `deny` が返った。理由は取れていない。同じ手順を負荷付きで150回回しても再現しなかった
+- `SlowGitTests::test_hanging_git_is_killed_with_its_group`: フック全体が20秒未満で終わることを検査しているが、フックは止まった git を設計どおり10秒待つ。負荷で残りの時間が延び、全体で23.4秒になった
+- `UntrustedPathTests::test_only_excluded_paths_pass_with_message`: 素通しを期待した場面で `deny` が返った。`deny` の理由の出力は記録できていない。同じ手順を、負荷をかけて150回繰り返しても再現しなかった
 
 ### `permissions.deny` で Read・Grep の機密パスを拒否するか
 
