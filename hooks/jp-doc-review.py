@@ -541,7 +541,8 @@ def handle_pre_tool_use_bash(payload: dict) -> None:
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
             "permissionDecisionReason": f"日本語の文書のレビュー対象を確かめられなかったので、このPRはまだ作っていない"
-                                        f"（{type(error).__name__}: {error}）。原因を直してから、もう一度 gh pr create を実行して。",
+                                        f"（{type(error).__name__}: {error}）。原因を直してから、もう一度 gh pr create を実行して。"
+                                        "急ぐときは、ユーザーが自分の端末で gh pr create を実行すれば、このフックを通らずに作れる。",
         }})
 
 

@@ -155,7 +155,8 @@ def main() -> int:
             return 0
         reason = _check_targets(payload["tool_input"]["command"], cwd)
     except Exception as error:  # PR作成と分かった後の失敗は、すべて止める側に倒す
-        reason = f"全件テストの通過記録を確かめられなかった（{error}）。`{RUN_ALL}` を流してから、もう一度試して。"
+        reason = (f"全件テストの通過記録を確かめられなかった（{error}）。`{RUN_ALL}` を流してから、もう一度試して。"
+                  "急ぐときは、ユーザーが自分の端末で gh pr create を実行すれば、このフックを通らずに作れる。")
     if reason:
         _deny(reason)
     return 0
