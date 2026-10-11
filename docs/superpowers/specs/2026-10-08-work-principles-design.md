@@ -131,6 +131,7 @@ PreToolUse の `Bash` で動く。
    - `spec`: `docs/superpowers/specs/`、`docs/specs/`、`docs/adr/` の下の `.md`
    - `plan`: `docs/superpowers/plans/`、`docs/plans/` の下の `.md`
    - 削除されたファイルは対象にしない
+   - マージの途中（`MERGE_HEAD` がある）なら、ステージ済みでインデックスの内容がマージ元と同じ対象は、「マージ元と同じ内容」として対象外にし、表示する。マージ元ですでにコミットされているため。解消で書き換えた対象と、`-a` や同じコマンドの `git add` で作業ツリーから入る対象は外さない
 4. 対象が無ければ通す
 5. まだ止めていない（セッションID, ファイルのパス）の組があれば、その組を記録して止める（`permissionDecision: deny`）。
    理由には次を書く
