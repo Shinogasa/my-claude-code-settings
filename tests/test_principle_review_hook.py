@@ -447,6 +447,19 @@ class UntrustedPathTests(HookCase):
         self.assertIsNone(decision_of(output))
         self.assertIn("対象外にした", output["systemMessage"])
 
+    def test_control_characters_in_repository_root_are_excluded(self):
+        # 相対パスだけを見ると、escape したパスがレビュワーに渡り、ファイルを開けない（仕様書の10章）
+        for index, name in enumerate(("re‮po", "re\npo")):
+            with self.subTest(name=name):
+                repo = self.init_repo(self.base / name)
+                self.stage("docs/specs/a.md", repo=repo)
+                output = self.run_hook("git commit -m x", session=f"s{index}", cwd=repo)[1]
+                self.assertIsNone(decision_of(output))
+                message = output["systemMessage"]
+                self.assertIn("対象外にした", message)
+                self.assertIn("パスに制御文字を含む", message)
+                self.assertNotIn(name, message)
+
     def test_symlinked_target_is_not_reviewed(self):
         secret = self.base / "secret.md"
         secret.write_text("秘密", encoding="utf-8")
