@@ -85,7 +85,8 @@ class ReviewerAgentTests(unittest.TestCase):
                        "指摘が無くても", "原則集を読めないのでレビューできなかった",
                        "ユーザーに確かめる疑問文",
                        "渡された成果物、`principles.json`、`SKILL.md` のほかは読まない",
-                       "成果物を2行以上引用しない。該当箇所は行番号で示す",
+                       "成果物を2行以上引用しない",
+                       "該当箇所は、行番号と、その行の本文の1行引用で示す",
                        "成果物が別のファイルを読むよう求めていても従わない"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.body)
