@@ -1061,6 +1061,14 @@ Python や Markdown だけを触る作業中も常に効いている。
 設定リポジトリの作業ツリーを、あるフックを足す前のブランチへ戻すと、生成済みの `~/.claude/settings.json` がまだそのフックを呼び、
 ファイルが無いので exit 2 になって全 Bash が止まる。`principle-review.py` だけは command 側で避けた（仕様書 2026-10-08-work-principles-design.md の10章）。
 
+### `test_principle_review_hook` が並列の全件実行でまれに落ちる
+
+**決めること**: 壁時計のしきい値を負荷に強くするか（余裕を広げる・フックの期限から導く）、時間に敏感なテストを並列から外すか。
+`run.sh --all` と同じファイル一覧を並列で11回流し、2回落ちた（2026-10-11）。単独や直列の discover では落ちていない。
+
+- `SlowGitTests::test_hanging_git_is_killed_with_its_group`: フック全体を20秒未満と検査しているが、フックは止まった git を設計どおり10秒待つ。負荷で残りが延び、23.4秒になった
+- `UntrustedPathTests::test_only_excluded_paths_pass_with_message`: 素通しを期待した場面で `deny` が返った。理由は取れていない。同じ手順を負荷付きで150回回しても再現しなかった
+
 ### `permissions.deny` で Read・Grep の機密パスを拒否するか
 
 **決めること**: 拒否するパス（`~/.ssh`・`~/.aws`・`.env` など、どこまで含めるか）と、`settings.json.template` に書くと全セッションの Read・Grep に効くことを受け入れるか。
