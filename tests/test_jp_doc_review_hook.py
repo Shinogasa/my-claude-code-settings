@@ -268,6 +268,25 @@ class PrReviewTests(HookCase):
             with self.subTest(command=command):
                 self.assertEqual(decision_of(self.pr(command, session=f"s{index}")), "deny")
 
+    def test_pr_create_with_gh_flags_or_path_is_detected(self):
+        # gh の後のフラグ（-R / --repo は値ごと）を読み飛ばし、パス付きの gh も拾う（2026-10-09のsecurity-reviewerの指摘3）
+        self.commit_file("docs/a.md", JP_LONG)
+        for index, command in enumerate(("gh -R org/repo pr create --fill",
+                                         "gh --repo org/repo pr create --fill",
+                                         "gh --repo=org/repo pr create --fill",
+                                         "gh pr -R org/repo create --fill",
+                                         "/usr/bin/gh pr create --fill",
+                                         "git push && rtk /usr/local/bin/gh -R org/repo pr create")):
+            with self.subTest(command=command):
+                self.assertEqual(decision_of(self.pr(command, session=f"s{index}")), "deny")
+
+    def test_other_gh_commands_with_flags_are_not_pr_create(self):
+        self.commit_file("docs/a.md", JP_LONG)
+        for command in ("gh -R org/repo pr list", "gh --repo org/repo issue create", "gh pr view create",
+                        "gh -R pr create"):
+            with self.subTest(command=command):
+                self.assertEqual(self.pr(command), (0, {}, ""))
+
     def test_wrapped_pr_create_is_detected(self):
         self.commit_file("docs/a.md", JP_LONG)
         self.assertEqual(decision_of(self.pr('bash -c "gh pr create --fill"')), "deny")

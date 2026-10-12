@@ -177,6 +177,14 @@ class RequireFullTestsHookTests(unittest.TestCase):
         result = run_hook("rtk gh pr create --fill", repository)
         self.assertEqual(decision(result), "deny", result.stdout + result.stderr)
 
+    def test_pr_creation_with_gh_flags_or_path_is_checked(self):
+        # -R / --repo を前に置いた形や、パス付きの gh も判定する（jp-doc-review.py の is_pr_create を共有）
+        repository = make_repository(self.base)
+        for command in ("gh -R org/repo pr create --fill", "/usr/bin/gh pr create --fill"):
+            with self.subTest(command=command):
+                result = run_hook(command, repository)
+                self.assertEqual(decision(result), "deny", result.stdout + result.stderr)
+
     def test_exhausted_time_budget_is_denied(self):
         # settings.json の timeout で打ち切られると、Claude Code は通してしまう。先に自分で止める
         repository = make_repository(self.base)

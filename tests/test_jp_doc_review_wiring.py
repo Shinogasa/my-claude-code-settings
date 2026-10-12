@@ -85,6 +85,15 @@ PRINCIPLE_REVIEW_COMMAND = (
     "else echo '{\"systemMessage\":\"原則レビューのフック（~/.claude/hooks/principle-review.py）が見つからないので"
     "検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi"
 )
+
+
+def guarded(script, args=""):
+    """フックの無いブランチへ設定リポジトリを戻しても止めないよう、ファイルの有無で包んだ command。"""
+    path = f"~/.claude/hooks/{script}"
+    return (f"if [ -f {path} ]; then python3 {path}{args}; else echo '{{\"systemMessage\":\"フック（{path}）が"
+            "見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi")
+
+
 CONFLUENCE_MATCHER = "mcp__.*__(create|update)Confluence(Page|FooterComment|InlineComment)"
 
 
@@ -101,11 +110,11 @@ class WiringTests(unittest.TestCase):
     def test_writes_are_no_longer_recorded(self):
         # レビューの候補はPR作成時にブランチの差分から決めるので、書き込みの記録は要らない
         all_commands = [command for event in SETTINGS["hooks"] for command in commands(event)]
-        self.assertNotIn("python3 ~/.claude/hooks/jp-doc-review.py post-tool-use", all_commands)
+        self.assertEqual([command for command in all_commands if "jp-doc-review.py post-tool-use" in command], [])
 
     def test_confluence_matcher_catches_only_posting_tools(self):
         self.assertEqual(commands("PreToolUse", CONFLUENCE_MATCHER),
-                         ["python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-confluence"])
+                         [guarded("jp-doc-review.py", " pre-tool-use-confluence")])
         pattern = re.compile(f"^(?:{CONFLUENCE_MATCHER})$")
         for name in ("createConfluencePage", "updateConfluencePage",
                      "createConfluenceFooterComment", "createConfluenceInlineComment"):
@@ -118,23 +127,23 @@ class WiringTests(unittest.TestCase):
             "~/.claude/hooks/guard-dangerous-bash.sh",
             "rtk hook claude",
             "~/.claude/hooks/warn-branch-behind-main.sh",
-            "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash",
-            "python3 ~/.claude/hooks/block-commit-on-merged-pr.py",
-            "python3 ~/.claude/hooks/require-full-tests-before-pr.py",
+            guarded("jp-doc-review.py", " pre-tool-use-bash"),
+            guarded("block-commit-on-merged-pr.py"),
+            guarded("require-full-tests-before-pr.py"),
             PRINCIPLE_REVIEW_COMMAND,
         ])
 
     def test_agent_calls_are_recorded_and_existing_hooks_remain(self):
         self.assertEqual(commands("PreToolUse", "Agent|Task"),
-                         ["python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-agent"])
-        self.assertIn("python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash", commands("PreToolUse", "Bash"))
+                         [guarded("jp-doc-review.py", " pre-tool-use-agent")])
+        self.assertIn(guarded("jp-doc-review.py", " pre-tool-use-bash"), commands("PreToolUse", "Bash"))
         self.assertEqual(len(commands("PreToolUse", CONFLUENCE_MATCHER)), 1)
 
     def test_stop_runs_only_read_check(self):
-        self.assertEqual(commands("Stop"), ["python3 ~/.claude/hooks/skill-read-check.py stop"])
+        self.assertEqual(commands("Stop"), [guarded("skill-read-check.py", " stop")])
 
     def test_subagent_stop_runs_read_check(self):
-        self.assertEqual(commands("SubagentStop"), ["python3 ~/.claude/hooks/skill-read-check.py subagent-stop"])
+        self.assertEqual(commands("SubagentStop"), [guarded("skill-read-check.py", " subagent-stop")])
 
     def test_session_start_is_kept(self):
         self.assertEqual(commands("SessionStart"), ["~/.claude/hooks/detect-parallel-sessions.sh"])
@@ -150,8 +159,8 @@ class WiringTests(unittest.TestCase):
 
     def test_pr_hooks_stop_themselves_before_the_timeout(self):
         # timeout で打ち切られたフックは止めたことにならない。予算は timeout より5秒以上短くする
-        for name, command in (("jp-doc-review.py", "python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-bash"),
-                              ("require-full-tests-before-pr.py", "python3 ~/.claude/hooks/require-full-tests-before-pr.py")):
+        for name, command in (("jp-doc-review.py", guarded("jp-doc-review.py", " pre-tool-use-bash")),
+                              ("require-full-tests-before-pr.py", guarded("require-full-tests-before-pr.py"))):
             with self.subTest(hook=name):
                 spec = importlib.util.spec_from_file_location(name.replace("-", "_")[:-3], REPO_ROOT / "hooks" / name)
                 module = importlib.util.module_from_spec(spec)
