@@ -1113,28 +1113,30 @@ class TestSlowGitFailsClosed(unittest.TestCase):
             f'exec "{shutil.which("git")}" "$@"\n')
         shim.chmod(0o755)
         self.shim_dir = shim_dir
-        for name in ("main", "hooks", "custom"):
+        for name in ("main", "hooks", "custom", "feature"):
             (base / name).mkdir()
         self.on_main = make_repo(base / "main", with_hooks=False, branch="main")
         self.with_hooks = make_repo(base / "hooks", with_hooks=True)
         self.custom_hooks = make_repo(base / "custom", with_hooks=False)
+        self.feature = make_repo(base / "feature", with_hooks=False)
         hooks = self.custom_hooks / "githooks"
         hooks.mkdir()
         (hooks / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
         (hooks / "pre-commit").chmod(0o755)
         git(self.custom_hooks, "config", "core.hooksPath", "githooks")
 
-    def run_slow(self, command, cwd, match):
+    def run_slow(self, command, cwd, match, path=None):
         payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd)}
-        env = dict(os.environ, PATH=f"{self.shim_dir}:{os.environ['PATH']}",
+        env = dict(os.environ, PATH=path or f"{self.shim_dir}:{os.environ['PATH']}",
                    SLOW_GIT_MATCH=match, SLOW_GIT_SEC=self.SLOW_SEC)
         return subprocess.run([sys.executable, str(GUARD)], input=json.dumps(payload),
                               capture_output=True, text=True, cwd=str(cwd), env=env)
 
-    def assert_blocked_as_unchecked(self, command, cwd, match):
-        result = self.run_slow(command, cwd, match)
+    def assert_blocked_as_unchecked(self, command, cwd, match, path=None):
+        result = self.run_slow(command, cwd, match, path)
         self.assertEqual(result.returncode, BLOCK, f"{command} ({match}): {result.stderr}")
-        self.assertIn("判定できません", result.stderr)
+        # 判定できないときの止め方はほかにもあるので、git の照会の失敗で止めたことまで確かめる
+        self.assertIn("終わらないか、起動できなかった", result.stderr)
 
     def test_slow_branch_lookup_blocks_commit(self):
         self.assert_blocked_as_unchecked('git commit -m "x"', self.on_main, "symbolic-ref")
@@ -1149,6 +1151,16 @@ class TestSlowGitFailsClosed(unittest.TestCase):
     def test_slow_hooks_path_lookup_blocks_no_verify(self):
         self.assert_blocked_as_unchecked(
             'git commit --no-verify -m "x"', self.custom_hooks, "core.hooksPath")
+
+    def test_git_that_cannot_start_blocks_commit(self):
+        empty = Path(self.tmp.name) / "empty-bin"
+        empty.mkdir()
+        self.assert_blocked_as_unchecked('git commit -m "x"', self.on_main, "", path=str(empty))
+
+    def test_slow_lookup_the_commit_does_not_need_is_not_blocked(self):
+        # 作業ブランチへの --no-verify の無いコミットは git-dir を照会しない。遅くても通る
+        result = self.run_slow('git commit -m "x"', self.feature, "--absolute-git-dir")
+        self.assertEqual(result.returncode, ALLOW, result.stderr)
 
     def test_commands_without_git_lookup_are_not_slowed_or_blocked(self):
         result = self.run_slow("ls", self.on_main, " ")
