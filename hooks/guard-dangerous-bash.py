@@ -614,15 +614,24 @@ def is_git_commit(tokens: list) -> bool:
     return subcommand == "commit"
 
 
+class GitQueryFailed(Exception):
+    """git の照会が時間内に終わらなかった、または git を起動できなかった。"""
+
+
 def run_git(cwd: str, *args: str) -> str:
-    """git コマンドの標準出力を返す。失敗時は空文字列。"""
+    """git コマンドの標準出力を返す。git が0以外で終わったときは空文字列。
+
+    0以外の終了は「リポジトリでない」「detached HEAD」などの正当な答えとして扱う。
+    タイムアウトと起動の失敗は答えが無いので、空文字列に畳まず GitQueryFailed を投げる。
+    畳むと「検査できなかった」が「保護ブランチではない」になり、コミットを通してしまう。
+    """
     try:
         result = subprocess.run(
             ["git", "-C", cwd, *args],
             capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
         )
     except (OSError, subprocess.SubprocessError):
-        return ""
+        raise GitQueryFailed(" ".join(args)) from None
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
@@ -825,7 +834,9 @@ def verification_hooks_active(cwd: str) -> bool:
     if not git_dir:
         return False
 
-    hooks_path = run_git(cwd, "config", "--get", "core.hooksPath")
+    hooks_path = git_config_lookup(cwd, "--get", "core.hooksPath")
+    if hooks_path is None:
+        raise GitQueryFailed("config --get core.hooksPath")
     if hooks_path:
         base = Path(hooks_path)
         if not base.is_absolute():
@@ -845,6 +856,18 @@ def verification_hooks_active(cwd: str) -> bool:
 
 
 def main() -> int:
+    try:
+        return run_checks()
+    except GitQueryFailed as error:
+        print(f"ブロック: git の照会（git {error}）が{GIT_TIMEOUT_SEC}秒以内に終わらないか、起動できなかったため、",
+              file=sys.stderr)
+        print("  保護ブランチと検証フックを判定できません。", file=sys.stderr)
+        print("  マシンが重いときに起きます。少し待ってから実行し直してください。", file=sys.stderr)
+        print("  続く場合は、あなた自身が端末で実行してください。", file=sys.stderr)
+        return 2
+
+
+def run_checks() -> int:
     try:
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
