@@ -45,8 +45,10 @@ ADR 0025の背景で挙げた「`cd <別のリポジトリ> && git commit` で�
    フックはClaude Codeのツール呼び出しにしか効かないので、予算切れが続いてもPRを作れなくなることは無い。
    `settings.json` のtimeoutは30秒にする。2026-10-10の実機確認で、`jp-doc-review.py` がtimeout（当時10秒）で
    打ち切られ、PRがレビューなしで作られた。Claude Codeは、打ち切ったフックを止めなかったものとして扱う
-8. `rtk` を前置きとして扱い、`rtk gh pr create` もPR作成と判定する。`rtk hook claude` は `gh` を `rtk gh` に書き換える。
-   ほかのフックが、書き換えの前と後のどちらの入力を受け取るかは確かめていない。どちらでも判定できる形にした
+8. `rtk` を前置きとして扱い、`rtk gh pr create` もPR作成と判定する。PreToolUse(Bash) のフックは `rtk hook claude` が
+   書き換える前の入力を受け取る（根拠の節の実測）。そのため `rtk` が前に付くのは、エージェントが自分で付けたときである。
+   `codex/RTK.md` はCodexに、すべてのコマンドへ `rtk` を付けるよう指示しているので、この扱いは要る。
+   決めた人: ユーザー（2026-10-11、当初の理由「書き換えの前と後のどちらを受け取るか分からない」が実測で成り立たなくなった後に、この扱いを続けると決めた）
 
 ## 検討した代替案
 
@@ -102,3 +104,7 @@ ADR 0025の「止めずに知らせる」経路で通る。止めても書き直
 - `docs/adr/0025-jp-doc-review-at-pr-creation.md`
 - `hooks/guard-dangerous-bash.py` の docstring（cdの追い方と、確定できないときに止める理由）
 - `tests/test_jp_doc_review_hook.py` の `PrReviewTests`（cdを含む7件。修正前に失敗し、修正後に通過した）
+- 決定8の実測（2026-10-11、Claude Code 2.1.296、バックグラウンドのセッション、自動モード）: 記録用のフックを
+  PreToolUse(Bash) の一覧の先頭と末尾（`rtk hook claude` と `jp-doc-review.py` より後ろ）に置き、rtkが書き換える
+  `git status` と `ls` を1回ずつ実行した。末尾のフックも書き換えの前の `command`（`tool_input.command`）を受け取り、先頭との時刻差は2〜5msだった。
+  確かめたのはこの配置と2回だけで、対話のセッションや別のバージョンでは確かめていない。記録は保存していない

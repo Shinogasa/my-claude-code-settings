@@ -53,6 +53,10 @@ cd を信じすぎると、実際のコミット先ではない場所で判定�
 - `git -C` は文字列上で正規化せず git に解決させ、複数指定は累積する
 - 判定の前に、リダイレクト、先頭の `NAME=value`、前置き（time / exec / nohup / command /
   builtin / env）、予約語（! / if / then / do / { など）を取り除く
+- ラッパーは、この設定がエージェントに使わせているものだけを前置きとして扱う。いまは
+  `rtk`（オプションと `proxy` を含む。codex/RTK.md が全コマンドに付けるよう指示している）だけ。
+  `sudo` / `timeout` や rtk の他のサブコマンド（err / summary / run など）は追わない。
+  ラッパーを追い始めるときりが無いので、導入を決めたラッパーだけをここへ足す
 
 既知の限界: `bash -c '...'` や `"$(...)"` の中のような入れ子のシェル、`GIT_DIR` などの
 環境変数による対象の差し替え、引用符で名前を隠した CDPATH の設定は追わない。
@@ -294,6 +298,24 @@ def strip_redirections(tokens: list) -> list:
     return result
 
 
+def skip_options(tokens: list, index: int) -> int:
+    while index < len(tokens) and tokens[index].startswith("-"):
+        index += 1
+    return index
+
+
+def skip_rtk_wrapper(tokens: list, index: int) -> int:
+    """`rtk [opts] [proxy [opts]]` の後ろ、実際のコマンドの位置を返す。
+
+    rtk 0.50.0 のオプションは値を取らない。値を取るオプションが増えたら、その値をコマンドと
+    取り違えて素通しするので、ここを見直す。
+    """
+    index = skip_options(tokens, index)
+    if index < len(tokens) and tokens[index] == "proxy":
+        index = skip_options(tokens, index + 1)
+    return index
+
+
 def strip_prefixes(tokens: list) -> list:
     """先頭の `NAME=value`・前置き（time / env など）・予約語を除いた実際のコマンドを返す。"""
     index = 0
@@ -308,6 +330,9 @@ def strip_prefixes(tokens: list) -> list:
             while tok in ("env", "command", "time") and index < len(tokens) \
                     and tokens[index].startswith("-"):
                 index += 1
+            continue
+        if tok == "rtk":
+            index = skip_rtk_wrapper(tokens, index + 1)
             continue
         break
     return tokens[index:]
