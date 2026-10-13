@@ -136,6 +136,15 @@ class SetupCliTests(unittest.TestCase):
         self.assertIn("worktree", result.stderr)
         self.assertFalse((self.home / ".claude" / "rules").exists())
 
+    def test_usage_is_shown_in_worktree(self):
+        # 使い方の表示は何も変更しないので、worktreeでも止めない
+        worktree = self.make_worktree_repository()
+        result = run_setup(worktree, self.home, "--help",
+                           extra_env={"SETUP_REAL_GIT": shutil.which("git")})
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("Usage:", result.stderr)
+        self.assertNotIn("worktree", result.stderr)
+
     def test_stops_when_worktree_check_fails(self):
         # .git があるのに判定できない（古いgit、safe.directory違反など）。stubのrev-parseは128を返す
         git(self.repository, "init", "-q")
