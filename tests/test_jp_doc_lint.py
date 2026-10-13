@@ -68,6 +68,13 @@ class HtmlTests(WrapperCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("手触り", result.stdout)
 
+    def test_unclosed_script_cannot_be_checked(self):
+        # 閉じていない script の後ろの本文は検査されない。前半だけで PASS にしない
+        draft = self.write("d.html", f"<p>前半の普通の文です。</p><script>var a=1;<p>{SLOP_SENTENCE}</p>")
+        result = self.run_wrapper(draft)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(CANNOT_CHECK, result.stdout + result.stderr)
+
     def test_html_without_text_cannot_be_checked(self):
         draft = self.write("d.html", '<ac:structured-macro ac:name="toc"/>\n')
         result = self.run_wrapper(draft)

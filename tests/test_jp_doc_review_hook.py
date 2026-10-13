@@ -531,7 +531,14 @@ class ReviewerBashTests(HookCase):
     def test_quoted_target_still_passes(self):
         self.link_claude_hooks()
         self.assertAllowed("python3 ~/.claude/hooks/jp-doc-lint.py 'docs/a b.md'")
-        self.assertAllowed(f'python3 {self.lint_path()} "docs/a.md"')
+        self.assertAllowed(f"python3 {self.lint_path()} '/tmp/日本語 の/a.md'")
+
+    def test_target_that_the_shell_would_expand_is_denied(self):
+        # 3語目はシングルクォートで囲むか、展開されない文字だけにする。zsh のグロブ修飾子 (e:...:) はコマンドを実行する
+        for target in ("x*(e:'id':)", "*.md", "a?.md", "{a,b}.md", "$HOME/a.md", "${IFS}a", "~/a.md",
+                       "=python3", "a[1].md", "!x", '"docs/a.md"', '"$HOME/a.md"', "'a'b.md", "'a'\\''b.md'"):
+            with self.subTest(target=target):
+                self.assertDenied(f"python3 {self.lint_path()} {target}")
 
     def test_unparsable_command_is_denied(self):
         self.assertDenied(f"python3 {self.lint_path()} 'a.md")
