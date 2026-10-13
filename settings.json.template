@@ -84,6 +84,18 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__.*__(create|update)Confluence(Page|FooterComment|InlineComment)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f ~/.claude/hooks/jp-doc-review.py ]; then python3 ~/.claude/hooks/jp-doc-review.py post-tool-use-confluence; else echo '{\"systemMessage\":\"フック（~/.claude/hooks/jp-doc-review.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
