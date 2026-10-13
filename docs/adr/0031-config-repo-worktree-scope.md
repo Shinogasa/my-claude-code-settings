@@ -29,7 +29,7 @@ status: accepted
 - 本体でブランチを切るのは、並列セッションがいないときだけにする。いれば、待つ・worktreeに回す・構わず進めるのどれにするかをユーザーに聞く。終わったら本体を `main` に戻す
 - worktreeは `.claude/worktrees/` に作る
 - `setup.sh` は、worktreeで実行されたら何も変更せずに止まる
-- `setup.sh` を実行して初めて効くファイルを変えたPRをマージしたら、エージェントが本体で `setup.sh` を実行するよう提案する。実行忘れを検出する仕組みは無いので、マージの手順に組み込む（2026-10-13に追加）
+- `setup.sh` を実行して初めて効くファイルを変えたPRをマージしたら、エージェントが本体で `setup.sh` を実行するよう提案する。実行は `~/.claude/` などを書き換えるので、ユーザーの了承を得てから行う。実行忘れを検出する仕組みは無いので、マージの手順に組み込む（2026-10-13に追加）
 - `.githooks/pre-commit` は、worktreeでは本体の作業ツリーにある `patterns-local.txt` を読む
 
 設計の詳細は `docs/superpowers/specs/2026-10-09-config-repo-worktree-scope-design.md`。
