@@ -17,6 +17,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 STATE_MODULE = ROOT / "bin" / "setup-state.py"
 REAL_GIT = shutil.which("git")
+# setup.sh の refuse_worktree が git -C <repository> の後ろに渡す引数列
+GUARD_REV_PARSE = "rev-parse --path-format=absolute --git-dir --git-common-dir"
 
 
 def copy_repository(base: Path) -> Path:
@@ -74,8 +76,9 @@ def make_stub_commands(base: Path) -> Path:
     git = bindir / "git"
     git.write_text(
         "#!/bin/sh\n"
-        # setup.shのworktree判定（読み取りだけ）は記録せず、本物のgitで判定させる（ADR 0031）
-        f"if [ \"${{3:-}}\" = rev-parse ]; then exec \"{REAL_GIT}\" \"$@\"; fi\n"
+        # setup.shのworktree判定（読み取りだけ）は記録せず、本物のgitで判定させる（ADR 0031）。
+        # ガードが渡す引数列と完全に一致するときだけ通し、ほかのrev-parseはコマンドログに残す
+        f"if [ \"$*\" = \"-C $SETUP_SUBMODULE_REPOSITORY {GUARD_REV_PARSE}\" ]; then exec \"{REAL_GIT}\" \"$@\"; fi\n"
         "printf '%s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\n"
         "if [ \"${SETUP_GIT_EXIT:-0}\" != 0 ]; then exit \"$SETUP_GIT_EXIT\"; fi\n"
         "if [ \"${SETUP_REAL_GIT:-}\" != '' ] && [ \"${3:-}\" = ls-files ]; then exec \"$SETUP_REAL_GIT\" \"$@\"; fi\n"
