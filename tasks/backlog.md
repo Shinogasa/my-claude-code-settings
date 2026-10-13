@@ -768,18 +768,19 @@ PR #74 のレビューで見送ったMinor。どれも、通常の構成では�
 
 ### P3: 上流が直ったら `hooks/rtk-rewrite.py` を外す
 
-Claude Codeのworktree分離チェックは、rtkが書き換えた `rtk git ...` を拒否する。そのため2026-10-13に、
-linked worktreeでgitの語を含むコマンドだけ、rtkの書き換えを省くラッパー `hooks/rtk-rewrite.py` を入れた。
-そのとき見送った案は2つある。rtkの `hooks.exclude_commands` にgitを足す案は、全セッションでgitがrtkを通らなくなる。
-worktreeでは書き換えを全コマンドで止める案は、worktreeでrtkが効かなくなる。
+Claude Codeのworktree分離チェックは、rtkが書き換えた `rtk git ...` を拒否する。
+そのため2026-10-13に、ラッパー `hooks/rtk-rewrite.py` を入れた。
+このラッパーは、linked worktreeでgitの語を含むコマンドだけ、rtkの書き換えを省く。
+そのとき見送った案は2つある。1つは、rtkの `hooks.exclude_commands` にgitを足す案で、全セッションでgitがrtkを通らなくなる。
+もう1つは、worktreeでは書き換えを全コマンドで止める案で、worktreeではrtkを使えなくなる。
 
-上流の状況（2026-10-13時点、いずれもOPEN）
+上流の状況は次のとおり（2026-10-13時点、いずれもOPEN）。
 - Claude Code https://github.com/anthropics/claude-code/issues/99895
 - rtk https://github.com/rtk-ai/rtk/pull/3879
 - rtk https://github.com/rtk-ai/rtk/pull/4490
 
-**着手条件**: どれかが直ったとき。直ったら、settings.json.template を `rtk hook claude` に戻し、
-ラッパーとテスト（`tests/test_rtk_rewrite_hook.py`）を消す。配線のテストのtimeoutの例外も戻す。
+**着手条件**: どれかが直ったとき。直ったら、settings.json.templateを `rtk hook claude` に戻し、
+ラッパーとテスト（`tests/test_rtk_rewrite_hook.py`）を消す。配線のテストにあるtimeoutの例外も戻す。
 
 ### P3: ADR 0031と設計書の冒頭に「解く問題」の1文を置く
 
