@@ -34,7 +34,8 @@
           },
           {
             "type": "command",
-            "command": "rtk hook claude"
+            "command": "if [ -f ~/.claude/hooks/rtk-rewrite.py ]; then python3 ~/.claude/hooks/rtk-rewrite.py; else echo '{\"systemMessage\":\"フック（~/.claude/hooks/rtk-rewrite.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
+            "timeout": 60
           },
           {
             "type": "command",
