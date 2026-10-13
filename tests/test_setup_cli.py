@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from git_fixture import git  # noqa: E402
 
+# setup.sh の refuse_worktree が git -C <repository> の後ろに渡す引数列
+GUARD_REV_PARSE = "rev-parse --path-format=absolute --git-dir --git-common-dir"
+
 
 def copy_repository(base: Path) -> Path:
     repository = base / "repository"
@@ -55,9 +58,11 @@ def make_stub_commands(base: Path) -> Path:
     git = bindir / "git"
     git.write_text(
         "#!/bin/sh\n"
-        # worktreeの判定（読み取りだけ）はログに残さない。SETUP_REAL_GITがあれば本物のgitに渡し、
-        # 無ければGitの作業ツリーでないときと同じ128を返して、判定を素通りさせる
-        "if [ \"$3\" = rev-parse ]; then\n"
+        # worktreeの判定（読み取りだけ）は、ガードが渡す引数列と完全に一致するときだけ別のログに分ける。
+        # SETUP_REAL_GITがあれば本物のgitに渡し、無ければGitの作業ツリーでないときと同じ128を返す。
+        # 一致しないrev-parseは、ほかのgit操作と同じくコマンドログに残る
+        f"if [ \"$*\" = \"-C $SETUP_SUBMODULE_REPOSITORY {GUARD_REV_PARSE}\" ]; then\n"
+        "  printf '%s\\n' \"$*\" >> \"$SETUP_GUARD_LOG\"\n"
         "  if [ -n \"${SETUP_REAL_GIT:-}\" ]; then exec \"$SETUP_REAL_GIT\" \"$@\"; fi\n"
         "  exit 128\n"
         "fi\n"
@@ -77,6 +82,7 @@ def run_setup(repository: Path, home: Path, *args: str, extra_env=None) -> subpr
     env["HOME"] = str(home)
     env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
     env["SETUP_COMMAND_LOG"] = str(home.parent / "commands.log")
+    env["SETUP_GUARD_LOG"] = str(home.parent / "guard.log")
     env["SETUP_SUBMODULE_REPOSITORY"] = str(repository)
     env["SETUP_SUBMODULE_ROOT"] = str(repository)
     if extra_env:
@@ -115,6 +121,11 @@ class SetupCliTests(unittest.TestCase):
             shutil.move(str(entry), worktree / entry.name)
         return worktree
 
+    def assert_stopped_before_any_change(self):
+        # ガードより前に、配布もコマンドの実行も起きていない
+        self.assertEqual(list((self.home / ".claude").iterdir()), [])
+        self.assertFalse((self.base / "commands.log").exists())
+
     def test_refuses_to_run_in_worktree(self):
         worktree = self.make_worktree_repository()
         # ほかの前提検査で止まらないようにし、止まる理由をworktreeの判定だけにする
@@ -123,7 +134,7 @@ class SetupCliTests(unittest.TestCase):
                            extra_env={"SETUP_REAL_GIT": shutil.which("git")})
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("worktree", result.stderr)
-        self.assertFalse((self.home / ".claude" / "rules").exists())
+        self.assert_stopped_before_any_change()
 
     def test_refuses_worktree_even_with_git_dir_env(self):
         worktree = self.make_worktree_repository()
@@ -134,7 +145,16 @@ class SetupCliTests(unittest.TestCase):
                                       "GIT_DIR": main_git_dir, "GIT_COMMON_DIR": main_git_dir})
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("worktree", result.stderr)
-        self.assertFalse((self.home / ".claude" / "rules").exists())
+        self.assert_stopped_before_any_change()
+
+    def test_usage_is_shown_in_worktree(self):
+        # 使い方の表示は何も変更しないので、worktreeでも止めない
+        worktree = self.make_worktree_repository()
+        result = run_setup(worktree, self.home, "--help",
+                           extra_env={"SETUP_REAL_GIT": shutil.which("git")})
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("Usage:", result.stderr)
+        self.assertNotIn("worktree", result.stderr)
 
     def test_stops_when_worktree_check_fails(self):
         # .git があるのに判定できない（古いgit、safe.directory違反など）。stubのrev-parseは128を返す
@@ -143,14 +163,18 @@ class SetupCliTests(unittest.TestCase):
         result = run_setup(self.repository, self.home, "--claude")
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("判定できません", result.stderr)
-        self.assertFalse((self.home / ".claude" / "rules").exists())
+        self.assert_stopped_before_any_change()
 
     def test_main_working_tree_passes_guard(self):
         git(self.repository, "init", "-q")
         (self.home / ".claude").mkdir()
         result = run_setup(self.repository, self.home, "--claude",
                            extra_env={"SETUP_REAL_GIT": shutil.which("git")})
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("worktree", result.stderr)
+        # 判定がrev-parseまで進んだ（.git が無いとみなして素通りしたのではない）
+        guard_log = (self.base / "guard.log").read_text(encoding="utf-8")
+        self.assertEqual(guard_log, f"-C {self.repository} {GUARD_REV_PARSE}\n")
 
     def test_selector_is_required_without_mutating_home(self):
         result = run_setup(self.repository, self.home)

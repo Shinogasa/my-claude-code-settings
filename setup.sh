@@ -26,7 +26,6 @@ refuse_worktree() {
   echo "  本体の作業ツリー（$(dirname "$common_dir")）で実行し直してください。" >&2
   exit 1
 }
-refuse_worktree
 
 CLAUDE_DIR="$HOME/.claude"
 CODEX_DIR="$HOME/.codex"
@@ -73,6 +72,9 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$SELECTOR" ] || fail_usage
+
+# 使い方の表示は何も変更しないので、worktreeでも出す。ここより前に、ファイルやコマンドを触る処理を置かない
+refuse_worktree
 
 red() { printf 'エラー: %s\n' "$1" >&2; }
 yellow() { printf '注意: %s\n' "$1" >&2; }
