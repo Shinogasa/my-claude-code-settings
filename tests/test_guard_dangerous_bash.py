@@ -8,6 +8,8 @@
 """
 import atexit
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -920,6 +922,35 @@ class TestPrefixesAndChains(TrackingFixture):
             with self.subTest(command=command):
                 self.assert_allowed(command, self.main_repo)
 
+class TestRtkWrapper(TrackingFixture):
+    """設定が使わせている rtk の形（codex/RTK.md）で、git の判定を見失わないこと。
+
+    RTK.md は「Always prefix shell commands with `rtk`」と指示し、`rtk proxy <cmd>` も載せている。
+    それ以外のラッパーと rtk のサブコマンド（err / summary / run など）は対象外。
+    """
+
+    def assert_allowed(self, command, cwd):
+        result = run_guard_in(command, cwd, cwd)
+        self.assertEqual(result.returncode, ALLOW, f"{command}: {result.stderr}")
+
+    def test_rtk_forms_taught_by_rtk_md_do_not_hide_git(self):
+        for command in ('rtk git commit -m "x"',
+                        'rtk -v git commit -m "x"',
+                        'rtk --ultra-compact git commit -m "x"',
+                        'rtk proxy git commit -m "x"',
+                        'rtk git push --no-verify origin work'):
+            with self.subTest(command=command):
+                self.assert_blocked(command, self.main_repo)
+
+    def test_ordinary_rtk_commands_are_not_over_blocked(self):
+        for command, cwd in (('rtk git status', self.main_repo),
+                             ('rtk git commit -m "x"', self.feature),
+                             ('rtk env', self.main_repo),
+                             ('rtk gain', self.main_repo)):
+            with self.subTest(command=command):
+                self.assert_allowed(command, cwd)
+
+
 class TestFinalReviewFindings(TrackingFixture):
     """最終確認の指摘: 実行されない cd、リダイレクト除去の副作用、引用符付きの演算子。"""
 
@@ -1058,6 +1089,83 @@ class TestDestructivePushTarget(TrackingFixture):
         self.git_config(self.feature, "remote.origin.push", "refs/heads/work:refs/heads/main")
         self.assert_result("git push --force origin", self.feature, BLOCK)
         self.assert_result("git push --force", self.feature, BLOCK)
+
+
+class TestSlowGitFailsClosed(unittest.TestCase):
+    """git の照会が時間内に終わらないとき、「検査できなかった」を「問題なし」に畳まないこと。
+
+    全件テストを並列に流したときに、main へのコミットが通る失敗が1回だけ出て気づいた。
+    git を遅くする shim を PATH の先頭に置き、引数が SLOW_GIT_MATCH を含む呼び出しだけを遅らせる。
+    """
+
+    SLOW_SEC = "5"  # guard の GIT_TIMEOUT_SEC（3秒）を確実に超える
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        shim_dir = base / "bin"
+        shim_dir.mkdir()
+        shim = shim_dir / "git"
+        shim.write_text(
+            "#!/bin/bash\n"
+            'case " $* " in *"$SLOW_GIT_MATCH"*) sleep "$SLOW_GIT_SEC" ;; esac\n'
+            f'exec "{shutil.which("git")}" "$@"\n')
+        shim.chmod(0o755)
+        self.shim_dir = shim_dir
+        for name in ("main", "hooks", "custom", "feature"):
+            (base / name).mkdir()
+        self.on_main = make_repo(base / "main", with_hooks=False, branch="main")
+        self.with_hooks = make_repo(base / "hooks", with_hooks=True)
+        self.custom_hooks = make_repo(base / "custom", with_hooks=False)
+        self.feature = make_repo(base / "feature", with_hooks=False)
+        hooks = self.custom_hooks / "githooks"
+        hooks.mkdir()
+        (hooks / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
+        (hooks / "pre-commit").chmod(0o755)
+        git(self.custom_hooks, "config", "core.hooksPath", "githooks")
+
+    def run_slow(self, command, cwd, match, path=None):
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd)}
+        env = dict(os.environ, PATH=path or f"{self.shim_dir}:{os.environ['PATH']}",
+                   SLOW_GIT_MATCH=match, SLOW_GIT_SEC=self.SLOW_SEC)
+        return subprocess.run([sys.executable, str(GUARD)], input=json.dumps(payload),
+                              capture_output=True, text=True, cwd=str(cwd), env=env)
+
+    def assert_blocked_as_unchecked(self, command, cwd, match, path=None):
+        result = self.run_slow(command, cwd, match, path)
+        self.assertEqual(result.returncode, BLOCK, f"{command} ({match}): {result.stderr}")
+        # 判定できないときの止め方はほかにもあるので、git の照会の失敗で止めたことまで確かめる
+        self.assertIn("終わらないか、起動できなかった", result.stderr)
+
+    def test_slow_branch_lookup_blocks_commit(self):
+        self.assert_blocked_as_unchecked('git commit -m "x"', self.on_main, "symbolic-ref")
+
+    def test_slow_head_lookup_blocks_commit(self):
+        self.assert_blocked_as_unchecked('git commit -m "x"', self.on_main, "--verify")
+
+    def test_slow_git_dir_lookup_blocks_no_verify(self):
+        self.assert_blocked_as_unchecked(
+            'git commit --no-verify -m "x"', self.with_hooks, "--absolute-git-dir")
+
+    def test_slow_hooks_path_lookup_blocks_no_verify(self):
+        self.assert_blocked_as_unchecked(
+            'git commit --no-verify -m "x"', self.custom_hooks, "core.hooksPath")
+
+    def test_git_that_cannot_start_blocks_commit(self):
+        empty = Path(self.tmp.name) / "empty-bin"
+        empty.mkdir()
+        self.assert_blocked_as_unchecked('git commit -m "x"', self.on_main, "", path=str(empty))
+
+    def test_slow_lookup_the_commit_does_not_need_is_not_blocked(self):
+        # 作業ブランチへの --no-verify の無いコミットは git-dir を照会しない。遅くても通る
+        result = self.run_slow('git commit -m "x"', self.feature, "--absolute-git-dir")
+        self.assertEqual(result.returncode, ALLOW, result.stderr)
+
+    def test_commands_without_git_lookup_are_not_slowed_or_blocked(self):
+        result = self.run_slow("ls", self.on_main, " ")
+        self.assertEqual(result.returncode, ALLOW, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

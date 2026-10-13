@@ -53,6 +53,10 @@ cd を信じすぎると、実際のコミット先ではない場所で判定�
 - `git -C` は文字列上で正規化せず git に解決させ、複数指定は累積する
 - 判定の前に、リダイレクト、先頭の `NAME=value`、前置き（time / exec / nohup / command /
   builtin / env）、予約語（! / if / then / do / { など）を取り除く
+- ラッパーは、この設定がエージェントに使わせているものだけを前置きとして扱う。いまは
+  `rtk`（オプションと `proxy` を含む。codex/RTK.md が全コマンドに付けるよう指示している）だけ。
+  `sudo` / `timeout` や rtk の他のサブコマンド（err / summary / run など）は追わない。
+  ラッパーを追い始めるときりが無いので、導入を決めたラッパーだけをここへ足す
 
 既知の限界: `bash -c '...'` や `"$(...)"` の中のような入れ子のシェル、`GIT_DIR` などの
 環境変数による対象の差し替え、引用符で名前を隠した CDPATH の設定は追わない。
@@ -294,6 +298,24 @@ def strip_redirections(tokens: list) -> list:
     return result
 
 
+def skip_options(tokens: list, index: int) -> int:
+    while index < len(tokens) and tokens[index].startswith("-"):
+        index += 1
+    return index
+
+
+def skip_rtk_wrapper(tokens: list, index: int) -> int:
+    """`rtk [opts] [proxy [opts]]` の後ろ、実際のコマンドの位置を返す。
+
+    rtk 0.50.0 のオプションは値を取らない。値を取るオプションが増えたら、その値をコマンドと
+    取り違えて素通しするので、ここを見直す。
+    """
+    index = skip_options(tokens, index)
+    if index < len(tokens) and tokens[index] == "proxy":
+        index = skip_options(tokens, index + 1)
+    return index
+
+
 def strip_prefixes(tokens: list) -> list:
     """先頭の `NAME=value`・前置き（time / env など）・予約語を除いた実際のコマンドを返す。"""
     index = 0
@@ -308,6 +330,9 @@ def strip_prefixes(tokens: list) -> list:
             while tok in ("env", "command", "time") and index < len(tokens) \
                     and tokens[index].startswith("-"):
                 index += 1
+            continue
+        if tok == "rtk":
+            index = skip_rtk_wrapper(tokens, index + 1)
             continue
         break
     return tokens[index:]
@@ -589,15 +614,24 @@ def is_git_commit(tokens: list) -> bool:
     return subcommand == "commit"
 
 
+class GitQueryFailed(Exception):
+    """git の照会が時間内に終わらなかった、または git を起動できなかった。"""
+
+
 def run_git(cwd: str, *args: str) -> str:
-    """git コマンドの標準出力を返す。失敗時は空文字列。"""
+    """git コマンドの標準出力を返す。git が0以外で終わったときは空文字列。
+
+    0以外の終了は「リポジトリでない」「detached HEAD」などの正当な答えとして扱う。
+    タイムアウトと起動の失敗は答えが無いので、空文字列に畳まず GitQueryFailed を投げる。
+    畳むと「検査できなかった」が「保護ブランチではない」になり、コミットを通してしまう。
+    """
     try:
         result = subprocess.run(
             ["git", "-C", cwd, *args],
             capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
         )
     except (OSError, subprocess.SubprocessError):
-        return ""
+        raise GitQueryFailed(" ".join(args)) from None
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
@@ -800,7 +834,9 @@ def verification_hooks_active(cwd: str) -> bool:
     if not git_dir:
         return False
 
-    hooks_path = run_git(cwd, "config", "--get", "core.hooksPath")
+    hooks_path = git_config_lookup(cwd, "--get", "core.hooksPath")
+    if hooks_path is None:
+        raise GitQueryFailed("config --get core.hooksPath")
     if hooks_path:
         base = Path(hooks_path)
         if not base.is_absolute():
@@ -820,6 +856,18 @@ def verification_hooks_active(cwd: str) -> bool:
 
 
 def main() -> int:
+    try:
+        return run_checks()
+    except GitQueryFailed as error:
+        print(f"ブロック: git の照会（git {error}）が{GIT_TIMEOUT_SEC}秒以内に終わらないか、起動できなかったため、",
+              file=sys.stderr)
+        print("  保護ブランチと検証フックを判定できません。", file=sys.stderr)
+        print("  マシンが重いときに起きます。少し待ってから実行し直してください。", file=sys.stderr)
+        print("  続く場合は、あなた自身が端末で実行してください。", file=sys.stderr)
+        return 2
+
+
+def run_checks() -> int:
     try:
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):

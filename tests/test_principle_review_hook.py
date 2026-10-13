@@ -447,6 +447,19 @@ class UntrustedPathTests(HookCase):
         self.assertIsNone(decision_of(output))
         self.assertIn("対象外にした", output["systemMessage"])
 
+    def test_control_characters_in_repository_root_are_excluded(self):
+        # 相対パスだけを見ると、escape したパスがレビュワーに渡り、ファイルを開けない（仕様書の10章）
+        for index, name in enumerate(("re‮po", "re\npo")):
+            with self.subTest(name=name):
+                repo = self.init_repo(self.base / name)
+                self.stage("docs/specs/a.md", repo=repo)
+                output = self.run_hook("git commit -m x", session=f"s{index}", cwd=repo)[1]
+                self.assertIsNone(decision_of(output))
+                message = output["systemMessage"]
+                self.assertIn("対象外にした", message)
+                self.assertIn("パスに制御文字を含む", message)
+                self.assertNotIn(name, message)
+
     def test_symlinked_target_is_not_reviewed(self):
         secret = self.base / "secret.md"
         secret.write_text("秘密", encoding="utf-8")
@@ -465,6 +478,49 @@ class UntrustedPathTests(HookCase):
         self.assertNotIn("\n", text)
         self.assertNotIn("\x1b", text)
         self.assertLessEqual(len(text), 200)
+
+
+class MergeTests(HookCase):
+    """マージ元ですでにコミットされた対象を、マージコミットで新規として止めない（2026-10-09、PR #71）。"""
+
+    def start_merge(self, text="本文"):
+        """main に ADR をコミットし、work へ --no-commit でマージした状態にする。"""
+        git(self.repo, "switch", "-q", "-c", "main")
+        self.stage("docs/adr/0029-x.md", text)
+        git(self.repo, "commit", "-q", "-m", "adr")
+        git(self.repo, "switch", "-q", "work")
+        self.stage("src/a.py", "x = 1\n")
+        git(self.repo, "commit", "-q", "-m", "work")
+        git(self.repo, "merge", "-q", "--no-ff", "--no-commit", "main")
+        return self.repo / "docs" / "adr" / "0029-x.md"
+
+    def test_target_same_as_merge_source_is_excluded_with_message(self):
+        path = self.start_merge()
+        output = self.run_hook("git commit -m merge")[1]
+        self.assertIsNone(decision_of(output))
+        self.assertIn(f"{path}（マージ元と同じ内容）", output["systemMessage"])
+        self.assertIn("対象外にした", output["systemMessage"])
+
+    def test_target_changed_while_resolving_is_reviewed(self):
+        path = self.start_merge()
+        self.stage("docs/adr/0029-x.md", "解消で書き換えた")
+        output = self.run_hook("git commit -m merge")[1]
+        self.assertEqual(decision_of(output), "deny")
+        self.assertIn(f"spec: {path}", reason_of(output))
+
+    def test_new_target_added_in_merge_commit_is_reviewed(self):
+        self.start_merge()
+        path = self.stage("docs/adr/0030-y.md")
+        output = self.run_hook("git commit -m merge")[1]
+        self.assertEqual(decision_of(output), "deny")
+        self.assertIn(f"spec: {path}", reason_of(output))
+
+    def test_unstaged_change_to_merged_target_is_reviewed_with_all_flag(self):
+        path = self.start_merge()
+        self.write("docs/adr/0029-x.md", "作業ツリーで書き換えた")
+        output = self.run_hook("git commit -a -m merge")[1]
+        self.assertEqual(decision_of(output), "deny")
+        self.assertIn(f"spec: {path}", reason_of(output))
 
 
 class StateMaintenanceTests(HookCase):

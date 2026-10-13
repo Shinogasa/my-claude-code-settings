@@ -284,6 +284,20 @@ def _staged(root: str, deadline: float) -> List[str]:
                       "--diff-filter=d", base, "--")
 
 
+def _same_as_merge_source(root: str, deadline: float, staged: List[str]) -> set:
+    """マージの途中なら、ステージ済みのパスのうち、インデックスの内容がマージ元（MERGE_HEAD）と同じものを返す。
+
+    マージ元ですでにコミットされたものは、そちらで原則レビューを受けている（受ける機会があった）ので、
+    マージコミットで新規として止めない。解消で書き換えたものは内容が違うので、ここに入らない。
+    """
+    merge = _git(root, deadline, "rev-parse", "--verify", "-q", "MERGE_HEAD^{commit}")
+    if merge.returncode != 0:
+        return set()
+    differing = set(_git_paths(root, deadline, "diff-index", "--cached", "--ignore-submodules", "--name-only", "-z",
+                               merge.stdout.strip(), "--"))
+    return set(staged) - differing
+
+
 def _broad_paths(root: str, deadline: float) -> List[str]:
     """git add が何を足すか推定できないとき、足されうるものを広めに取る。"""
     prefixes = [prefix for group in TARGET_DIRS.values() for prefix in group]
@@ -343,9 +357,9 @@ def _added_paths(root: str, adds: Tuple[Add, ...], deadline: float) -> List[str]
 
 def exclusion_reason(root: str, relative: str) -> Optional[str]:
     """レビューに回さない対象なら、その理由を返す。"""
-    if has_control(relative):
-        return "パスに制御文字を含む"
     absolute = Path(root) / relative
+    if has_control(str(absolute)):  # ルートに含む場合も、escape したパスではレビュワーがファイルを開けない
+        return "パスに制御文字を含む"
     if len(str(absolute)) > MAX_SHOWN_LENGTH:
         return "パスが長すぎる"  # 切り詰めたパスをレビュワーに渡したり、記録したりしない
     if absolute.is_symlink():
@@ -369,18 +383,19 @@ def changed_targets(repo: str, include_unstaged: bool, adds: Tuple[Add, ...],
             return [], []
         raise GitError(top.stderr.strip() or "git rev-parse に失敗した")
     root = top.stdout.strip()
-    relatives = _staged(root, deadline)
-    if include_unstaged:
-        relatives += _modified(root, deadline, [])
-    relatives += _added_paths(root, adds, deadline)
+    staged = _staged(root, deadline)
+    from_worktree = _modified(root, deadline, []) if include_unstaged else []
+    from_worktree += _added_paths(root, adds, deadline)
+    # 作業ツリーから入る変更は、インデックスがマージ元と同じでも内容が変わりうるので外さない
+    merged = _same_as_merge_source(root, deadline, staged) - set(from_worktree)
     found: List[Tuple[str, str]] = []
     excluded: List[Tuple[str, str]] = []
-    for relative in relatives:
+    for relative in staged + from_worktree:
         checkpoint = classify(relative)
         if not checkpoint:
             continue
         path = str(Path(root) / relative)
-        reason = exclusion_reason(root, relative)
+        reason = exclusion_reason(root, relative) or ("マージ元と同じ内容" if relative in merged else None)
         bucket, item = (excluded, (path, reason)) if reason else (found, (path, checkpoint))
         if item not in bucket:
             bucket.append(item)
