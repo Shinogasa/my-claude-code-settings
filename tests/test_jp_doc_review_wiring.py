@@ -131,7 +131,7 @@ class WiringTests(unittest.TestCase):
     def test_bash_group_asks_for_review_before_pr_and_keeps_existing_hooks(self):
         self.assertEqual(commands("PreToolUse", "Bash"), [
             "~/.claude/hooks/guard-dangerous-bash.sh",
-            "rtk hook claude",
+            guarded("rtk-rewrite.py"),
             "~/.claude/hooks/warn-branch-behind-main.sh",
             guarded("jp-doc-review.py", " pre-tool-use-bash"),
             guarded("block-commit-on-merged-pr.py"),
@@ -154,14 +154,13 @@ class WiringTests(unittest.TestCase):
     def test_session_start_is_kept(self):
         self.assertEqual(commands("SessionStart"), ["~/.claude/hooks/detect-parallel-sessions.sh"])
 
-    def test_every_hook_has_a_timeout_except_rtk(self):
+    def test_every_hook_has_a_timeout(self):
         for event, groups in SETTINGS["hooks"].items():
             for group in groups:
                 for hook in group["hooks"]:
                     with self.subTest(event=event, command=hook["command"]):
                         self.assertEqual(hook["type"], "command")
-                        if hook["command"] != "rtk hook claude":
-                            self.assertIsInstance(hook.get("timeout"), int)
+                        self.assertIsInstance(hook.get("timeout"), int)
 
     def test_pr_hooks_stop_themselves_before_the_timeout(self):
         # timeout で打ち切られたフックは止めたことにならない。予算は timeout より5秒以上短くする
