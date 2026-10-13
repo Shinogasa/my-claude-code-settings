@@ -65,6 +65,8 @@ def html_to_text(html: str) -> str:
     extractor = _TextExtractor()
     extractor.feed(html)
     extractor.close()
+    if extractor.skipping:
+        raise CannotCheck("閉じていない script か style がある。その後ろの本文を検査できない")
     lines = (line.strip() for line in "".join(extractor.parts).splitlines())
     return "\n".join(line for line in lines if line) + "\n"
 

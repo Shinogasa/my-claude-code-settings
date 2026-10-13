@@ -799,6 +799,9 @@ def handle_post_tool_use_confluence(payload: dict) -> None:
 # yomiyasu_lint.py を直接は呼ばせない。HTMLを0文字と数えてPASSにするので、ラッパーを通す
 LINT_WRAPPER = Path(__file__).resolve().parent / "jp-doc-lint.py"
 COMMAND_SEPARATORS = ("&&", "||", ";", "|", "&", "\n", "\r", "$(", "`", ">", "<")
+# 3語目（対象のファイル）は、シェルが何も展開しない形だけ通す。禁止する文字を並べる形だと、
+# zsh のグロブ修飾子 (e:...:) のような展開を取りこぼす
+SAFE_TARGET = re.compile(r"'[^'\\]+'|[A-Za-z0-9_./-]+")
 
 
 def _is_linter_command(command: str) -> bool:
@@ -820,6 +823,8 @@ def _is_linter_command(command: str) -> bool:
         return False
     program, linter, target = words
     if any(char in word for word in raw_words[:2] for char in "'\"\\") or target.startswith("-"):
+        return False
+    if not SAFE_TARGET.fullmatch(raw_words[2].rstrip()):
         return False
     if linter.startswith("~/"):
         linter = os.path.expanduser(linter)
