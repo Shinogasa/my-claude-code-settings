@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """日本語文書のレビューをjp-doc-reviewerへ依頼するClaude Codeフック。
 
-使い方: jp-doc-review.py <pre-tool-use-bash|pre-tool-use-confluence|pre-tool-use-agent|pre-tool-use-reviewer-bash|pre-tool-use-reviewer-edit>（入力はstdinのJSON）
+使い方: jp-doc-review.py <pre-tool-use-bash|pre-tool-use-confluence|post-tool-use-confluence|pre-tool-use-agent|pre-tool-use-reviewer-bash|pre-tool-use-reviewer-edit>（入力はstdinのJSON）
 設計: docs/superpowers/specs/2026-10-01-jp-doc-review-design.md
 判断の経緯: docs/adr/0024-jp-doc-review-hook.md
 """
@@ -23,7 +23,9 @@ from typing import Dict, Iterator, List, Optional, Set, Tuple
 
 HOOK_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOK_DIR))
-from hook_support import TranscriptError, emit, read_entries, tool_uses, with_messages  # noqa: E402
+from hook_support import (  # noqa: E402
+    TranscriptError, completed_tool_use_ids, emit, read_entries, tool_use_ids, tool_uses, with_messages,
+)
 
 
 @functools.lru_cache(maxsize=None)
@@ -307,6 +309,16 @@ def reviewer_invoked_after(transcript_path: object, offset: object) -> bool:
         name in AGENT_TOOL_NAMES and tool_input.get("subagent_type") == REVIEWER_AGENT
         for name, tool_input in tool_uses(entries)
     )
+
+
+def reviewer_completed_after(transcript_path: object, offset: object) -> bool:
+    """会話記録の offset より後に、jp-doc-reviewerを起動し、それが最後まで終わったか。確かめられないときは TranscriptError。"""
+    if not isinstance(offset, int):
+        raise TranscriptError("止めた時点の会話記録の大きさが分からない")
+    entries = read_entries(transcript_path if isinstance(transcript_path, str) else None, offset)
+    launched = {tool_use_id for tool_use_id, name, tool_input in tool_use_ids(entries)
+                if name in AGENT_TOOL_NAMES and tool_input.get("subagent_type") == REVIEWER_AGENT}
+    return bool(launched & completed_tool_use_ids(entries))
 
 
 class GitError(Exception):
@@ -708,34 +720,70 @@ def handle_pre_tool_use_confluence(payload: dict) -> None:
 
 
 def _handle_confluence(key: str, payload: dict, tool_name: str, tool_input: dict, body: str) -> None:
+    """1回目は止める。2回目はレビュワーの完了を確かめて通し、通した本文を記録する。
+
+    状態は、投稿が成功したとき（PostToolUse）に消す。投稿先のAPIが失敗したときは状態が残るので、
+    同じ本文の再送はレビューをやり直さずに通す。本文が変わっていたら、ユーザーに確かめる。
+    """
     target = _confluence_target(tool_name, tool_input)
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     state = read_json(_confluence_path(key))
-    first = state.pop(target, None)
-    if first is not None:
-        _remove_draft(first.get("draft"))
-    if first is None:
+    entry = state.get(target)
+    if entry is None:
         draft = _write_draft(key, digest, body, tool_input.get("contentFormat"))
         write_json(_confluence_path(key), {
             **state, target: {"digest": digest, "transcript_offset": _transcript_size(payload), "draft": str(draft)},
         })
-        emit({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": _confluence_reason(draft),
-        }})
+        _decide("deny", _confluence_reason(draft))
         return
-    write_json(_confluence_path(key), state)
-    if first.get("digest") == digest:
-        emit({"systemMessage": f"本文が1回目と同じなので、Confluenceへの投稿は日本語のレビューを通らないまま送られる（{tool_name}）"})
+    sent = entry.get("sent_digest")
+    if sent is not None:
+        if sent != digest:
+            _decide("ask", (
+                f"前回{tool_name}で送ろうとした本文から、本文が変わった。変わった部分は{REVIEWER_AGENT}のレビューを通っていない。"
+                "このまま送ってよいかを確かめて。"
+            ))
         return
+    problem = _review_problem(payload, entry)
+    if problem:
+        _decide("ask", f"{problem}このまま{tool_name}で送ってよいかを確かめて。")
+        return
+    write_json(_confluence_path(key), {**state, target: {**entry, "sent_digest": digest}})
+
+
+def _review_problem(payload: dict, entry: dict) -> Optional[str]:
+    """1回目の後のレビューに問題があれば、その説明を返す。確かめられなかったときも問題として扱う。"""
     try:
-        invoked = reviewer_invoked_after(payload.get("transcript_path"), first.get("transcript_offset"))
+        completed = reviewer_completed_after(payload.get("transcript_path"), entry.get("transcript_offset"))
     except TranscriptError as error:
-        emit({"systemMessage": f"Confluenceへの投稿の前に{REVIEWER_AGENT}が起動したかを確認できなかった（{error}）"})
+        return f"{REVIEWER_AGENT}のレビューが終わったかを確認できなかった（{error}）。"
+    if not completed:
+        return f"止めた後に、{REVIEWER_AGENT}のレビューが最後まで終わっていない（起動していない、途中で止まった、失敗した）。"
+    return None
+
+
+def _decide(decision: str, reason: str) -> None:
+    emit({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": decision,
+        "permissionDecisionReason": reason,
+    }})
+
+
+def handle_post_tool_use_confluence(payload: dict) -> None:
+    """投稿が成功したら、その投稿先の状態と下書きを消す。失敗したときはこのフックが呼ばれないので、状態が残る。"""
+    tool_name = str(payload.get("tool_name", ""))
+    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    key = session_key(payload)
+    if not _confluence_path(key).exists():
         return
-    if not invoked:
-        emit({"systemMessage": f"{REVIEWER_AGENT}が起動されないまま、Confluenceへの投稿を通した（{tool_name}）"})
+    target = _confluence_target(tool_name, tool_input)
+    with session_lock(key):
+        state = read_json(_confluence_path(key))
+        if target not in state:
+            return
+        _remove_draft(state[target].get("draft"))
+        write_json(_confluence_path(key), {name: value for name, value in state.items() if name != target})
 
 
 LINTER_RELATIVE_PATHS = ("scripts/yomiyasu_lint.py", "skills/yomiyasu/scripts/yomiyasu_lint.py")
@@ -883,6 +931,7 @@ HANDLERS = {
     "post-tool-use": handle_post_tool_use,
     "pre-tool-use-bash": handle_pre_tool_use_bash,
     "pre-tool-use-confluence": handle_pre_tool_use_confluence,
+    "post-tool-use-confluence": handle_post_tool_use_confluence,
     "pre-tool-use-agent": handle_pre_tool_use_agent,
     "pre-tool-use-reviewer-bash": handle_pre_tool_use_reviewer_bash,
     "pre-tool-use-reviewer-edit": handle_pre_tool_use_reviewer_edit,
