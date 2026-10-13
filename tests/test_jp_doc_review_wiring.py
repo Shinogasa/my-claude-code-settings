@@ -110,7 +110,13 @@ class WiringTests(unittest.TestCase):
     def test_writes_are_no_longer_recorded(self):
         # レビューの候補はPR作成時にブランチの差分から決めるので、書き込みの記録は要らない
         all_commands = [command for event in SETTINGS["hooks"] for command in commands(event)]
-        self.assertEqual([command for command in all_commands if "jp-doc-review.py post-tool-use" in command], [])
+        self.assertEqual([command for command in all_commands if "jp-doc-review.py post-tool-use;" in command], [])
+
+    def test_successful_confluence_post_releases_the_permit(self):
+        # 投稿が成功したときだけ許可を消す。失敗（PostToolUseFailure）では残すので、そちらには登録しない
+        self.assertEqual(commands("PostToolUse", CONFLUENCE_MATCHER),
+                         [guarded("jp-doc-review.py", " post-tool-use-confluence")])
+        self.assertEqual(commands("PostToolUseFailure"), [])
 
     def test_confluence_matcher_catches_only_posting_tools(self):
         self.assertEqual(commands("PreToolUse", CONFLUENCE_MATCHER),

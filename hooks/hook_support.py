@@ -4,7 +4,8 @@
 形式が変わって読めなくなったときは TranscriptError を投げ、呼び出し側が画面に表示する。
 """
 import json
-from typing import List, Optional, Tuple
+import re
+from typing import List, Optional, Set, Tuple
 
 ToolUse = Tuple[str, dict]
 TASK_NOTIFICATION = "<task-notification>"  # バックグラウンドの作業の完了通知。userの行として残る
@@ -106,6 +107,57 @@ def tool_uses(entries: List[dict]) -> List[ToolUse]:
                 tool_input = part.get("input")
                 result.append((str(part.get("name", "")), tool_input if isinstance(tool_input, dict) else {}))
     return result
+
+
+def tool_use_ids(entries: List[dict]) -> List[Tuple[str, str, dict]]:
+    """アシスタントのツール呼び出しを、(tool_useのid, ツール名, 入力) の組にして順に返す。idの無い呼び出しは飛ばす。"""
+    result: List[Tuple[str, str, dict]] = []
+    for entry in entries:
+        content = _content(entry) if entry.get("type") == "assistant" else None
+        for part in content if isinstance(content, list) else []:
+            if isinstance(part, dict) and part.get("type") == "tool_use" and isinstance(part.get("id"), str):
+                tool_input = part.get("input")
+                result.append((part["id"], str(part.get("name", "")), tool_input if isinstance(tool_input, dict) else {}))
+    return result
+
+
+NOTIFICATION_BLOCK = re.compile(r"<task-notification>.*?</task-notification>", re.DOTALL)
+NOTIFICATION_FIELD = re.compile(r"<(tool-use-id|status)>([^<]*)</\1>")
+
+
+def _notification_texts(entry: dict) -> List[str]:
+    """作業の完了通知の本文。attachment（queued_command）の行と、userの行の2つの形で残る。"""
+    attachment = entry.get("attachment")
+    if isinstance(attachment, dict) and attachment.get("commandMode") == "task-notification":
+        prompt = attachment.get("prompt")
+        return [prompt] if isinstance(prompt, str) else []
+    text = first_text(entry) if entry.get("type") == "user" else None
+    return [text] if text and text.startswith(TASK_NOTIFICATION) else []
+
+
+def completed_tool_use_ids(entries: List[dict]) -> Set[str]:
+    """最後まで終わったサブエージェントの、起動したtool_useのidを返す。
+
+    同期で呼んだときは、結果の行の toolUseResult.status が completed になる。非同期で呼んだときは、
+    結果の行は async_launched で、終わったときの通知の <status> が completed になる。killed や failed は含めない。
+    """
+    done: Set[str] = set()
+    for entry in entries:
+        result = entry.get("toolUseResult")
+        content = _content(entry)
+        if isinstance(result, dict) and result.get("status") == "completed" and isinstance(content, list):
+            done.update(part["tool_use_id"] for part in content
+                        if isinstance(part, dict) and part.get("type") == "tool_result"
+                        and isinstance(part.get("tool_use_id"), str))
+        for text in _notification_texts(entry):
+            # 1行に通知は1つ。2つ目以降と、後ろの <result> に混ざった項目は、エージェントの出力なので読まない
+            block = NOTIFICATION_BLOCK.search(text)
+            fields: dict = {}
+            for name, value in NOTIFICATION_FIELD.findall(block.group(0) if block else ""):
+                fields.setdefault(name, value)
+            if fields.get("status") == "completed" and fields.get("tool-use-id"):
+                done.add(fields["tool-use-id"])
+    return done
 
 
 def emit(value: dict) -> None:
