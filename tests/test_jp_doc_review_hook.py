@@ -24,10 +24,25 @@ JP_LONG = "日本語の文書をレビューするためのテスト用の文で
 JP_HALF = "日本語の文書を少しずつ書き足すためのテスト用の文です。" * 2
 
 
-def agent_call(subagent_type, name="Agent"):
+def agent_call(subagent_type, name="Agent", tool_use_id="toolu_1"):
     return {"type": "assistant", "message": {"content": [
-        {"type": "tool_use", "name": name,
+        {"type": "tool_use", "id": tool_use_id, "name": name,
          "input": {"subagent_type": subagent_type, "description": "d", "prompt": "p"}}]}}
+
+
+def agent_result(status, tool_use_id="toolu_1"):
+    """Agentツールの結果の行。同期なら status は completed、非同期で起動しただけなら async_launched。"""
+    return {"type": "user", "toolUseResult": {"status": status},
+            "message": {"content": [{"type": "tool_result", "tool_use_id": tool_use_id,
+                                     "content": [{"type": "text", "text": "r"}]}]}}
+
+
+def task_notification(status, tool_use_id="toolu_1"):
+    """非同期のサブエージェントが止まったときの通知の行。status は completed・killed・failed。"""
+    prompt = (f"<task-notification>\n<task-id>a1</task-id>\n<tool-use-id>{tool_use_id}</tool-use-id>\n"
+              f"<status>{status}</status>\n</task-notification>")
+    return {"type": "attachment",
+            "attachment": {"type": "queued_command", "commandMode": "task-notification", "prompt": prompt}}
 
 
 def decision_of(result):
@@ -795,76 +810,156 @@ class ConfluenceTests(HookCase):
         self.assertEqual(self.pre("あ" * 99, pageId="1"), (0, {}, ""))
         self.assertEqual(decision_of(self.pre("あ" * 100, pageId="2")), "deny")
 
+    def post(self, body, title="", tool=None, **tool_input):
+        """投稿が成功した後のPostToolUse。"""
+        payload = {"session_id": "s1", "tool_name": tool or self.TOOL,
+                   "tool_input": {"cloudId": "c", "spaceId": "1", "title": title, "body": body, **tool_input},
+                   "tool_response": [{"type": "text", "text": "{}"}]}
+        return self.run_hook("post-tool-use-confluence", payload)
+
+    def blocked_then_reviewed(self, page_id="9", *review):
+        """1回目を止めさせ、その後の会話記録にレビューの行を足す。会話記録のパスを返す。"""
+        transcript = self.transcript({"type": "user", "message": {"content": "x"}})
+        self.pre(JP_LONG, pageId=page_id, transcript=transcript)
+        return self.transcript(*review)
+
+    def reason_of(self, result):
+        return result[1]["hookSpecificOutput"]["permissionDecisionReason"]
+
     def test_target_key_prefers_page_id_then_parent_comment_then_title(self):
-        # 2回目に同じ投稿先とみなされれば通り、別の投稿先とみなされれば止められる
+        # 同じ投稿先とみなされれば、状態があるので確認（ask）になる。別の投稿先なら1回目として止める（deny）
         self.pre(JP_LONG, pageId="p", parentCommentId="c1", title="t1")
-        self.assertIsNone(decision_of(self.pre(self.REVIEWED, pageId="p", parentCommentId="c2", title="t2")))
+        self.assertEqual(decision_of(self.pre(self.REVIEWED, pageId="p", parentCommentId="c2", title="t2")), "ask")
         self.pre(JP_LONG, parentCommentId="c", title="t1")
-        self.assertIsNone(decision_of(self.pre(self.REVIEWED, parentCommentId="c", title="t2")))
+        self.assertEqual(decision_of(self.pre(self.REVIEWED, parentCommentId="c", title="t2")), "ask")
         self.assertEqual(decision_of(self.pre(JP_LONG, pageId="other", parentCommentId="c", title="t1")), "deny")
         self.pre(JP_LONG, title="t")
-        self.assertIsNone(decision_of(self.pre(self.REVIEWED, title="t")))
+        self.assertEqual(decision_of(self.pre(self.REVIEWED, title="t")), "ask")
 
     def test_title_counts_toward_threshold(self):
         self.assertEqual(self.pre("本文。", title=JP_LONG)[1]["hookSpecificOutput"]["permissionDecision"], "deny")
 
-    def test_second_post_removes_the_draft_of_the_first(self):
-        self.pre(JP_LONG, pageId="9")
-        self.assertEqual(len(list((self.state / "drafts").iterdir())), 1)
-        self.pre(self.REVIEWED, pageId="9")
-        self.assertEqual(list((self.state / "drafts").iterdir()), [])
+    # レビュワーが完了したか
 
-    def test_second_post_keeps_drafts_of_other_targets(self):
+    def test_second_post_passes_silently_after_sync_review_completed(self):
+        transcript = self.blocked_then_reviewed("9", agent_call("jp-doc-reviewer"), agent_result("completed"))
+        self.assertEqual(self.pre(self.REVIEWED, pageId="9", transcript=transcript), (0, {}, ""))
+
+    def test_second_post_passes_silently_after_async_review_completed(self):
+        transcript = self.blocked_then_reviewed("9", agent_call("jp-doc-reviewer"), agent_result("async_launched"),
+                                                task_notification("completed"))
+        self.assertEqual(self.pre(self.REVIEWED, pageId="9", transcript=transcript), (0, {}, ""))
+
+    def test_unchanged_body_passes_silently_when_review_completed(self):
+        # レビュワーが直す必要なしと判断した場合。本文が同じでも、レビューを通っていないとは言わない
+        transcript = self.blocked_then_reviewed("9", agent_call("jp-doc-reviewer"), agent_result("completed"))
+        self.assertEqual(self.pre(JP_LONG, pageId="9", transcript=transcript), (0, {}, ""))
+
+    def test_asks_when_reviewer_was_not_invoked(self):
+        transcript = self.blocked_then_reviewed("9")
+        result = self.pre(self.REVIEWED, pageId="9", transcript=transcript)
+        self.assertEqual(decision_of(result), "ask")
+        self.assertIn("jp-doc-reviewer", self.reason_of(result))
+
+    def test_asks_when_reviewer_was_only_launched(self):
+        transcript = self.blocked_then_reviewed("9", agent_call("jp-doc-reviewer"), agent_result("async_launched"))
+        self.assertEqual(decision_of(self.pre(JP_LONG, pageId="9", transcript=transcript)), "ask")
+
+    def test_asks_when_reviewer_was_killed_or_failed(self):
+        for status in ("killed", "failed"):
+            with self.subTest(status=status):
+                shutil.rmtree(self.state, ignore_errors=True)
+                self.transcript_path.unlink(missing_ok=True)
+                transcript = self.blocked_then_reviewed("9", agent_call("jp-doc-reviewer"),
+                                                        agent_result("async_launched"), task_notification(status))
+                self.assertEqual(decision_of(self.pre(JP_LONG, pageId="9", transcript=transcript)), "ask")
+
+    def test_completion_of_another_agent_does_not_count(self):
+        transcript = self.blocked_then_reviewed("9", agent_call("jp-doc-reviewer", tool_use_id="toolu_r"),
+                                                agent_result("async_launched", "toolu_r"),
+                                                agent_call("general-purpose", tool_use_id="toolu_g"),
+                                                agent_result("completed", "toolu_g"),
+                                                task_notification("completed", "toolu_g"))
+        self.assertEqual(decision_of(self.pre(JP_LONG, pageId="9", transcript=transcript)), "ask")
+
+    def test_review_completed_before_the_block_does_not_count(self):
+        transcript = self.transcript(agent_call("jp-doc-reviewer"), agent_result("completed"))
+        self.pre(JP_LONG, pageId="9", transcript=transcript)
+        self.assertEqual(decision_of(self.pre(self.REVIEWED, pageId="9", transcript=transcript)), "ask")
+
+    def test_asks_when_transcript_cannot_be_checked(self):
+        self.pre(JP_LONG, pageId="9")
+        result = self.pre(self.REVIEWED, pageId="9", transcript=self.transcript(agent_call("jp-doc-reviewer")))
+        self.assertEqual(decision_of(result), "ask")
+        self.assertIn("確認できなかった", self.reason_of(result))
+
+    # 送信が成功しなかったときの再送
+
+    def test_retry_with_same_body_after_failed_post_passes_silently(self):
+        transcript = self.blocked_then_reviewed("9", agent_call("jp-doc-reviewer"), agent_result("completed"))
+        self.pre(self.REVIEWED, pageId="9", transcript=transcript)
+        # 投稿先のAPIが失敗した。PostToolUseは動かない
+        self.assertEqual(self.pre(self.REVIEWED, pageId="9", transcript=transcript), (0, {}, ""))
+
+    def test_retry_with_changed_body_after_failed_post_asks(self):
+        transcript = self.blocked_then_reviewed("9", agent_call("jp-doc-reviewer"), agent_result("completed"))
+        self.pre(self.REVIEWED, pageId="9", transcript=transcript)
+        result = self.pre(self.REVIEWED + "追記です。", pageId="9", transcript=transcript)
+        self.assertEqual(decision_of(result), "ask")
+        self.assertIn("本文が変わ", self.reason_of(result))
+
+    def test_draft_is_kept_until_post_succeeds(self):
+        transcript = self.blocked_then_reviewed("9", agent_call("jp-doc-reviewer"), agent_result("completed"))
+        self.pre(self.REVIEWED, pageId="9", transcript=transcript)
+        self.assertEqual(len(list((self.state / "drafts").iterdir())), 1)
+
+    def test_asked_post_does_not_record_sent_body(self):
+        # 確認で拒否された本文を、次の呼び出しで黙って通さない
+        transcript = self.blocked_then_reviewed("9")
+        self.pre(self.REVIEWED, pageId="9", transcript=transcript)
+        self.assertEqual(decision_of(self.pre(self.REVIEWED, pageId="9", transcript=transcript)), "ask")
+
+    # 投稿が成功した後（PostToolUse）
+
+    def test_successful_post_removes_state_and_draft(self):
+        transcript = self.blocked_then_reviewed("9", agent_call("jp-doc-reviewer"), agent_result("completed"))
+        self.pre(self.REVIEWED, pageId="9", transcript=transcript)
+        self.assertEqual(self.post(self.REVIEWED, pageId="9"), (0, {}, ""))
+        self.assertEqual(list((self.state / "drafts").iterdir()), [])
+        state = json.loads((self.state / "s1.confluence.json").read_text(encoding="utf-8"))
+        self.assertNotIn(f"{self.TOOL}:pageId:9", state)
+
+    def test_after_successful_post_the_same_target_is_checked_again(self):
+        transcript = self.blocked_then_reviewed("1", agent_call("jp-doc-reviewer"), agent_result("completed"))
+        self.pre(self.REVIEWED, pageId="1", transcript=transcript)
+        self.post(self.REVIEWED, pageId="1")
+        self.assertEqual(decision_of(self.pre(JP_LONG + "、", pageId="1")), "deny")
+
+    def test_successful_post_keeps_other_targets(self):
         self.pre(JP_LONG, pageId="1")
         self.pre(JP_LONG + "。", pageId="2")
-        self.pre(self.REVIEWED, pageId="1")
+        self.post(self.REVIEWED, pageId="1")
         self.assertEqual(len(list((self.state / "drafts").iterdir())), 1)
+        state = json.loads((self.state / "s1.confluence.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(state), [f"{self.TOOL}:pageId:2"])
 
-    def test_second_post_ignores_draft_path_outside_drafts_directory(self):
+    def test_successful_post_ignores_draft_path_outside_drafts_directory(self):
         outside = self.base / "outside.md"
         outside.write_text("x", encoding="utf-8")
         self.state.mkdir(parents=True)
         target = f"{self.TOOL}:pageId:9"
         (self.state / "s1.confluence.json").write_text(json.dumps(
             {target: {"digest": "0" * 64, "transcript_offset": 0, "draft": str(outside)}}), encoding="utf-8")
-        self.pre(self.REVIEWED, pageId="9")
+        self.post(self.REVIEWED, pageId="9")
         self.assertTrue(outside.exists())
 
-    def test_second_post_passes_and_warns_when_unchanged(self):
-        self.pre(JP_LONG, pageId="9")
-        code, output, _ = self.pre(JP_LONG, pageId="9")
-        self.assertEqual(code, 0)
-        self.assertNotIn("hookSpecificOutput", output)
-        self.assertIn("レビューを通らない", output["systemMessage"])
-
-    def test_second_post_with_reviewed_body_is_silent(self):
-        transcript = self.transcript({"type": "user", "message": {"content": "x"}})
-        self.pre(JP_LONG, pageId="9", transcript=transcript)
-        self.transcript(agent_call("jp-doc-reviewer"))
-        self.assertEqual(self.pre(self.REVIEWED, pageId="9", transcript=transcript), (0, {}, ""))
-
-    def test_second_post_warns_when_reviewer_was_not_invoked(self):
-        transcript = self.transcript(agent_call("jp-doc-reviewer"))
-        self.pre(JP_LONG, pageId="9", transcript=transcript)
-        code, output, _ = self.pre(self.REVIEWED, pageId="9", transcript=transcript)
-        self.assertEqual(code, 0)
-        self.assertNotIn("hookSpecificOutput", output)
-        self.assertIn("jp-doc-reviewerが起動されない", output["systemMessage"])
-
-    def test_second_post_reports_when_transcript_cannot_be_checked(self):
-        self.pre(JP_LONG, pageId="9")
-        output = self.pre(self.REVIEWED, pageId="9", transcript=self.transcript(agent_call("jp-doc-reviewer")))[1]
-        self.assertIn("確認できなかった", output["systemMessage"])
+    def test_successful_post_without_state_does_nothing(self):
+        self.assertEqual(self.post(self.REVIEWED, pageId="9"), (0, {}, ""))
 
     def test_targets_are_tracked_separately(self):
         self.pre(JP_LONG, pageId="1")
         denied = self.pre(JP_LONG, pageId="2")[1]
         self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
-
-    def test_after_passing_the_same_target_is_checked_again(self):
-        self.pre(JP_LONG, pageId="1")
-        self.pre(JP_LONG + "。", pageId="1")
-        self.assertEqual(self.pre(JP_LONG + "、", pageId="1")[1]["hookSpecificOutput"]["permissionDecision"], "deny")
 
 
 class StateFileTests(HookCase):
