@@ -1079,10 +1079,13 @@ Python や Markdown だけを触る作業中も常に効いている。
 **決めること**: Codex のフック（`codex/hooks.json`）で同じ挙動を作るか、助言スキルだけを共有するか。
 `principle-reviewer` の指示文が名指しする原則集のパスは `~/.claude/skills/work-principles/` だけで、Codex では読む先が違う。対応するときに、ホスト別のパスを併記する。
 
-### `unittest discover` が一部のテストで止まる
+### `test_principle_review_hook` が並列の全件実行でまれに落ちる
 
-**決めること**: 原因の調査を先にするか、止まるモジュールを分けて走らせるか。
-`python3 -m unittest discover -s tests` を実行すると、`test_codex_model_switch`・`test_learning_store`・`test_setup_cli`・`test_setup_preflight` で止まる（2026-10-08、main 由来、原因は未調査）。
+**決めること**: 壁時計のしきい値を負荷に強くするか（余裕を広げる・フックの期限から導く）、時間に敏感なテストを並列から外すか。
+`run.sh --all` と同じファイル一覧を並列で11回流し、2回落ちた（2026-10-11）。単独や直列の discover では落ちていない。
+
+- `SlowGitTests::test_hanging_git_is_killed_with_its_group`: フック全体が20秒未満で終わることを検査しているが、フックは止まった git を設計どおり10秒待つ。負荷で残りの時間が延び、全体で23.4秒になった
+- `UntrustedPathTests::test_only_excluded_paths_pass_with_message`: 素通しを期待した場面で `deny` が返った。`deny` の理由の出力は記録できていない。同じ手順を、負荷をかけて150回繰り返しても再現しなかった
 
 ### `permissions.deny` で Read・Grep の機密パスを拒否するか
 
