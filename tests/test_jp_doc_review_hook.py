@@ -496,6 +496,7 @@ class ReviewerBashTests(HookCase):
         self.assertDenied("python3 /tmp/evil/jp-doc-lint.py 'a.md'")
         self.assertDenied(f"python3 {self.lint_path()}.sh 'a.md'")
         self.assertDenied(f"python3 {self.lint_path().parent}/../x/jp-doc-lint.py 'a.md'")
+        self.assertDenied("python3 hooks/jp-doc-lint.py 'a.md'")
 
     def test_wrong_number_of_arguments_is_denied(self):
         self.assertDenied(f"python3 {self.lint_path()}")
