@@ -150,10 +150,13 @@ def completed_tool_use_ids(entries: List[dict]) -> Set[str]:
                         if isinstance(part, dict) and part.get("type") == "tool_result"
                         and isinstance(part.get("tool_use_id"), str))
         for text in _notification_texts(entry):
-            for block in NOTIFICATION_BLOCK.findall(text):
-                fields = dict(NOTIFICATION_FIELD.findall(block))
-                if fields.get("status") == "completed" and fields.get("tool-use-id"):
-                    done.add(fields["tool-use-id"])
+            # 1行に通知は1つ。2つ目以降と、後ろの <result> に混ざった項目は、エージェントの出力なので読まない
+            block = NOTIFICATION_BLOCK.search(text)
+            fields: dict = {}
+            for name, value in NOTIFICATION_FIELD.findall(block.group(0) if block else ""):
+                fields.setdefault(name, value)
+            if fields.get("status") == "completed" and fields.get("tool-use-id"):
+                done.add(fields["tool-use-id"])
     return done
 
 

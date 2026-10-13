@@ -64,9 +64,10 @@ SHELLS = {"bash", "sh", "zsh"}
 CLAUDE_TRAILER = re.compile(r"^Co-Authored-By:\s*Claude\b", re.IGNORECASE | re.MULTILINE)
 GIT_TIMEOUT_SECONDS = 10
 TIME_BUDGET_SECONDS = 20  # settings.json の timeout（30秒）より先に、自分で止める。打ち切られたフックは止めたことにならない
+CONFLUENCE_TIME_BUDGET_SECONDS = 5  # Confluenceのフックの timeout（10秒）より先に止める
 LOCK_POLL_SECONDS = 0.05
 STARTED = time.monotonic()
-_deadline: Optional[float] = None  # PR作成の検査中だけ決める。ほかのイベントは従来どおり待つ
+_deadline: Optional[float] = None  # PR作成とConfluenceの検査中だけ決める。ほかのイベントは従来どおり待つ
 CONTROL_CHAR = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -74,9 +75,9 @@ class BudgetError(Exception):
     """時間予算を使い切った。GitErrorと分け、1回だけ止めて2回目は通す扱いにしない。"""
 
 
-def time_budget() -> float:
+def time_budget(default: float = TIME_BUDGET_SECONDS) -> float:
     override = os.environ.get("JP_DOC_REVIEW_TIME_BUDGET")
-    return float(override) if override is not None else TIME_BUDGET_SECONDS
+    return float(override) if override is not None else default
 
 
 def _remaining(step: str) -> Optional[float]:
@@ -714,9 +715,18 @@ def handle_pre_tool_use_confluence(payload: dict) -> None:
     cleanup_old_state()
     if count_jp_chars(f"{title}\n{body}") < MIN_JP_CHARS:
         return
-    key = session_key(payload)
-    with session_lock(key):
-        _handle_confluence(key, payload, tool_name, tool_input, body)
+    global _deadline
+    _deadline = STARTED + time_budget(CONFLUENCE_TIME_BUDGET_SECONDS)
+    try:
+        key = session_key(payload)
+        with session_lock(key):
+            _handle_confluence(key, payload, tool_name, tool_input, body)
+    except Exception as error:  # 終了コード1やタイムアウトでは止まらず投稿される。検査できなかったときはユーザーに確かめる
+        print(f"jp-doc-review pre-tool-use-confluence: {type(error).__name__}: {error}", file=sys.stderr)
+        _decide("ask", (
+            f"Confluenceへ送る前の日本語レビューを検査できなかった（{type(error).__name__}: {error}）。"
+            f"このまま{tool_name}で送ってよいかを確かめて。"
+        ))
 
 
 def _handle_confluence(key: str, payload: dict, tool_name: str, tool_input: dict, body: str) -> None:
