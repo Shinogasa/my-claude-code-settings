@@ -91,9 +91,9 @@ yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/
 ### P2: HTMLの下書きの日本語を、リンターが検査していない
 
 2026-10-13、業務リポジトリのセッションでConfluenceへHTML（`contentFormat: html`）を投稿した。
-フックは本文を `~/.claude/state/jp-doc-review/drafts/<session>-<hash>.html` に書き出し、jp-doc-reviewerがリンターを当てた。
+フックは本文を `~/.claude/state/jp-doc-review/drafts/<session>-<hash>.html` に書き出し、jp-doc-reviewerがリンターをかけた。
 結果は「文字数0・行数0」だった。実際の下書きは約24KB・1行のHTMLで、日本語の本文が入っていた。
-同じセッションで3回、同じ結果になった。レビュワーは目で読んで確かめていたので、「指摘なし」は検査できなかった結果である。
+同じセッションで3回、同じ結果になった。レビュワーは目で読んで確かめていたが、リンターの「指摘なし」は検査できなかった結果である。
 
 原因はリンター側にある。`yomiyasu_lint.py` の `extract_plain_sentences` と `analyze_markdown_metrics` は、
 `<` で始まる行を地の文から外す。2026-10-13に同じ文で比べて確かめた。Slop語「手触り」を含む1文は、
