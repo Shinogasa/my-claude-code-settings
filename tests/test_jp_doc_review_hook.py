@@ -20,6 +20,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOK = REPO_ROOT / "hooks" / "jp-doc-review.py"
+LINT_WRAPPER = REPO_ROOT / "hooks" / "jp-doc-lint.py"
 JP_LONG = "日本語の文書をレビューするためのテスト用の文です。" * 6
 JP_HALF = "日本語の文書を少しずつ書き足すためのテスト用の文です。" * 2
 
@@ -441,11 +442,20 @@ class PrReviewTests(HookCase):
 
 
 class ReviewerBashTests(HookCase):
-    """jp-doc-reviewer が使える Bash は、yomiyasu のリンターだけ。"""
+    """jp-doc-reviewer が使える Bash は、リンターのラッパー（hooks/jp-doc-lint.py）だけ。"""
 
-    def lint_path(self, nested=False):
+    def lint_path(self):
+        return LINT_WRAPPER
+
+    def yomiyasu_lint(self, nested=False):
         base = self.skill.parent / "skills" / "yomiyasu" if nested else self.skill.parent
         return base / "scripts" / "yomiyasu_lint.py"
+
+    def link_claude_hooks(self):
+        """~/.claude/hooks が設定リポジトリの hooks を指す、setup.sh 後の構成を作る。"""
+        self.env_overrides["HOME"] = str(self.base)
+        (self.base / ".claude").mkdir(exist_ok=True)
+        (self.base / ".claude" / "hooks").symlink_to(LINT_WRAPPER.parent)
 
     def bash(self, command):
         payload = {"session_id": "s1", "tool_name": "Bash", "agent_type": "jp-doc-reviewer",
@@ -464,13 +474,14 @@ class ReviewerBashTests(HookCase):
         self.assertAllowed(f"python3 {self.lint_path()} 'docs/a.md'")
         self.assertAllowed(f"python3 {self.lint_path()} docs/a.md")
 
-    def test_copied_skill_directory_passes(self):
-        self.assertAllowed(f"python3 {self.lint_path(nested=True)} 'docs/a.md'")
+    def test_yomiyasu_linter_itself_is_denied(self):
+        # HTMLを0文字と数えて PASS にするので、ラッパーを通さずには呼ばせない
+        self.assertDenied(f"python3 {self.yomiyasu_lint()} 'docs/a.md'")
+        self.assertDenied(f"python3 {self.yomiyasu_lint(nested=True)} 'docs/a.md'")
 
     def test_tilde_is_expanded(self):
-        self.env_overrides["HOME"] = str(self.base)
-        self.assertAllowed("python3 ~/yomiyasu/scripts/yomiyasu_lint.py 'docs/a.md'")
-        self.assertAllowed("python3 ~/yomiyasu/skills/yomiyasu/scripts/yomiyasu_lint.py 'docs/a.md'")
+        self.link_claude_hooks()
+        self.assertAllowed("python3 ~/.claude/hooks/jp-doc-lint.py 'docs/a.md'")
 
     def test_other_commands_are_denied(self):
         for command in ("cat ~/.ssh/id_rsa", "python3 -c 'import os'", "ls", ""):
@@ -478,10 +489,14 @@ class ReviewerBashTests(HookCase):
                 self.assertDenied(command)
 
     def test_linter_in_another_place_is_denied(self):
-        self.assertDenied("python3 /tmp/evil/scripts/yomiyasu_lint.py 'a.md'")
-        self.assertDenied(f"python3 {self.base}/other/scripts/yomiyasu_lint.py 'a.md'")
+        copy = self.base / "other" / "jp-doc-lint.py"
+        copy.parent.mkdir()
+        copy.write_text("print('evil')\n", encoding="utf-8")
+        self.assertDenied(f"python3 {copy} 'a.md'")
+        self.assertDenied("python3 /tmp/evil/jp-doc-lint.py 'a.md'")
         self.assertDenied(f"python3 {self.lint_path()}.sh 'a.md'")
-        self.assertDenied(f"python3 {self.skill.parent}/../x/scripts/yomiyasu_lint.py 'a.md'")
+        self.assertDenied(f"python3 {self.lint_path().parent}/../x/jp-doc-lint.py 'a.md'")
+        self.assertDenied("python3 hooks/jp-doc-lint.py 'a.md'")
 
     def test_wrong_number_of_arguments_is_denied(self):
         self.assertDenied(f"python3 {self.lint_path()}")
@@ -499,10 +514,10 @@ class ReviewerBashTests(HookCase):
 
     def test_quoted_or_escaped_program_and_linter_are_denied(self):
         # シェルは引用符の中の ~ を展開しないので、cwd 相対の ~/... が実行されてしまう
-        self.env_overrides["HOME"] = str(self.base)
-        tail = "yomiyasu/scripts/yomiyasu_lint.py"
+        self.link_claude_hooks()
+        tail = ".claude/hooks/jp-doc-lint.py"
         for command in (f"python3 '~/{tail}' a.md", f'python3 "~/{tail}" a.md', f"python3 ~\\/{tail} a.md",
-                        f"python3 ~/yomiyasu/scr\\ipts/yomiyasu_lint.py a.md", f"'python3' ~/{tail} a.md",
+                        f"python3 ~/.claude/ho\\oks/jp-doc-lint.py a.md", f"'python3' ~/{tail} a.md",
                         f'"python3" {self.lint_path()} a.md', f"python3 '{self.lint_path()}' a.md",
                         f'python3 "{self.lint_path()}" a.md'):
             with self.subTest(command=command):
@@ -514,9 +529,16 @@ class ReviewerBashTests(HookCase):
                 self.assertDenied(f"python3 {self.lint_path()} {target}")
 
     def test_quoted_target_still_passes(self):
-        self.env_overrides["HOME"] = str(self.base)
-        self.assertAllowed("python3 ~/yomiyasu/scripts/yomiyasu_lint.py 'docs/a b.md'")
-        self.assertAllowed(f'python3 {self.lint_path()} "docs/a.md"')
+        self.link_claude_hooks()
+        self.assertAllowed("python3 ~/.claude/hooks/jp-doc-lint.py 'docs/a b.md'")
+        self.assertAllowed(f"python3 {self.lint_path()} '/tmp/日本語 の/a.md'")
+
+    def test_target_that_the_shell_would_expand_is_denied(self):
+        # 3語目はシングルクォートで囲むか、展開されない文字だけにする。zsh のグロブ修飾子 (e:...:) はコマンドを実行する
+        for target in ("x*(e:'id':)", "*.md", "a?.md", "{a,b}.md", "$HOME/a.md", "${IFS}a", "~/a.md",
+                       "=python3", "a[1].md", "!x", '"docs/a.md"', '"$HOME/a.md"', "'a'b.md", "'a'\\''b.md'"):
+            with self.subTest(target=target):
+                self.assertDenied(f"python3 {self.lint_path()} {target}")
 
     def test_unparsable_command_is_denied(self):
         self.assertDenied(f"python3 {self.lint_path()} 'a.md")
@@ -655,7 +677,8 @@ class ReviewerEditTests(HookCase):
         scripts = self.skill.parent / "scripts"
         scripts.mkdir()
         (scripts / "yomiyasu_lint.py").write_text("", encoding="utf-8")
-        protected = [self.skill, scripts / "yomiyasu_lint.py", HOOK, HOOK.parent / "hook_support.py", self.agent_def,
+        protected = [self.skill, scripts / "yomiyasu_lint.py", HOOK, HOOK.parent / "hook_support.py", LINT_WRAPPER,
+                     self.agent_def,
                      *(self.claude_home / name for name in ("settings.json", "settings.local.json", "settings.personal.json"))]
         self.allow(*protected)
         for path in protected:

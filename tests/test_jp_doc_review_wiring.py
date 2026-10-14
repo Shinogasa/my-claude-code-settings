@@ -52,7 +52,8 @@ class ReviewerAgentTests(unittest.TestCase):
 
     def test_body_requires_reading_all_references_before_rewriting(self):
         for marker in ("references/gemini-syntax.md", "references/slop-catalog.md", "references/domains/",
-                       "主張", "比重", "言い切りの強さ", "文の働き", "yomiyasu_lint.py"):
+                       "主張", "比重", "言い切りの強さ", "文の働き", "~/.claude/hooks/jp-doc-lint.py",
+                       "検査できなかった"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.body)
 

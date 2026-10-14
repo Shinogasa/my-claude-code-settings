@@ -796,17 +796,18 @@ def handle_post_tool_use_confluence(payload: dict) -> None:
         write_json(_confluence_path(key), {name: value for name, value in state.items() if name != target})
 
 
-LINTER_RELATIVE_PATHS = ("scripts/yomiyasu_lint.py", "skills/yomiyasu/scripts/yomiyasu_lint.py")
+# yomiyasu_lint.py を直接は呼ばせない。HTMLを0文字と数えてPASSにするので、ラッパーを通す
+LINT_WRAPPER = Path(__file__).resolve().parent / "jp-doc-lint.py"
 COMMAND_SEPARATORS = ("&&", "||", ";", "|", "&", "\n", "\r", "$(", "`", ">", "<")
-
-
-def _allowed_linters() -> List[str]:
-    skill_root = yomiyasu_skill().parent
-    return [str(skill_root / relative) for relative in LINTER_RELATIVE_PATHS]
+# 3語目（対象のファイル）は、シェルが何も展開しない形だけ通す。禁止する文字を並べる形だと、
+# zsh のグロブ修飾子 (e:...:) のような展開を取りこぼす
+SAFE_TARGET = re.compile(r"'[^'\\]+'|[A-Za-z0-9_./-]+")
 
 
 def _is_linter_command(command: str) -> bool:
-    """python3 <リンター> <ファイル1つ> の形か。区切りを含むもの、shlexで分けられないものは偽。
+    """python3 <リンターのラッパー> <ファイル1つ> の形か。区切りを含むもの、shlexで分けられないものは偽。
+
+    ラッパーは実体で比べる。~/.claude/hooks は設定リポジトリの hooks へのリンクなので、どちらの書き方でも通す。
 
     1語目と2語目は、引用符やバックスラッシュを含まない生の語でなければならない。シェルは引用符の中の ~ を
     展開しないので、shlexの後に展開すると、シェルが実行するものと食い違う。
@@ -823,9 +824,12 @@ def _is_linter_command(command: str) -> bool:
     program, linter, target = words
     if any(char in word for word in raw_words[:2] for char in "'\"\\") or target.startswith("-"):
         return False
+    if not SAFE_TARGET.fullmatch(raw_words[2].rstrip()):
+        return False
     if linter.startswith("~/"):
         linter = os.path.expanduser(linter)
-    return program == "python3" and linter in _allowed_linters()
+    # 相対パスは、フックとシェルでcwdが違うと別のファイルを指すので通さない
+    return program == "python3" and os.path.isabs(linter) and os.path.realpath(linter) == str(LINT_WRAPPER)
 
 
 def handle_pre_tool_use_reviewer_bash(payload: dict) -> None:
@@ -839,7 +843,7 @@ def handle_pre_tool_use_reviewer_bash(payload: dict) -> None:
         "permissionDecision": "deny",
         "permissionDecisionReason": (
             f"{REVIEWER_AGENT} が使える Bash はリンターだけ。"
-            "python3 <yomiyasuの置き場>/scripts/yomiyasu_lint.py '<ファイル>' の形で、区切りや別のコマンドを付けずに呼んで。"
+            "python3 ~/.claude/hooks/jp-doc-lint.py '<ファイル>' の形で、区切りや別のコマンドを付けずに呼んで。"
         ),
     }})
 
