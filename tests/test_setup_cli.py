@@ -743,5 +743,95 @@ class SetupCliTests(unittest.TestCase):
         self.assertIn("retry: claude plugin list --json", result.stderr)
 
 
+def snapshot_tree(root: Path) -> dict:
+    """root 配下の全エントリの種類・リンク先・内容を集める。dry-run の前後で比べる。"""
+    result = {}
+    for path in sorted(root.rglob("*")):
+        relative = str(path.relative_to(root))
+        if path.is_symlink():
+            result[relative] = ("symlink", os.readlink(path))
+        elif path.is_dir():
+            result[relative] = ("directory", None)
+        else:
+            result[relative] = ("file", path.read_bytes())
+    return result
+
+
+class SetupDryRunTests(unittest.TestCase):
+    """--dry-run は配布先の分類とplugin導入予定を列挙し、何も変えない。"""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.base = Path(self.temporary.name).resolve()
+        self.repository = copy_repository(self.base)
+        self.home = self.base / "home"
+        (self.home / ".claude").mkdir(parents=True)
+        self.enabled = [
+            plugin_id for plugin_id, enabled in json.loads(
+                (ROOT / "settings.json.template").read_text(encoding="utf-8"))["enabledPlugins"].items()
+            if enabled
+        ]
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def commands(self) -> str:
+        log = self.base / "commands.log"
+        return log.read_text(encoding="utf-8") if log.exists() else ""
+
+    def dry_run(self, *extra, extra_env=None):
+        before_home = snapshot_tree(self.home)
+        before_repository = snapshot_tree(self.repository)
+        result = run_setup(self.repository, self.home, "--claude", "--dry-run", *extra, extra_env=extra_env)
+        # 測定の対照: 何も変わらないことを、前後の全エントリで比べる
+        self.assertEqual(snapshot_tree(self.home), before_home)
+        self.assertEqual(snapshot_tree(self.repository), before_repository)
+        return result
+
+    def test_lists_missing_targets_and_plugin_plan_without_changes(self):
+        installed = json.dumps([{"id": self.enabled[0]}])
+        result = self.dry_run(extra_env={"CLAUDE_PLUGIN_LIST": installed})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        claude = self.home / ".claude"
+        self.assertIn(f"missing: host=claude destination={claude / 'CLAUDE.md'} source={self.repository / 'CLAUDE.md'}",
+                      result.stdout)
+        self.assertIn(f"missing: host=claude destination={claude / 'settings.json'}", result.stdout)
+        self.assertIn(f"plugin installed: host=claude plugin={self.enabled[0]}", result.stdout)
+        for plugin_id in self.enabled[1:]:
+            self.assertIn(f"plugin install: host=claude plugin={plugin_id}", result.stdout)
+        # 外部への副作用（plugin導入、git設定、submodule初期化）を起こさない。plugin一覧の照会だけはする
+        self.assertNotIn("plugin install", self.commands())
+        self.assertNotIn("config core.hooksPath", self.commands())
+        self.assertNotIn("submodule", self.commands())
+        self.assertIn("plugin list --json", self.commands())
+
+    def test_lists_conflicts_without_backup(self):
+        conflict = self.home / ".claude" / "CLAUDE.md"
+        conflict.write_text("mine\n", encoding="utf-8")
+        result = self.dry_run("--replace-conflicts")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"conflict: host=claude destination={conflict}", result.stdout)
+
+    def test_lists_linked_after_real_setup(self):
+        applied = run_setup(self.repository, self.home, "--claude")
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        result = self.dry_run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"linked: host=claude destination={self.home / '.claude' / 'CLAUDE.md'}", result.stdout)
+        self.assertIn(f"managed-update: host=claude destination={self.home / '.claude' / 'settings.json'}",
+                      result.stdout)
+
+    def test_unknown_plugin_plan_fails_loudly(self):
+        # 一覧を取れないとき、導入予定を「無し」に畳まない
+        result = self.dry_run(extra_env={"CLAUDE_PLUGIN_LIST": "{not-json"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("retry: claude plugin list --json", result.stderr)
+        self.assertNotIn("plugin install:", result.stdout)
+
+    def test_usage_mentions_dry_run(self):
+        result = run_setup(self.repository, self.home)
+        self.assertIn("--dry-run", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

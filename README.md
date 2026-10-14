@@ -19,6 +19,16 @@ bash setup.sh --all
 対象ホストを一度起動して `~/.claude/` または `~/.codex/` を作成してから、対象のセレクタを指定する。
 `setup.sh` は `--claude`、`--codex`、`--all` のいずれかを必須とする。
 
+実行前に何が起きるかを確かめるには、`--dry-run` を付ける。配布先ごとの分類
+（`missing` / `linked` / `managed-update` / `conflict`）とpluginの導入予定を表示し、何も変更せずに終わる。
+照会するのは `claude plugin list --json` だけで、pluginの導入、git設定、submoduleの初期化はしない。
+終了コード0は一覧を出せたことを表し、本番の実行が通ることは表さない（`conflict` があっても0で終わる）。
+pluginの導入予定を確かめられないときは、1で終わる。
+
+```bash
+bash setup.sh --claude --dry-run
+```
+
 `.env` はLiteLLM等のAPIキー経由でClaude Codeを利用する場合（会社PC等）のみ必要。
 個人のAnthropicアカウント（Pro/Maxプランの通常ログイン）を使う場合は `.env` 不要で、
 `statusLine`/`enabledPlugins`/`theme`等の共通設定はそのまま反映される。

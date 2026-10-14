@@ -145,14 +145,14 @@ SessionStartの検査（`hooks/check-codex-base-provider.py`）にもplugin監�
 
 **着手条件**: Codexの作業を再開したとき。
 
-### P2: `setup.sh` に dry-run を追加する
+### P3: `setup.sh` が `.env` の値を環境変数で子プロセスへ渡す
 
-現状は実行するまで何が起きるか分からない。特に `setup_claude_plugins()` は
-`claude plugin install` を走らせる外部副作用を持つのに、事前に対象を確認する手段がない。
-「影響が小さい」と見積もる根拠を、実行前に数え上げられない状態になっている。
+2026-10-14の `--dry-run` のセキュリティレビュー（Low、以前からある挙動）。`validate_claude_generation_inputs` が、
+`ANTHROPIC_AUTH_TOKEN` を含む `.env` の全値を `SETUP_ENV_JSON` としてexportする。そのため、`claude plugin list` を含む
+以降のすべての子プロセスがトークンを受け取る。画面には出ない。
 
-**完了条件**: 配布先の分類（missing / linked / managed-update / conflict）とplugin導入予定を、
-副作用なしで列挙できる。
+**決めること**: exportを `prepare_claude_files` の直前まで遅らせるか、引数かファイルで渡す形に替えるか。
+**着手条件**: `setup.sh` の生成処理に手を入れる別の作業が来たとき。
 
 ### P2: `context7` / `serena` のCodex向け候補を個別評価する
 
@@ -1068,6 +1068,13 @@ Python や Markdown だけを触る作業中も常に効いている。
 `test_hanging_git_is_killed_with_its_group` は、しきい値をホストのtimeout（`settings.json.template` の30秒）から導く形に直した。
 
 **着手条件**: 再び落ちて、`deny` の理由が記録できたとき。
+
+### `test_block_commit_on_merged_pr` が並列の全件実行で1回落ちた
+
+2026-10-14、`tests/run.sh --all` で `MergedPrHookTests::test_commit_on_branch_with_only_merged_pr_is_blocked` が1回落ちた。
+単独で3回、全件をもう1回流すと通った。失敗の出力は残していない。変更していたのは `setup.sh`・README・backlogだけで、このフックには触れていない。
+
+**着手条件**: もう一度落ちたとき。そのときは失敗の出力を残す。
 
 ### `permissions.deny` で Read・Grep の機密パスを拒否するか
 

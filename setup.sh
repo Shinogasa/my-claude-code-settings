@@ -36,6 +36,7 @@ MANIFEST="$SCRIPT_DIR/manifests/skills.json"
 STATE_TOOL="$SCRIPT_DIR/bin/setup-state.py"
 SELECTOR=""
 REPLACE_CONFLICTS=false
+DRY_RUN=false
 FAILURES=()
 POLICY_VIOLATIONS=()
 # 事前検査の時点で旧形式と判定した skills 親リンク。移行は競合の判定後まで遅らせる。
@@ -47,7 +48,10 @@ SETUP_ENV_JSON='{}'
 
 usage() {
   cat >&2 <<'EOF'
-Usage: bash setup.sh (--claude | --codex | --all) [--replace-conflicts]
+Usage: bash setup.sh (--claude | --codex | --all) [--replace-conflicts] [--dry-run]
+
+  --dry-run  配布先の分類（missing / linked / managed-update / conflict）と
+             plugin の導入予定を表示し、何も変更せずに終わる
 EOF
 }
 
@@ -65,6 +69,10 @@ while [ "$#" -gt 0 ]; do
     --replace-conflicts)
       [ "$REPLACE_CONFLICTS" = false ] || fail_usage
       REPLACE_CONFLICTS=true
+      ;;
+    --dry-run)
+      [ "$DRY_RUN" = false ] || fail_usage
+      DRY_RUN=true
       ;;
     *) fail_usage ;;
   esac
@@ -797,16 +805,12 @@ apply_targets() {
 
 record_failure() { FAILURES+=("$1"); }
 
-setup_claude_plugins() {
-  command -v claude >/dev/null 2>&1 || {
-    record_failure 'host=claude plugin=all operation=list retry: claude plugin list --json'
-    return
-  }
+# 有効にする plugin ごとに「install<TAB>id」か「installed<TAB>id」を出す。一覧を取れなければ 1 を返す。
+# 照会（claude plugin list）だけで、導入はしない。dry-run と本番で同じ判定を使う
+claude_plugin_plan() {
+  command -v claude >/dev/null 2>&1 || return 1
   local wanted installed plugin_id
-  if ! installed="$(claude plugin list --json)"; then
-    record_failure 'host=claude plugin=all operation=list retry: claude plugin list --json'
-    return
-  fi
+  installed="$(claude plugin list --json)" || return 1
   if ! python3 -c '
 import json
 import sys
@@ -821,8 +825,7 @@ if not isinstance(plugins, list) or not all(
 ):
     raise SystemExit(1)
 ' <<< "$installed"; then
-    record_failure 'host=claude plugin=all operation=list retry: claude plugin list --json'
-    return
+    return 1
   fi
   wanted="$(python3 - "$SCRIPT_DIR/settings.json.template" <<'PY'
 import json
@@ -833,7 +836,7 @@ for plugin_id, enabled in plugins.items():
     if enabled:
         print(plugin_id)
 PY
-)"
+)" || return 1  # || の左辺で呼ばれるので set -e が効かない。失敗を「導入するものは無い」に畳まない
   while IFS= read -r plugin_id; do
     [ -n "$plugin_id" ] || continue
     if python3 -c '
@@ -847,12 +850,55 @@ except ValueError:
     raise SystemExit(1)
 raise SystemExit(0 if any(plugin.get("id") == target for plugin in plugins) else 1)
 ' "$plugin_id" <<< "$installed"; then
-      continue
+      printf 'installed\t%s\n' "$plugin_id"
+    else
+      printf 'install\t%s\n' "$plugin_id"
     fi
+  done <<< "$wanted"
+}
+
+setup_claude_plugins() {
+  local plan action plugin_id
+  plan="$(claude_plugin_plan)" || {
+    record_failure 'host=claude plugin=all operation=list retry: claude plugin list --json'
+    return
+  }
+  while IFS=$'\t' read -r action plugin_id; do
+    [ "$action" = install ] || continue
     if ! claude plugin install "$plugin_id" >/dev/null 2>&1; then
       record_failure "host=claude plugin=$plugin_id operation=install retry: claude plugin install $plugin_id"
     fi
-  done <<< "$wanted"
+  done <<< "$plan"
+}
+
+# preflight までの読み取りだけで分かることを表示する。plugin一覧の照会のほかは、何も実行しない
+report_dry_run() {
+  local index parent plan action plugin_id
+  for index in "${!TARGET_DESTINATIONS[@]}"; do
+    printf '%s: host=%s destination=%s source=%s\n' "${TARGET_CLASSIFICATIONS[$index]}" \
+      "${TARGET_HOSTS[$index]}" "${TARGET_DESTINATIONS[$index]}" "${TARGET_SOURCES[$index]}"
+  done
+  for parent in ${PENDING_SKILL_PARENTS[@]+"${PENDING_SKILL_PARENTS[@]}"}; do
+    printf 'migrate: skills parent=%s\n' "$parent"
+  done
+  if [ "${#CONFLICT_DESTINATIONS[@]}" -gt 0 ] && [ "$REPLACE_CONFLICTS" = false ]; then
+    yellow 'conflict があるので、--replace-conflicts なしの実行は何も変えずに止まります。'
+  fi
+  if selected_claude; then
+    # 導入予定が分からないことを「導入するものは無い」に畳まない
+    plan="$(claude_plugin_plan)" || {
+      red 'plugin の導入予定を確かめられませんでした。retry: claude plugin list --json'
+      return 1
+    }
+    while IFS=$'\t' read -r action plugin_id; do
+      [ -n "$plugin_id" ] || continue
+      printf 'plugin %s: host=claude plugin=%s\n' "$action" "$plugin_id"
+    done <<< "$plan"
+  fi
+  if selected_codex; then
+    printf 'codex config: %s のSSH署名とサブエージェント既定値を更新しうる\n' "$CODEX_DIR/config.toml"
+  fi
+  printf 'git: submodule の初期化と core.hooksPath の設定を行う\n'
 }
 
 # 監査ツールは exit 1 で違反、exit 2 で監査自体の失敗を返す。
@@ -917,6 +963,10 @@ validate_sources true || exit 1
 detect_legacy_skill_parents || exit 1
 
 preflight || exit $?
+if [ "$DRY_RUN" = true ]; then
+  report_dry_run || exit 1
+  exit 0
+fi
 if [ "${#CONFLICT_DESTINATIONS[@]}" -gt 0 ]; then
   report_conflicts
   if [ "$REPLACE_CONFLICTS" = false ]; then
