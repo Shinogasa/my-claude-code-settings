@@ -145,15 +145,6 @@ SessionStartの検査（`hooks/check-codex-base-provider.py`）にもplugin監�
 
 **着手条件**: Codexの作業を再開したとき。
 
-### P2: `setup.sh` に dry-run を追加する
-
-現状は実行するまで何が起きるか分からない。特に `setup_claude_plugins()` は
-`claude plugin install` を走らせる外部副作用を持つのに、事前に対象を確認する手段がない。
-「影響が小さい」と見積もる根拠を、実行前に数え上げられない状態になっている。
-
-**完了条件**: 配布先の分類（missing / linked / managed-update / conflict）とplugin導入予定を、
-副作用なしで列挙できる。
-
 ### P2: `context7` / `serena` のCodex向け候補を個別評価する
 
 両者は有用候補だが、Claude版のimportをそのまま使わない。Codex公式・curated・公開pluginを
