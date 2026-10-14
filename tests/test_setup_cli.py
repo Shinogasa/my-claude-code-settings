@@ -306,6 +306,19 @@ class SetupCliTests(unittest.TestCase):
         # 既定のプロファイルにも明示の目印を置く。引き継いだ personal を上書きし、目印の脱落も検出できるようにする
         self.assertEqual(settings["env"]["CLAUDE_PROFILE"], "default")
 
+    def test_profiles_pin_codex_home_for_child_codex(self):
+        # 個人プロファイルのセッションから素の codex を起動しても、個人用の CODEX_HOME で動くようにする（ADR 0036）
+        (self.home / ".claude").mkdir()
+        # setup.sh を個人プロファイルのセッションから実行しても、引き継いだ CODEX_HOME ではなく HOME から決める
+        result = run_setup(self.repository, self.home, "--claude", extra_env={"CODEX_HOME": "/inherited/codex"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        personal = json.loads((self.home / ".claude" / "settings.personal.json").read_text(encoding="utf-8"))
+        settings = json.loads((self.home / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        # 設定ファイルの env は ~ を展開しないので、絶対パスで書く
+        self.assertEqual(personal["env"]["CODEX_HOME"], str(self.home / ".codex-personal"))
+        # 既定のプロファイルにも置き、紛れ込んだ個人用の値を会社用へ戻す
+        self.assertEqual(settings["env"]["CODEX_HOME"], str(self.home / ".codex"))
+
     def test_code_learning_skill_is_linked_for_both_hosts(self):
         (self.home / ".claude").mkdir()
         (self.home / ".codex").mkdir()
