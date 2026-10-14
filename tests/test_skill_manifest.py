@@ -17,9 +17,10 @@ HOST_KEYS = ("shared", "claude", "codex")
 def managed_skill_directories(root):
     """リポジトリが配布するskill directoryを収集する。"""
     # syncedは外部同期が所有するコンテナであり、manifestの配布単位ではない。
+    # submodule内を指すsymlinkは、未初期化で先が無くても配布単位として数える。
     return {
         path.name for path in root.iterdir()
-        if path.is_dir() and path.name != "synced"
+        if (path.is_dir() or path.is_symlink()) and path.name != "synced"
     }
 
 
