@@ -52,7 +52,7 @@ bash setup.sh --claude
 | リポジトリ | リンク先 | 内容 |
 |---|---|---|
 | `CLAUDE.md` | `~/.claude/CLAUDE.md` | グローバル指示（全プロジェクト共通） |
-| `skills/` | `~/.claude/skills/` | カスタムスキル |
+| `skills/<名前>/` | `~/.claude/skills/<名前>/` | カスタムスキル。`manifests/skills.json` の `shared` と `claude` にあるものを1件ずつリンクする |
 | `commands/` | `~/.claude/commands/` | カスタムスラッシュコマンド |
 | `rules/` | `~/.claude/rules/` | 条件付きルール |
 | `agents/` | `~/.claude/agents/` | サブエージェント定義 |
@@ -76,13 +76,16 @@ Codexを一度起動してから再実行するようエラーを表示する。
 
 | リポジトリ | リンク先 | 備考 |
 |---|---|---|
-| `skills/` | `~/.agents/skills/` | Agent Skills オープン標準。Codex はスキャン時にシンボリックリンクを追従する |
+| `skills/<名前>/` | `~/.agents/skills/<名前>/` | Agent Skills オープン標準。`manifests/skills.json` の `shared` と `codex` にあるものを1件ずつリンクする |
 | `rules/` | `~/.codex/rules/` | `AGENTS.md` から Markdown を相対参照するための配置。Codex の Starlark `.rules` とは別物 |
 | `CLAUDE.md` | `~/.codex/AGENTS.md` | Codex のグローバル指示 |
 | `codex/RTK.md` | `~/.codex/RTK.md` | RTK公式のCodex向けシェル指示 |
+| `codex/MODEL_ROUTING.md` | `~/.codex/MODEL_ROUTING.md` | subagentと親セッションのモデル選択の手順 |
 | `hooks/` | `~/.codex/hooks/` | Claude Code と共有するhookスクリプト本体 |
 | `codex/hooks.json` | `~/.codex/hooks.json` | Codex向けのイベント配線。`/hooks` で定義ごとの承認が必要 |
 | `codex/agents/` | `~/.codex/agents/` | `agents/*.md` から生成したCodex TOML |
+| `bin/` | `~/.codex/bin/` | `cxp`、学習storeのCLI、モデル切替の診断CLIなど |
+| `codex-cli-best-practice/` | `~/.codex/codex-cli-best-practice/` | Codex設定の補助資料（submodule） |
 
 `~/.agents/` は Codex が自動生成しないため、Codex 検出時に `setup.sh` が作成する。
 
@@ -399,13 +402,18 @@ hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyring
 ├── CLAUDE.md                    # グローバル指示
 ├── AGENTS.md                    # このリポジトリのCodex project guidance
 ├── claude-code-best-practice/   # ベストプラクティス（git submodule）
-├── codex-cli-best-practice/      # Codexベストプラクティス（git submodule、補助資料）
-├── skills/                      # カスタムスキル
+├── codex-cli-best-practice/     # Codexベストプラクティス（git submodule、補助資料）
+├── manifests/
+│   └── skills.json              # ホストごとに配布するskillの一覧
+├── skills/                      # カスタムスキル（配布するものは manifests/skills.json で決める）
 │   ├── backend-patterns/        #   バックエンドパターン
-│   ├── claude-code-best-practice/  # 設定ベストプラクティス参照
+│   ├── claude-code-best-practice/  # 設定ベストプラクティス参照（Claude Code）
+│   ├── codex-cli-best-practice/ #   Codex設定の補助資料の参照（Codex CLI）
 │   ├── code-learning/           #   実作業でのコード理解・変更・レビュー演習
 │   ├── coding-standards/        #   コーディング規約
+│   ├── grill-me/                #   計画や設計を質問で詰める
 │   ├── learning-mode/           #   学習モードの手順と書式
+│   ├── source-command-*/        #   commands/ をCodexのskillとして共有する
 │   ├── work-principles/         #   仕事の原則で助言する（principles.json は生成物）
 │   └── yomiyasu/                #   日本語文書の書き直し（git submodule）
 ├── commands/                    # スラッシュコマンド
@@ -424,34 +432,57 @@ hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyring
 │   └── silent-failure-hunter.md #   サイレント障害検出
 ├── codex/                       # Codex固有アダプター
 │   ├── RTK.md                   #   RTK公式のCodex向けシェル指示
+│   ├── MODEL_ROUTING.md         #   モデル選択の手順
 │   ├── agents/                  #   agents/*.mdから生成したTOML
-│   └── hooks.json               #   Codex向けhookイベント定義
+│   ├── hooks.json               #   Codex向けhookイベント定義
+│   └── plugin-policy.json       #   Codexで実行を許すpluginの方針
 ├── rules/                       # 常時適用ルール
 │   ├── learning-mode.md         #   学習モードの判定と共通方針
 │   ├── code-learning.md         #   コード学習の常時発火入口
 │   ├── proving-absence.md       #   「無い」と主張するときの形式
+│   ├── parallel-worktree.md     #   並列セッションとworktreeの分離
+│   ├── security-review-policy.md #  セキュリティレビューを必須にする境界
+│   ├── persona.md               #   応答の口調
 │   ├── output-formatting.md     #   URL表示フォーマット
 │   ├── task-management.md       #   タスク管理手順
 │   ├── ecc-coding-style.md      #   コーディングスタイル
 │   └── ecc-development-workflow.md  # 開発ワークフロー
-├── hooks/                       # 危険コマンドブロック等のhooksスクリプト（Claude向けrtkフックはsettings.json.template側で管理）
+├── hooks/                       # hookスクリプト（配線は settings.json.template と codex/hooks.json）
+│   ├── guard-dangerous-bash.sh  #   危険コマンド判定のエントリポイント（実処理は .py）
+│   ├── rtk-rewrite.py           #   rtk の書き換え。linked worktreeのgitは書き換えさせない
+│   ├── warn-branch-behind-main.sh # terraform 実行時にブランチの遅れを警告する
 │   ├── block-commit-on-merged-pr.py # マージ済みPRのブランチへのコミットを止める
-│   ├── guard-dangerous-bash.sh  #   PreToolUse(Bash)フックのエントリポイント
-│   ├── guard-dangerous-bash.py  #   危険コマンド判定の実処理
-│   ├── hook_support.py          #   会話記録の読み取りと出力の補助
+│   ├── require-full-tests-before-pr.py # 全件テストを通していないHEADでPRを作らせない
 │   ├── jp-doc-review.py         #   PR作成前の日本語文書のレビュー依頼・Confluenceの事前チェック
+│   ├── jp-doc-lint.py           #   jp-doc-reviewerが使うyomiyasuリンターのラッパー
 │   ├── principle-review.py      #   仕様書・計画を含むコミットを1回止め、原則レビューを依頼する
-│   └── skill-read-check.py      #   スキルの必読資料の読み漏れ確認
-├── bin/                         # 起動ラッパー（PATHを通して使う）
-│   ├── ccp                      #   個人Anthropicアカウントで Claude Code を起動する
-│   ├── cxp                      #   個人ChatGPTアカウントで Codex CLI を起動する
-│   └── configure_codex_signing.py #   Bitwarden SSH agentをCodex子プロセスへ配布する
+│   ├── skill-read-check.py      #   スキルの必読資料の読み漏れ確認
+│   ├── detect-parallel-sessions.sh # 同じ作業ツリーの並列セッションを知らせる（SessionStart）
+│   ├── inject-superpowers.sh    #   Codexで using-superpowers の読込を指示する（SessionStart）
+│   ├── check-codex-base-provider.py # 会社用のCODEX_HOMEが個人アカウントで動きうる状態を警告する
+│   ├── codex-model-switch-hook.py #  Codex親セッションのモデル切替中の操作を制御する
+│   └── hook_support.py          #   会話記録の読み取りと出力の補助
+├── bin/                         # CLIと起動ラッパー（PATHを通して使う）
+│   ├── ccp / cxp                #   個人アカウントで Claude Code / Codex CLI を起動する
+│   ├── claude-headless          #   親と同じプロファイルで claude -p を起動する
+│   ├── detect-parallel-sessions #   並列セッションの検出（終了コード2は「検出できなかった」）
+│   ├── learning-store.py        #   専用学習storeを操作するCLI（実装は learning_store/）
+│   ├── setup-state.py           #   setup.sh の分類・退避・リンク適用
+│   ├── generate-codex-agents.py #   agents/*.md から codex/agents/*.toml を生成する
+│   ├── validate-codex-handoff.py #  モデル間handoffの検証
+│   ├── codex-model-switch.py    #   旧親モデル切替の診断・復旧
+│   ├── audit-codex-plugins.py   #   Codex plugin policyの監査
+│   └── configure_codex_*.py     #   Codexの config.toml へSSH署名とsubagent既定値を設定する
 ├── output-styles/               # カスタムアウトプットスタイル
 │   ├── review-and-design.md     #   Review & Design（コードレビュー・設計判断特化）
 │   └── fast.md                  #   高速実行（説明最小限）
-├── learning/                    # 学習ログ（公開可能な抽象化済み記録）
+├── learning/                    # 旧学習ログ（読み取り専用。新規記録は専用学習store）
 │   ├── entries/                 #   設計Predict / ★ Delta
-│   └── code/                    #   コード学習の実証記録とschema
+│   └── code/                    #   コード学習のschema
+├── docs/                        # ADR（docs/adr/）、設計書・計画（docs/superpowers/）、調査記録
+├── tasks/                       # backlog.md と lessons.md（todo.md は追跡しない）
+├── tests/                       # テスト（tests/run.sh で実行）
+├── .githooks/                   # 禁止パターンを検査する pre-commit
 ├── statusline.js                # ステータスライン表示
 ├── settings.json.template       # settings.jsonテンプレート（共通設定、.env不要）
 ├── env.json.template            # envブロックテンプレート（LiteLLM等APIキー利用時のみ、.env必要）
@@ -587,6 +618,7 @@ paths:
 - `.env` — APIトークン等の環境変数（LiteLLM等APIキー経由で利用する場合のみ必要。`env.json.template` と組み合わせて使用）
 - `settings.json` — 生成済みの設定ファイル
 - `.claude/settings.local.json` — プロジェクト固有設定
+- `.githooks/patterns-local.txt` — pre-commitで禁止する固有名詞（[禁止パターン検査](#禁止パターン検査pre-commit-フック)を参照）
 
 ## learning/ の運用
 
@@ -628,8 +660,8 @@ python3 -W error::ResourceWarning -m unittest tests.test_codex_model_switch_runt
 PRの前は `--all` で全件を流す。依存はuvの一時環境に入るだけで、システムやdotfilesには何も入れない。
 
 ```bash
-bash tests/run.sh          # 既定の組（約40秒）
-bash tests/run.sh --all    # 全件（約2分半）
+bash tests/run.sh          # 既定の組（約1分）
+bash tests/run.sh --all    # 全件（約4分）
 bash tests/run.sh --dry-run --all  # 実行するコマンドを表示するだけ
 ```
 
