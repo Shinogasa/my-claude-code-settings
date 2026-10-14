@@ -63,8 +63,8 @@ aws-billing-and-cost-management, aws-compute, aws-containers, aws-database, aws-
 
 - 更新: `git submodule update --remote agent-toolkit-for-aws` で上流を取り込み、12個のディレクトリの差分を読んでからコミットする
 - 移行した後は `aws agent-toolkit add-skill` と `update-skill` を使わない。symlinkを経由して、submoduleの中身を書き換えるおそれがある
-  - 実装の最初に、捨ててよい環境（一時的な `HOME` など）で `update-skill` がsymlinkの先を書き換えるかを確かめ、結果をこの節とREADMEに書く
-  - 書き換えた場合でも、submoduleに未コミットの変更が出るので `git status` で検出できる。READMEには、この検出方法と、`git -C agent-toolkit-for-aws checkout .` で戻す手順を書く
+  - 2026-10-14に一時的な `HOME` で確かめた結果、`update-skill` はsymlinkを残したまま、リンク先の中身を書き換えた（`SKILL.md` が上流の版で上書きされ、`.aws-skill-metadata` が書かれた）。版が同じなら「already up to date」で何もしない。版の判定には `.aws-skill-metadata` を使う
+  - そのため誤って実行すると、submoduleに未コミットの変更が出る。`git status` で検出できる。READMEには、この検出方法と、`git -C agent-toolkit-for-aws checkout .` と `git -C agent-toolkit-for-aws clean -fd` で戻す手順を書く
 - スキルを増やすときは、symlinkを足してmanifestに追加する。減らすときは、その逆を行う
 - 運用手順はREADMEに書く
 
