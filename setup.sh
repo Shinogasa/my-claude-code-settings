@@ -683,13 +683,16 @@ prepare_claude_files() {
   chmod 600 "$CLAUDE_SETTINGS_STAGED" "$CLAUDE_PERSONAL_STAGED" || return 1
   python3 - "$SCRIPT_DIR/settings.json.template" "$CLAUDE_DIR/settings.json" \
     "$SCRIPT_DIR/env.json.template" "$CLAUDE_SETTINGS_STAGED" \
-    "$CLAUDE_PERSONAL_STAGED" "$SETUP_MERGE_ENV" <<'PY'
+    "$CLAUDE_PERSONAL_STAGED" "$SETUP_MERGE_ENV" "$CODEX_DIR" "$CODEX_PERSONAL_DIR" <<'PY'
 import json
 import os
 import sys
 from pathlib import Path
 
-settings_template, settings_destination, env_template, settings_staged, personal_staged, merge_env = sys.argv[1:]
+(
+    settings_template, settings_destination, env_template, settings_staged, personal_staged, merge_env,
+    codex_home, codex_personal_home,
+) = sys.argv[1:]
 existing_path = Path(settings_destination)
 settings = {}
 try:
@@ -713,6 +716,8 @@ if merge_env == "true":
         for key in env_template_values
     }
     settings.setdefault("env", {}).update(env_block)
+# 子の codex が使う CODEX_HOME。個人プロファイル側と対にして、紛れ込んだ個人用の値を会社用へ戻す（ADR 0036）
+settings.setdefault("env", {})["CODEX_HOME"] = codex_home
 Path(settings_staged).write_text(
     json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
     encoding="utf-8",
@@ -721,7 +726,12 @@ Path(personal_staged).write_text(
     json.dumps(
         # CLAUDE_PROFILE は、このプロファイルで起動したセッションの子の claude -p が
         # 同じプロファイルで動くための目印（bin/claude-headless が読む）。会社の settings.json には入れない
-        {"env": {**{key: "" for key in env_template_values}, "CLAUDE_PROFILE": "personal"}},
+        # CODEX_HOME は、同じセッションから素の codex を起動しても個人用で動かすため（ADR 0036）
+        {"env": {
+            **{key: "" for key in env_template_values},
+            "CLAUDE_PROFILE": "personal",
+            "CODEX_HOME": codex_personal_home,
+        }},
         ensure_ascii=False,
         indent=2,
     ) + "\n",
