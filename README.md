@@ -600,11 +600,17 @@ ln -s ../agent-toolkit-for-aws/skills/core-skills/<名前> skills/<名前>   # �
 上流の更新を取り込む:
 
 ```bash
-git submodule update --remote agent-toolkit-for-aws
-git -C agent-toolkit-for-aws diff HEAD@{1} -- $(cd skills && for l in aws-* signing-in-to-aws; do printf 'skills/core-skills/%s ' "$l"; done)
+# 1. 作業ツリーはまだ動かさずに、上流を取ってくる（~/.claude/skills はsymlinkなので、動かすとすぐエージェントが読む）
+git -C agent-toolkit-for-aws fetch origin
+# 2. 記録済みのコミットと上流の差分を、skills/ のsymlinkが指すスキルに絞って読む
+git -C agent-toolkit-for-aws diff "$(git rev-parse :agent-toolkit-for-aws)" origin/main -- \
+  $(for l in skills/*; do [ -L "$l" ] && readlink "$l" | sed -n 's|^\.\./agent-toolkit-for-aws/||p'; done)
+# 3. 問題が無ければ進めて、コミットする
+git -C agent-toolkit-for-aws checkout origin/main
 ```
 
-配布しているスキルの差分を読んでからコミットする。上流でスキルの名前やパスが変わると、`tests/test_skill_manifest.py` が失敗する。
+差分は、エージェントに読ませる指示そのものなので、読んでから進める。`scripts/` と `assets/` の変更（エージェントが実行しうるコード）は特に読む。
+比べる元は親リポジトリに記録済みのコミットなので、何度実行しても同じ範囲を比べる。
 パスを付けない `git submodule update --remote` は、このsubmoduleも進める。ほかのsubmoduleだけを更新したいときは、パスを指定する。
 
 **`aws agent-toolkit add-skill` と `update-skill` は使わない。** 配布先はsymlinkなので、symlinkの先にあるsubmoduleの中身が書き換わる
