@@ -82,7 +82,8 @@ def make_stub_commands(base: Path) -> Path:
         "printf '%s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\n"
         "if [ \"${SETUP_GIT_EXIT:-0}\" != 0 ]; then exit \"$SETUP_GIT_EXIT\"; fi\n"
         "if [ \"${SETUP_REAL_GIT:-}\" != '' ] && [ \"${3:-}\" = ls-files ]; then exec \"$SETUP_REAL_GIT\" \"$@\"; fi\n"
-        "if [ \"$*\" = \"-C $SETUP_SUBMODULE_REPOSITORY submodule update --init --recursive\" ]; then mkdir -p \"$SETUP_SUBMODULE_ROOT/claude-code-best-practice\" \"$SETUP_SUBMODULE_ROOT/codex-cli-best-practice\"; fi\n"
+        # submodule初期化の代わりに、skills/ のsymlinkが指す先（submodule内のスキル）も作る
+        "if [ \"$*\" = \"-C $SETUP_SUBMODULE_REPOSITORY submodule update --init --recursive\" ]; then mkdir -p \"$SETUP_SUBMODULE_ROOT/claude-code-best-practice\" \"$SETUP_SUBMODULE_ROOT/codex-cli-best-practice\"; for l in \"$SETUP_SUBMODULE_ROOT\"/skills/*; do if [ -L \"$l\" ] && [ ! -e \"$l\" ]; then mkdir -p \"$SETUP_SUBMODULE_ROOT/skills/$(readlink \"$l\")\" && : > \"$l/SKILL.md\"; fi; done; fi\n"
         "exit 0\n",
         encoding="utf-8",
     )

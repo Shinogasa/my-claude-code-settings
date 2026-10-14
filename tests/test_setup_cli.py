@@ -68,7 +68,8 @@ def make_stub_commands(base: Path) -> Path:
         "fi\n"
         "printf '%s\\n' \"$*\" >> \"$SETUP_COMMAND_LOG\"\n"
         "if [ \"${SETUP_GIT_EXIT:-0}\" != 0 ]; then exit \"$SETUP_GIT_EXIT\"; fi\n"
-        "if [ \"$*\" = \"-C $SETUP_SUBMODULE_REPOSITORY submodule update --init --recursive\" ]; then mkdir -p \"$SETUP_SUBMODULE_ROOT/claude-code-best-practice\" \"$SETUP_SUBMODULE_ROOT/codex-cli-best-practice\"; fi\n"
+        # submodule初期化の代わりに、skills/ のsymlinkが指す先（submodule内のスキル）も作る
+        "if [ \"$*\" = \"-C $SETUP_SUBMODULE_REPOSITORY submodule update --init --recursive\" ]; then mkdir -p \"$SETUP_SUBMODULE_ROOT/claude-code-best-practice\" \"$SETUP_SUBMODULE_ROOT/codex-cli-best-practice\"; for l in \"$SETUP_SUBMODULE_ROOT\"/skills/*; do if [ -L \"$l\" ] && [ ! -e \"$l\" ]; then mkdir -p \"$SETUP_SUBMODULE_ROOT/skills/$(readlink \"$l\")\" && : > \"$l/SKILL.md\"; fi; done; fi\n"
         "exit 0\n",
         encoding="utf-8",
     )
@@ -831,6 +832,50 @@ class SetupDryRunTests(unittest.TestCase):
     def test_usage_mentions_dry_run(self):
         result = run_setup(self.repository, self.home)
         self.assertIn("--dry-run", result.stderr)
+
+    def add_external_skill_link(self, name: str, target: str, declare: bool = True):
+        """宣言済みsubmoduleの中を指す、未初期化（先が無い）のskill symlinkを置く。"""
+        if declare:
+            with (self.repository / ".gitmodules").open("a", encoding="utf-8") as gitmodules:
+                gitmodules.write(
+                    '[submodule "ext-toolkit"]\n'
+                    "\tpath = ext-toolkit\n"
+                    "\turl = https://example.invalid/ext-toolkit.git\n"
+                )
+        (self.repository / "skills" / name).symlink_to(target)
+        manifest_path = self.repository / "manifests" / "skills.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["shared"] = sorted(manifest["shared"] + [name])
+        manifest_path.write_text(json.dumps(manifest, indent=4) + "\n", encoding="utf-8")
+
+    def test_skill_link_into_uninitialized_declared_submodule_passes_preflight(self):
+        self.add_external_skill_link("ext-skill", "../ext-toolkit/skills/ext-skill")
+        result = self.dry_run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # 「エラーが出ない」ではなく、検査を通って分類まで進んだことを根拠にする
+        self.assertIn(
+            f"missing: host=claude destination={self.home / '.claude' / 'skills' / 'ext-skill'}",
+            result.stdout,
+        )
+
+    def test_skill_link_into_undeclared_path_is_rejected(self):
+        self.add_external_skill_link("ext-skill", "../not-declared/skills/ext-skill")
+        result = self.dry_run()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("source が存在しません", result.stderr)
+
+    def test_absolute_skill_link_is_rejected_even_into_declared_submodule(self):
+        target = self.repository / "ext-toolkit" / "skills" / "ext-skill"
+        self.add_external_skill_link("ext-skill", str(target))
+        result = self.dry_run()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("source が存在しません", result.stderr)
+
+    def test_skill_link_escaping_repository_is_rejected(self):
+        self.add_external_skill_link("ext-skill", "../../ext-toolkit/skills/ext-skill")
+        result = self.dry_run()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("source が存在しません", result.stderr)
 
 
 if __name__ == "__main__":

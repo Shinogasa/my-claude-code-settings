@@ -104,3 +104,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0030](0030-setup-state-batch-invocation.md) | setup.sh から setup-state.py を対象ごとではなく一括で呼ぶ | 2026-10-09 | accepted |
 | [0031](0031-config-repo-worktree-scope.md) | 設定リポジトリでworktreeを使ってよい範囲を、動作中の設定に効かない作業へ広げる | 2026-10-09 | accepted |
 | [0032](0032-jp-doc-review-pr-target-from-cd.md) | 日本語文書のレビューで、PRを作るリポジトリを cd の移動先から決める | 2026-10-09 | accepted |
+| [0035](0035-aws-skills-via-upstream-submodule.md) | AWSスキルを上流submoduleへのsymlinkとmanifestで配布する | 2026-10-14 | accepted |

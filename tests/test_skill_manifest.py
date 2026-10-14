@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """skillのホスト別配布境界とCodex routing skillを検証する。"""
 import json
+import os
 import re
 import tempfile
 import unittest
@@ -17,9 +18,10 @@ HOST_KEYS = ("shared", "claude", "codex")
 def managed_skill_directories(root):
     """リポジトリが配布するskill directoryを収集する。"""
     # syncedは外部同期が所有するコンテナであり、manifestの配布単位ではない。
+    # submodule内を指すsymlinkは、未初期化で先が無くても配布単位として数える。
     return {
         path.name for path in root.iterdir()
-        if path.is_dir() and path.name != "synced"
+        if (path.is_dir() or path.is_symlink()) and path.name != "synced"
     }
 
 
@@ -98,6 +100,14 @@ class TestSkillManifest(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 assert_complete_classification({"learning-mode"}, actual)
 
+    def test_dangling_skill_symlink_is_counted(self):
+        """submoduleが未初期化でも、symlinkのskillを分類の対象に含める。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "learning-mode").mkdir()
+            (root / "ext-skill").symlink_to("../missing-submodule/ext-skill")
+            self.assertEqual(managed_skill_directories(root), {"learning-mode", "ext-skill"})
+
     def test_host_specific_entries_are_fixed(self):
         self.assertEqual(self.manifest["claude"], ["claude-code-best-practice", "work-principles"])
         self.assertEqual(self.manifest["codex"], ["codex-cli-best-practice"])
@@ -162,6 +172,93 @@ class TestExternalSkillSubmodule(unittest.TestCase):
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         self.assertIn("yomiyasu", manifest["shared"])
         self.assertTrue((SKILLS_DIR / "yomiyasu" / "SKILL.md").is_file())
+
+
+AWS_SUBMODULE = "agent-toolkit-for-aws"
+AWS_SKILLS = (
+    "aws-billing-and-cost-management", "aws-compute", "aws-containers", "aws-database",
+    "aws-iam", "aws-networking", "aws-observability", "aws-security", "aws-serverless",
+    "aws-storage", "aws-well-architected-review", "signing-in-to-aws",
+)
+
+
+def declared_submodule_paths(root=REPO_ROOT):
+    text = (root / ".gitmodules").read_text(encoding="utf-8")
+    return re.findall(r"^\s*path\s*=\s*(\S+)\s*$", text, flags=re.MULTILINE)
+
+
+def unresolved_skill_links(skills_dir, root=REPO_ROOT):
+    """初期化済みsubmoduleを指すのに、SKILL.mdへ解決できないskill symlinkの名前を返す。"""
+    declared = declared_submodule_paths(root)
+    base = os.path.relpath(skills_dir, root)
+    unresolved = set()
+    for link in skills_dir.iterdir():
+        if not link.is_symlink():
+            continue
+        relative = os.path.normpath(os.path.join(base, os.readlink(link)))
+        owners = [path for path in declared if relative.startswith(path + "/")]
+        # 未初期化のsubmoduleは、新しい端末と同じ状態なので検査しない
+        if owners and not (root / owners[0] / ".git").exists():
+            continue
+        if not (link / "SKILL.md").is_file():
+            unresolved.add(link.name)
+    return unresolved
+
+
+class TestAwsSkillSubmodule(unittest.TestCase):
+    """AWSスキルを上流submodule内へのsymlinkとして共有配布しているか。"""
+
+    def test_submodule_is_declared(self):
+        gitmodules = (REPO_ROOT / ".gitmodules").read_text(encoding="utf-8")
+        self.assertIn(f"path = {AWS_SUBMODULE}", gitmodules)
+        self.assertIn("url = https://github.com/aws/agent-toolkit-for-aws.git", gitmodules)
+
+    def test_selected_skills_are_relative_links_listed_as_shared(self):
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        for name in AWS_SKILLS:
+            with self.subTest(name=name):
+                link = SKILLS_DIR / name
+                self.assertTrue(link.is_symlink())
+                self.assertEqual(
+                    os.readlink(link), f"../{AWS_SUBMODULE}/skills/core-skills/{name}"
+                )
+                self.assertIn(name, manifest["shared"])
+
+    def test_every_skill_symlink_points_into_declared_submodule(self):
+        declared = declared_submodule_paths()
+        for link in SKILLS_DIR.iterdir():
+            if not link.is_symlink():
+                continue
+            with self.subTest(link=link.name):
+                target = os.readlink(link)
+                self.assertFalse(os.path.isabs(target))
+                relative = os.path.normpath(os.path.join("skills", target))
+                self.assertTrue(
+                    any(relative == path or relative.startswith(path + "/") for path in declared),
+                    relative,
+                )
+
+    def test_unresolved_links_cover_every_symlink_not_only_aws(self):
+        """AWS_SKILLSに無いsymlinkでも、初期化済みsubmoduleで先を失えば検出する。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".gitmodules").write_text(
+                '[submodule "ext"]\n\tpath = ext\n[submodule "uninit"]\n\tpath = uninit\n',
+                encoding="utf-8",
+            )
+            (root / "ext" / "good").mkdir(parents=True)
+            (root / "ext" / "good" / "SKILL.md").write_text("x\n", encoding="utf-8")
+            (root / "ext" / ".git").write_text("gitdir: x\n", encoding="utf-8")
+            skills = root / "skills"
+            skills.mkdir()
+            (skills / "good").symlink_to("../ext/good")
+            (skills / "renamed").symlink_to("../ext/old-name")
+            (skills / "not-yet").symlink_to("../uninit/skill")
+            self.assertEqual(unresolved_skill_links(skills, root), {"renamed"})
+
+    def test_links_resolve_to_skills_when_submodule_is_initialized(self):
+        """上流で名前やパスが変わったら、ここで気づく。AWS_SKILLSに無いsymlinkも対象にする。"""
+        self.assertEqual(unresolved_skill_links(SKILLS_DIR), set())
 
 
 if __name__ == "__main__":

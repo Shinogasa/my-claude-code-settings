@@ -177,10 +177,24 @@ validate_host_directories() {
 }
 
 is_declared_submodule_source() {
-  local source="$1" relative
+  local source="$1" relative target declared
   relative="${source#"$SCRIPT_DIR"/}"
   [ -f "$SCRIPT_DIR/.gitmodules" ] || return 1
-  grep -F "path = $relative" "$SCRIPT_DIR/.gitmodules" >/dev/null 2>&1
+  if [ ! -L "$source" ]; then
+    grep -F "path = $relative" "$SCRIPT_DIR/.gitmodules" >/dev/null 2>&1
+    return
+  fi
+  # symlinkは、リンク先がリポジトリ内の宣言済みsubmoduleの配下にあるときだけ許す
+  target="$(readlink "$source")" || return 1
+  case "$target" in /*) return 1 ;; esac
+  relative="$(python3 -c 'import os, sys; print(os.path.normpath(os.path.join(os.path.dirname(sys.argv[1]), sys.argv[2])))' \
+    "$relative" "$target")" || return 1
+  case "$relative" in ..|../*) return 1 ;; esac
+  while IFS= read -r declared; do
+    [ -n "$declared" ] || continue
+    case "$relative" in "$declared"|"$declared"/*) return 0 ;; esac
+  done < <(sed -n 's/^[[:space:]]*path[[:space:]]*=[[:space:]]*//p' "$SCRIPT_DIR/.gitmodules")
+  return 1
 }
 
 read_manifest_skills() {

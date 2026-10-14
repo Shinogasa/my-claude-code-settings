@@ -7,3 +7,6 @@
 [submodule "skills/yomiyasu"]
 	path = skills/yomiyasu
 	url = https://github.com/nanaism/yomiyasu.git
+[submodule "agent-toolkit-for-aws"]
+	path = agent-toolkit-for-aws
+	url = https://github.com/aws/agent-toolkit-for-aws.git
