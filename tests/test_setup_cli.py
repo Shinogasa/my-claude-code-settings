@@ -319,6 +319,36 @@ class SetupCliTests(unittest.TestCase):
         # 既定のプロファイルにも置き、紛れ込んだ個人用の値を会社用へ戻す
         self.assertEqual(settings["env"]["CODEX_HOME"], str(self.home / ".codex"))
 
+    def run_claude_setup_with_personal_home(self, prepare):
+        (self.home / ".claude").mkdir()
+        (self.home / ".codex").mkdir()
+        prepare(self.home / ".codex-personal")
+        result = run_setup(self.repository, self.home, "--claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # 検査で引っかかっても値は書く。子の codex がエラーで止まるので、会社用へ黙って落ちない
+        personal = json.loads((self.home / ".claude" / "settings.personal.json").read_text(encoding="utf-8"))
+        self.assertEqual(personal["env"]["CODEX_HOME"], str(self.home / ".codex-personal"))
+        return result.stdout + result.stderr
+
+    def test_warns_when_personal_codex_home_is_missing(self):
+        output = self.run_claude_setup_with_personal_home(lambda path: None)
+        self.assertIn("CODEX_HOME", output)
+        self.assertIn("見つかりません", output)
+
+    def test_warns_when_personal_codex_home_is_not_private(self):
+        output = self.run_claude_setup_with_personal_home(lambda path: path.mkdir(mode=0o755))
+        self.assertIn("CODEX_HOME", output)
+        self.assertIn("700", output)
+
+    def test_warns_when_personal_codex_home_is_company_home(self):
+        output = self.run_claude_setup_with_personal_home(lambda path: path.symlink_to(self.home / ".codex"))
+        self.assertIn("CODEX_HOME", output)
+        self.assertIn("会社用", output)
+
+    def test_no_codex_home_warning_for_private_personal_home(self):
+        output = self.run_claude_setup_with_personal_home(lambda path: path.mkdir(mode=0o700))
+        self.assertNotIn("CODEX_HOME", output)
+
     def test_code_learning_skill_is_linked_for_both_hosts(self):
         (self.home / ".claude").mkdir()
         (self.home / ".codex").mkdir()
