@@ -1,11 +1,23 @@
 {
     "schemaVersion": 1,
     "shared": [
+        "aws-billing-and-cost-management",
+        "aws-compute",
+        "aws-containers",
+        "aws-database",
+        "aws-iam",
+        "aws-networking",
+        "aws-observability",
+        "aws-security",
+        "aws-serverless",
+        "aws-storage",
+        "aws-well-architected-review",
         "backend-patterns",
         "code-learning",
         "coding-standards",
         "grill-me",
         "learning-mode",
+        "signing-in-to-aws",
         "source-command-explain",
         "source-command-pr-create",
         "yomiyasu"
