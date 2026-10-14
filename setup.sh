@@ -677,6 +677,25 @@ PY
   done
 }
 
+# settings.personal.json の CODEX_HOME が指す先を、cxp と同じ条件で検査する（ADR 0036）。
+# 引っかかっても値は書いたままにする。子の codex はエラーで止まるか、利用者が警告で気づく
+check_personal_codex_home() {
+  if [ ! -d "$CODEX_PERSONAL_DIR" ]; then
+    yellow "個人用の CODEX_HOME（$CODEX_PERSONAL_DIR）が見つかりません。ccp のセッションから起動する codex はエラーで止まります。"
+    return 0
+  fi
+  if [ -d "$CODEX_DIR" ] \
+    && [ "$(cd "$CODEX_PERSONAL_DIR" && pwd -P)" = "$(cd "$CODEX_DIR" && pwd -P)" ]; then
+    yellow "個人用の CODEX_HOME（$CODEX_PERSONAL_DIR）の実体が会社用の $CODEX_DIR と同じです。ccp のセッションから起動する codex が会社用で動きます。別のディレクトリにしてください。"
+    return 0
+  fi
+  local mode
+  mode="$(stat -f '%Lp' "$CODEX_PERSONAL_DIR" 2>/dev/null || stat -c '%a' "$CODEX_PERSONAL_DIR")"
+  if [ "$mode" != 700 ]; then
+    yellow "個人用の CODEX_HOME（$CODEX_PERSONAL_DIR）の権限が $mode です。個人の認証情報を置くので 700 にしてください（chmod 700 $CODEX_PERSONAL_DIR）。"
+  fi
+}
+
 prepare_claude_files() {
   CLAUDE_SETTINGS_STAGED="$(mktemp "$CLAUDE_DIR/.settings.json.setup.XXXXXX")" || return 1
   CLAUDE_PERSONAL_STAGED="$(mktemp "$CLAUDE_DIR/.settings.personal.json.setup.XXXXXX")" || return 1
@@ -1055,6 +1074,7 @@ if selected_codex; then
   fi
 fi
 if selected_claude; then
+  check_personal_codex_home
   print_claude_path_guidance
 fi
 
