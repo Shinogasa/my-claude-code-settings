@@ -331,9 +331,9 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 
 **Bashから起動する `codex` も、セッションのプロファイルに従う**: `setup.sh` は、`settings.personal.json` の `env` に
 `CODEX_HOME=<HOME>/.codex-personal` を、`settings.json` の `env` に `CODEX_HOME=<HOME>/.codex` を書く（ADR 0036）。
-`ccp` のセッションから素の `codex` を起動しても、個人用で動く。`~/.codex-personal` が無いかログインしていなければ、会社用へは切り替わらずエラーで止まる。
+`ccp` のセッションから素の `codex` を起動しても、個人用で動く。`~/.codex-personal` が無いときや、ログインしていないときは、会社用へは切り替わらずエラーで止まる。
 会社用を使うよう指示されたときは、`CODEX_HOME=~/.codex codex ...` と明示する。
-`setup.sh` は、`~/.codex-personal` が無い、会社用と同じ実体、権限が700でない、のどれかなら警告する。
+`setup.sh` は、`~/.codex-personal` が無いとき、会社用と同じ実体のとき、権限が700でないときに警告する。
 
 ### 機密でない機能トグルの置き場
 

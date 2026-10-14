@@ -26,15 +26,15 @@
 
 ### P1: 個人用のセッションから起動する素の `claude` を止める（ADR 0036の続き）
 
-ADR 0036で、個人用のClaude Codeから起動する `codex` を個人用に固定した。`claude` は子が `settings.json` を読み直すので、
-環境変数では縛れない。ユーザーが2026-10-14に「1から順に対応する」と決めた残りの2つを行う。
+ADR 0036で、個人用のClaude Codeから起動する `codex` を個人用に固定した。`claude` は、子が `settings.json` を読み直すので、
+環境変数では固定できない。ユーザーが2026-10-14に「1から順に対応する」と決めたうち、残りの2つを行う。
 
 - ② `hooks/guard-dangerous-bash.py` で、`CLAUDE_PROFILE=personal` のときに素の `claude` の起動を止め、`claude-headless` を案内する。
-  同じフックで、`CLAUDE_PROFILE=personal` なのに `CODEX_HOME` が無ければ警告し、`setup.sh` の実行忘れに気づけるようにする
-  さらに、`CODEX_HOME` の実体が会社用の `~/.codex` と同じなら、Bashの `codex` を止める（`setup.sh` の後の差し替えを捕まえる。セキュリティレビューのMedium-1）
+  同じフックで、`CLAUDE_PROFILE=personal` なのに `CODEX_HOME` が無ければ警告し、`setup.sh` の実行忘れに気づけるようにする。
+  さらに、`CODEX_HOME` の実体が会社用の `~/.codex` と同じなら、Bashの `codex` を止める（`setup.sh` を実行した後の差し替えに気づくため。セキュリティレビューのMedium-1）
 - 2026-10-14のセキュリティレビューで残ったLow（実害が出てから直す）
-  - 実体の比較はディレクトリしか見ない。中の `auth.json` だけを会社用へのsymlinkにすると素通りする（`cxp` も同じ）
-  - `stat -f '%Lp'` は、GNU coreutilsの `stat` がPATHの先にあると失敗し、`-c '%a'` に落ちる。素通りではなく、警告が余分に出る側に倒れる（実機では未確認）
+  - 実体の比較はディレクトリしか見ない。中の `auth.json` だけを会社用へのsymlinkにすると見逃す（`cxp` も同じ）
+  - `stat -f '%Lp'` は、GNU coreutilsの `stat` がPATHの先にあると失敗し、`-c '%a'` に切り替わる。その場合も見逃すことはなく、警告が余分に出る（実機では未確認）
   - `OPENAI_API_KEY` などがシェルにあると、`CODEX_HOME` を切り替えてもAPIキーの認証が優先されるかもしれない（codexの優先順位は未確認。2026-10-14時点で、この端末には設定されていない）
 - ③ 同じフックで、Codexの個人用（`CODEX_HOME` が `~/.codex-personal`）のときに素の `claude` を止め、`ccp -p` を案内する
 
