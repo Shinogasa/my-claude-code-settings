@@ -62,6 +62,8 @@ def run_hook_with_default_detect(cwd, home):
     payload = {"hook_event_name": "SessionStart", "source": "startup"}
     env = dict(os.environ)
     env["HOME"] = str(home)
+    # 個人用のセッション（ADR 0036）から流すと CODEX_HOME を引き継ぎ、一時 HOME の外の検出器を呼んでしまう
+    env.pop("CODEX_HOME", None)
     env["PARALLEL_SESSIONS_EXCLUDE_PATH"] = str(home / "missing-rules")
     env["CODEX_DETECT_CALLED"] = str(home / "codex-detector-called")
     env["CLAUDE_DETECT_CALLED"] = str(home / "claude-detector-called")
