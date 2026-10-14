@@ -4,6 +4,10 @@
 # 出力: JSON 配列。検出ゼロなら []
 #   [{"pid":1234,"cwd":"/path/to/repo"}]
 #
+# 終了コード:
+#   0 = 検出した（[] なら「いない」）
+#   2 = 検出できなかった。標準出力は空で、理由を標準エラーに出す
+#
 # 判定:
 #   git の common-dir が一致し、かつ作業ディレクトリも一致するものだけを衝突とみなす。
 #   common-dir が一致して作業ディレクトリが違う場合は worktree で分離済みなので出さない。
@@ -13,13 +17,21 @@
 #   出力を同一リポジトリのセッションに絞るのは、無関係な他プロジェクトの絶対パスを
 #   コンテキストへ漏らさないため。lsof は全セッションの作業ディレクトリを取れてしまう。
 #
-# fail-open:
-#   pgrep / lsof / git / jq のいずれかが使えない、値が取れない場合は [] を返して
-#   正常終了する。検出できないことより、検出処理がセッション開始を妨げることの方が
-#   高くつく。
+# 検出できなかったとき:
+#   pgrep / lsof / git / jq のいずれかが使えない、または作業ディレクトリの
+#   common-dir が取れない場合は、終了コード2で終わる。[] を返すと「いない」と
+#   区別できず、本体でブランチを切る前の確認（ADR 0031）が誤って通る。
+#   原因ごとに終了コードを分けないのは、どの呼び出し元も原因で行動を変えないため。
+#
+#   失敗をどう扱うかは呼び出し元が決める。SessionStart フックは、セッション開始を
+#   妨げないよう 0 以外で黙って抜ける（fail-open）。手で確認する手順では、
+#   「いるかもしれない」として扱う（rules/parallel-worktree.md）。
 #
 #   --path-format=absolute は git 2.31 以降が必要。これより古いと rev-parse が
-#   失敗し、fail-open がそれを飲み込むため機能が黙って無効になる。
+#   失敗し、検出できなかったとして終わる。
+#
+#   列挙の途中で個々のプロセスの cwd が取れないもの（権限など）は飛ばす。
+#   これは区別していない。
 
 set -uo pipefail
 
@@ -33,13 +45,24 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-emit_empty() { printf '[]\n'; exit 0; }
+undetectable() {
+  printf '検出できなかった: %s\n' "$1" >&2
+  exit 2
+}
 
-command -v git >/dev/null 2>&1 || emit_empty
-command -v jq  >/dev/null 2>&1 || emit_empty
+for tool in git jq; do
+  command -v "$tool" >/dev/null 2>&1 || undetectable "$tool が見つからない"
+done
+# 列挙はプロセス置換の中で動き、失敗が外へ伝わらない。使う道具は先に確かめる
+if [ -z "${DETECT_PARALLEL_SESSIONS_FIXTURE:-}" ]; then
+  for tool in pgrep lsof; do
+    command -v "$tool" >/dev/null 2>&1 || undetectable "$tool が見つからない"
+  done
+fi
 
-my_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || emit_empty
-[ -n "$my_common" ] || emit_empty
+my_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+  || undetectable "作業ディレクトリの git common-dir を取れない（git 管理外か、git 2.31 未満）"
+[ -n "$my_common" ] || undetectable "作業ディレクトリの git common-dir が空"
 my_cwd=$(pwd -P)
 
 # セッションの列挙。テストから差し替えられるようファイル経由の差し込み口を持つ。
@@ -49,8 +72,6 @@ enumerate() {
     cat "$DETECT_PARALLEL_SESSIONS_FIXTURE" 2>/dev/null
     return
   fi
-  command -v pgrep >/dev/null 2>&1 || return
-  command -v lsof  >/dev/null 2>&1 || return
   local p c
   for p in $(pgrep -x claude 2>/dev/null); do
     c=$(lsof -a -p "$p" -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2-)

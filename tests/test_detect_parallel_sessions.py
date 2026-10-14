@@ -106,41 +106,71 @@ class TestCollisionDetection(unittest.TestCase):
         self.assertEqual(found, [])
 
 
-class TestOutsideGitRepo(unittest.TestCase):
-    """git 管理外では判定できないので空配列を返す (fail-open)。"""
+# 検出できなかったときの終了コード。「いない」(0 と []) と区別する。
+# SessionStart フックは 0 以外で黙って抜けるので、フック側は fail-open のまま。
+EXIT_UNDETECTABLE = 2
 
-    def test_returns_empty_array(self):
+
+def run_undetectable(cwd, env):
+    result = subprocess.run(
+        ["bash", str(DETECT), "--self-pid", "999"],
+        capture_output=True, text=True, cwd=str(cwd), env=env, timeout=10,
+    )
+    return result
+
+
+class TestOutsideGitRepo(unittest.TestCase):
+    """git 管理外では判定できないので、「いない」とは区別して返す。"""
+
+    def test_reports_undetectable(self):
         with tempfile.TemporaryDirectory() as plain:
-            self.assertEqual(run_detect(plain, [("111", plain)], self_pid="999"), [])
+            env = dict(os.environ)
+            env["DETECT_PARALLEL_SESSIONS_FIXTURE"] = os.devnull
+            result = run_undetectable(plain, env)
+            self.assertEqual(result.returncode, EXIT_UNDETECTABLE, result.stderr)
+            # 標準出力に [] を出すと、出力だけを読む呼び出し元が「いない」と誤読する
+            self.assertEqual(result.stdout, "")
+            self.assertIn("検出できなかった", result.stderr)
 
 
 class TestMissingTools(unittest.TestCase):
-    """lsof が使えない環境でも空配列を返して正常終了する (fail-open)。
+    """必要な道具が欠けたら、「いない」とは区別して返す。
 
     差し込み口を使わず、既定の列挙経路 (pgrep + lsof) を通したうえで
-    lsof だけを PATH から隠す。
+    1つだけを PATH から隠す。
     """
 
-    def test_returns_empty_array_without_lsof(self):
+    TOOLS = ("bash", "git", "jq", "ps", "basename", "pgrep", "lsof",
+             "grep", "cut", "cat", "tr")
+
+    def run_without(self, hidden):
         with tempfile.TemporaryDirectory() as base:
             repo = make_repo(base, "repo")
-            # 必要な道具だけを見せる PATH を作り、lsof と pgrep を隠す
             bindir = Path(base) / "bin"
             bindir.mkdir()
-            for tool in ("bash", "git", "jq", "ps", "basename", "pgrep",
-                         "grep", "cut", "cat", "tr"):
+            for tool in self.TOOLS:
                 found = shutil.which(tool)
-                if found:
+                if found and tool != hidden:
                     (bindir / tool).symlink_to(found)
             env = dict(os.environ)
             env["PATH"] = str(bindir)
             env.pop("DETECT_PARALLEL_SESSIONS_FIXTURE", None)
-            result = subprocess.run(
-                ["bash", str(DETECT), "--self-pid", "999"],
-                capture_output=True, text=True, cwd=str(repo), env=env,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(json.loads(result.stdout or "[]"), [])
+            return run_undetectable(repo, env)
+
+    def test_each_missing_tool_is_reported(self):
+        for hidden in ("lsof", "pgrep", "jq", "git"):
+            with self.subTest(hidden=hidden):
+                self.assertIsNotNone(shutil.which(hidden), f"{hidden} が無い環境ではこの検査は測定にならない")
+                result = self.run_without(hidden)
+                self.assertEqual(result.returncode, EXIT_UNDETECTABLE, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(hidden, result.stderr)
+
+    def test_all_tools_present_is_not_reported(self):
+        # 隠す道具が無ければ検出は成功する。上の検査が PATH の作り方のせいで落ちていないことの対照
+        result = self.run_without(None)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsInstance(json.loads(result.stdout), list)
 
 
 class TestMalformedArguments(unittest.TestCase):
