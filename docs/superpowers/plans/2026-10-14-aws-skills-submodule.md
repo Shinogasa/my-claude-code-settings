@@ -26,7 +26,7 @@
 1. 新しい端末で、submoduleを初期化する前の事前検査 → 止まらずに進むこと（Task 2のテストで固定）
 2. `skills/` のsymlinkが、リポジトリの外や宣言していないパスを指す → 事前検査は今と同じく `source が存在しません` で止まること（Task 2のテストで固定）
 3. 上流でスキルの名前やディレクトリが変わり、symlinkの先が無くなる → テストが失敗して気づけること（Task 4のテストで固定）
-4. `aws agent-toolkit update-skill` を誤って実行し、submoduleの中身が書き換わる → `git status` で検出できること（Task 1で挙動を確かめ、Task 5でREADMEに書く）
+4. `aws agent-toolkit update-skill` を誤って実行する → (a) submoduleの中身が書き換わるなら `git status`、(b) 配布先のsymlinkが実ディレクトリに置き換わるなら `setup.sh --dry-run` の `conflict` で検出できること（Task 1で挙動を確かめ、Task 5でREADMEに書き分ける）
 5. 既存の外部スキル（yomiyasu、best-practice）の配布が壊れない → 既存のテストがすべて通ること（各TaskのGREENで全件実行）
 
 ---
@@ -34,6 +34,8 @@
 ### Task 1: `aws agent-toolkit update-skill` の書き込み先を確かめる（P03a）
 
 コードは書かない。結果をspecに記録する。
+
+このTaskはTask 2〜4と独立していて、結果はTask 5のREADMEにしか使わない。AWSの認証が切れている・SSOの再ログインが要るなどで止まったら、(c)「未確認」として理由を記録し、Task 2へ進む。Task 5の前に、もう一度だけ試す（P09a）。
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-10-14-aws-skills-submodule-design.md`（「運用」節）
@@ -425,7 +427,11 @@ TestAwsSkillSubmodule の4テストと tests/run.sh がすべて通った。"
 
 - [ ] **Step 4: READMEに運用の節を足す**
 
-「codex-cli-best-practice（submodule）」節の後、「CLAUDE.md と rules/ の使い分け」の前に足す。Task 1の結果に合わせて、「書き換えた場合」の段落を直す（(c)なら「確かめられていない」と書く）。
+「codex-cli-best-practice（submodule）」節の後、「CLAUDE.md と rules/ の使い分け」の前に足す。最後の段落（誤って実行した場合の検出と戻し方）は、Task 1の結果に合わせて次のどれかにする（P03a）。
+
+- (a) symlinkの先を書き換えた: 下の例のとおり、`git status` で検出し `git -C agent-toolkit-for-aws checkout .` で戻す
+- (b) symlinkを実ディレクトリに置き換えた: 次の `bash setup.sh --all --dry-run` に `conflict` として出る。`bash setup.sh --all --replace-conflicts` でsymlinkに戻す
+- (c) 確かめられなかった: (a)と(b)の両方の検出方法と戻し方を書き、どちらが起きるかは未確認だと明記する
 
 ````markdown
 ## agent-toolkit-for-aws（submodule）
@@ -483,8 +489,9 @@ HOME="$T/home" bash "$T/repo/setup.sh" --all --dry-run; echo "exit=$?"
 rm -rf "$T"
 ```
 
-Expected: `exit=0`。`source が存在しません` が出ない（clone直後で、submoduleは未初期化）。
-一時的なHOMEでは、pluginの照会（`claude plugin list` など）が失敗して終了コードが0にならないことがある。その場合は、事前検査を通ったか（`source が存在しません` が出ず、`missing:` の一覧が出たか）で判定し、終了コードの理由を報告する
+Expected: `exit=0`、かつ `skills/aws-iam` を含む `missing:` の行が出る（clone直後で、submoduleは未初期化）。
+合格の根拠は「`missing:` にAWSスキルが出ること」とする。「`source が存在しません` が出ないこと」は、検査が走らなかった場合も同じ出力になるので根拠にしない（P07a）。
+終了コードが0でなければ不合格として扱う。一時的なHOMEでpluginの照会などが先に失敗した場合は、照会に頼らずに事前検査まで進める方法を探してから判定し直し、探した結果を報告する
 
 - [ ] **Step 3: pushしてPRの本文を更新する**
 
@@ -508,18 +515,36 @@ worktreeでは行わない。PRがマージされた後、本体で行う。ど�
 cd <本体の作業ツリー> && git switch main && git pull && git submodule update --init --recursive
 ```
 
-- [ ] **Step 2: 直接入っている12個を消す**
+- [ ] **Step 2: 直接入っている12個を退避してから消す（P07a）**
 
 ```bash
-for s in aws-billing-and-cost-management aws-compute aws-containers aws-database aws-iam \
+SKILLS="aws-billing-and-cost-management aws-compute aws-containers aws-database aws-iam \
   aws-networking aws-observability aws-security aws-serverless aws-storage \
-  aws-well-architected-review signing-in-to-aws; do
-  for a in claude-code universal; do aws agent-toolkit remove-skill --skill-name "$s" --agent "$a" >/dev/null; done
+  aws-well-architected-review signing-in-to-aws"
+B=<scratchpad>/aws-skills-backup; mkdir -p "$B/claude" "$B/agents"
+for s in $SKILLS; do cp -R ~/.claude/skills/$s "$B/claude/" && cp -R ~/.agents/skills/$s "$B/agents/"; done
+ls "$B/claude" "$B/agents" | grep -c -E '^(aws|signing)'   # 24 であること
+for s in $SKILLS; do
+  for a in claude-code universal; do aws agent-toolkit remove-skill --skill-name "$s" --agent "$a"; echo "$s/$a exit=$?"; done
 done
 ls -la ~/.claude/skills ~/.agents/skills | grep -E 'aws|signing'
 ```
 
-Expected: 12個とも消えている
+Expected: 退避が24個。`remove-skill` は24回とも `exit=0`。最後の `ls` で何も出ない。
+`exit` が0でない行があれば、Step 3へ進まずに止まり、ユーザーに報告する。
+
+- [ ] **Step 2b: 戻す手順（Step 3が失敗したときだけ）**
+
+`setup.sh` が途中で失敗し、スキルが使えない状態になったら、退避した分を書き戻す。
+
+```bash
+for s in $SKILLS; do
+  rm -f ~/.claude/skills/$s ~/.agents/skills/$s   # setup.shが張ったsymlinkだけを消す（-rは付けない）
+  cp -R "$B/claude/$s" ~/.claude/skills/ && cp -R "$B/agents/$s" ~/.agents/skills/
+done
+```
+
+戻した後に、失敗の理由をユーザーへ報告する。退避は、Step 4の確認が済むまで消さない。
 
 - [ ] **Step 3: setupを実行する**
 
