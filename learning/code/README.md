@@ -23,8 +23,8 @@ Investigate、Review、Modify、Writeから選ぶ。Explainだけなら能力rec
 | キー | 内容 |
 |---|---|
 | `schema_version` | `1` |
-| `id` | record固有のUUID |
-| `event_id` | 初回・再試行・訂正で共有するUUID |
+| `id` | record固有のUUID。省略する（下記） |
+| `event_id` | 初回・再試行・訂正で共有するUUID。イベントの最初の保存では省略する（下記） |
 | `observed_at` | UTC ISO 8601 |
 | `kind` | `code`。設計判断は `decision` |
 | `mode` | `investigate` / `review` / `modify` / `write` |
@@ -35,6 +35,14 @@ Investigate、Review、Modify、Writeから選ぶ。Explainだけなら能力rec
 | `transfer_result` | 上記4値または `not_attempted` |
 | `supersedes` | 同じeventの旧record ID配列。初版は空配列 |
 | `body` | 下記見出しを持つ非空本文 |
+
+`id` と `event_id` は値を自分で作らない。省略すると `learning-store.py record` が `uuid4()` で生成し、
+結果のJSONに `id` と `event_id` を返す。イベントの最初の保存では両方を省略し、同じイベントの2件目以降
+（operation・能力record・訂正版）は `id` だけを省略して、最初の保存結果に返った `event_id` を写す。
+`supersedes` には、訂正元の保存結果に返った `id` を写す。
+IDを渡した場合はそのまま使い、同じIDと同じ内容の再送は `created: false` で既存のrecordを返す。
+IDを省略したまま再送すると別のrecordとして保存されるので、保存結果が分からないときは再送せず、`list` で確かめる。
+operationは `list` に出ないので、store内の `operations/` を確かめる。
 
 `capability_id` が同じでも、`scope` が異なれば同じ能力として集計しない。初版と訂正版は
 同じeventの履歴であり、別の成功回に数えない。
