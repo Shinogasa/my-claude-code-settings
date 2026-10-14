@@ -567,6 +567,8 @@ def save_record(store: Store, value: Dict[str, object], resolve_conflict: bool =
 
     if store.state != "active":
         raise StoreError("STORE_NOT_ACTIVE", "prepared storeには新規記録を保存できません")
+    # IDの手書きを防ぐため、省略されたIDだけをここで生成する。渡されたIDは再送の冪等性のためそのまま使う。
+    value = {**{field: str(uuid.uuid4()) for field in ("id", "event_id") if field not in value}, **value}
     if value.get("kind") == "operation":
         normalized = validate_operation(value)
         payload = serialize_operation(normalized)
