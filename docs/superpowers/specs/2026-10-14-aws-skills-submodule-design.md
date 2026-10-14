@@ -39,7 +39,7 @@ aws-billing-and-cost-management, aws-compute, aws-containers, aws-database, aws-
 
 新しい端末では、1回目の事前検査（`preflight`）がsubmoduleの初期化より先に走る。そのときsymlinkの先がまだ無いので、`source が存在しません` で止まる。
 
-今の例外判定 `is_declared_submodule_source` は、sourceのパス自体が `.gitmodules` で宣言されているかしか見ない。これを広げて、sourceがsymlinkで、そのリンク先（リポジトリ内の相対パスに正規化したもの）が宣言済みのsubmoduleの配下にある場合も許す。リンク先がリポジトリの外や、宣言されていないパスを指す場合は、今と同じくエラーにする。
+今の例外判定 `is_declared_submodule_source` は、sourceのパス自体が `.gitmodules` で宣言されているかしか見ない。これを広げ、sourceがsymlinkの場合も許す。条件は、そのリンク先（リポジトリ内の相対パスに正規化したもの）が宣言済みのsubmoduleの配下にあること。リンク先がリポジトリの外や、宣言されていないパスを指す場合は、今と同じくエラーにする。
 
 ### `tests/test_skill_manifest.py`
 
@@ -74,7 +74,7 @@ aws-billing-and-cost-management, aws-compute, aws-containers, aws-database, aws-
 
 理由の詳細はADR 0035に書く。
 
-- Claude Codeプラグイン `aws-core`: 有効・無効をプラグイン単位でしか切り替えられず、25個とMCP設定（`--skip-auth` 付き）が一式で入る。Codexには届かない
+- Claude Codeプラグイン `aws-core`: 有効・無効をプラグイン単位でしか切り替えられず、25個（core-skillsの24個に aws-secrets-manager を加えたもの）とMCP設定（`--skip-auth` 付き）が一式で入る。Codexには入らない
 - 12個をコピーしてコミットする: 上流との差分を追えなくなり、更新のたびに手作業でコピーし直すことになる
 - `setup.sh` から `aws agent-toolkit add-skill` を呼ぶ: 中身がリポジトリに残らず、導入するたびに最新版が入る。各端末のaws-cliと、us-east-1でしか動かないtoolkitのAPIにも依存する
 
