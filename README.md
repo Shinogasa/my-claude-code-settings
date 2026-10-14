@@ -329,6 +329,12 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 目印が無いとき（`env -i` などで消えたとき）は、どちらのプロファイルか決められないので止まる。
 サブエージェントやフックから `claude -p` を起動する経路は、まだこのスクリプトに寄せていない。
 
+**Bashから起動する `codex` も、セッションのプロファイルに従う**: `setup.sh` は、`settings.personal.json` の `env` に
+`CODEX_HOME=<HOME>/.codex-personal` を、`settings.json` の `env` に `CODEX_HOME=<HOME>/.codex` を書く（ADR 0036）。
+`ccp` のセッションから素の `codex` を起動しても、個人用で動く。`~/.codex-personal` が無いときや、ログインしていないときは、会社用へは切り替わらずエラーで止まる。
+会社用を使うよう指示されたときは、`CODEX_HOME=~/.codex codex ...` と明示する。
+`setup.sh` は、`~/.codex-personal` が無いとき、会社用と同じ実体のとき、権限が700でないときに警告する。
+
 ### 機密でない機能トグルの置き場
 
 `settings.json` の `env` には2種類の値が入る。**寿命が違うので置き場を分ける。**

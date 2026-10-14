@@ -677,19 +677,42 @@ PY
   done
 }
 
+# settings.personal.json の CODEX_HOME が指す先を、cxp と同じ条件で検査する（ADR 0036）。
+# 無い・権限が違うときは値を書いたままにし、子の codex のエラーか警告で気づく。
+# 会社用と同じ実体のときは、prepare_claude_files が番兵を書いて止める
+check_personal_codex_home() {
+  if [ ! -d "$CODEX_PERSONAL_DIR" ]; then
+    yellow "個人用の CODEX_HOME（$CODEX_PERSONAL_DIR）が見つかりません。ccp のセッションから起動する codex はエラーで止まります。"
+    return 0
+  fi
+  if [ -d "$CODEX_DIR" ] \
+    && [ "$(cd "$CODEX_PERSONAL_DIR" && pwd -P)" = "$(cd "$CODEX_DIR" && pwd -P)" ]; then
+    yellow "個人用の CODEX_HOME（$CODEX_PERSONAL_DIR）の実体が会社用の $CODEX_DIR と同じです。会社用で動かないよう、ccp のセッションから起動する codex はエラーで止めます。別のディレクトリにしてください。"
+    return 0
+  fi
+  local mode
+  mode="$(stat -f '%Lp' "$CODEX_PERSONAL_DIR" 2>/dev/null || stat -c '%a' "$CODEX_PERSONAL_DIR")"
+  if [ "$mode" != 700 ]; then
+    yellow "個人用の CODEX_HOME（$CODEX_PERSONAL_DIR）の権限が $mode です。個人の認証情報を置くので 700 にしてください（chmod 700 $CODEX_PERSONAL_DIR）。"
+  fi
+}
+
 prepare_claude_files() {
   CLAUDE_SETTINGS_STAGED="$(mktemp "$CLAUDE_DIR/.settings.json.setup.XXXXXX")" || return 1
   CLAUDE_PERSONAL_STAGED="$(mktemp "$CLAUDE_DIR/.settings.personal.json.setup.XXXXXX")" || return 1
   chmod 600 "$CLAUDE_SETTINGS_STAGED" "$CLAUDE_PERSONAL_STAGED" || return 1
   python3 - "$SCRIPT_DIR/settings.json.template" "$CLAUDE_DIR/settings.json" \
     "$SCRIPT_DIR/env.json.template" "$CLAUDE_SETTINGS_STAGED" \
-    "$CLAUDE_PERSONAL_STAGED" "$SETUP_MERGE_ENV" <<'PY'
+    "$CLAUDE_PERSONAL_STAGED" "$SETUP_MERGE_ENV" "$CODEX_DIR" "$CODEX_PERSONAL_DIR" <<'PY'
 import json
 import os
 import sys
 from pathlib import Path
 
-settings_template, settings_destination, env_template, settings_staged, personal_staged, merge_env = sys.argv[1:]
+(
+    settings_template, settings_destination, env_template, settings_staged, personal_staged, merge_env,
+    codex_home, codex_personal_home,
+) = sys.argv[1:]
 existing_path = Path(settings_destination)
 settings = {}
 try:
@@ -713,15 +736,30 @@ if merge_env == "true":
         for key in env_template_values
     }
     settings.setdefault("env", {}).update(env_block)
+# 子の codex が使う CODEX_HOME。個人プロファイル側と対にして、紛れ込んだ個人用の値を会社用へ戻す（ADR 0036）
+settings.setdefault("env", {})["CODEX_HOME"] = codex_home
 Path(settings_staged).write_text(
     json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
     encoding="utf-8",
 )
+# 個人用が会社用と同じ実体なら、存在しない番兵を書いて子の codex を止める（fail-closed、ADR 0036）
+personal_codex_home = codex_personal_home
+if (
+    os.path.isdir(codex_personal_home)
+    and os.path.isdir(codex_home)
+    and os.path.realpath(codex_personal_home) == os.path.realpath(codex_home)
+):
+    personal_codex_home = codex_personal_home + ".SAME-AS-COMPANY-HOME"
 Path(personal_staged).write_text(
     json.dumps(
         # CLAUDE_PROFILE は、このプロファイルで起動したセッションの子の claude -p が
         # 同じプロファイルで動くための目印（bin/claude-headless が読む）。会社の settings.json には入れない
-        {"env": {**{key: "" for key in env_template_values}, "CLAUDE_PROFILE": "personal"}},
+        # CODEX_HOME は、同じセッションから素の codex を起動しても個人用で動かすため（ADR 0036）
+        {"env": {
+            **{key: "" for key in env_template_values},
+            "CLAUDE_PROFILE": "personal",
+            "CODEX_HOME": personal_codex_home,
+        }},
         ensure_ascii=False,
         indent=2,
     ) + "\n",
@@ -1045,6 +1083,7 @@ if selected_codex; then
   fi
 fi
 if selected_claude; then
+  check_personal_codex_home
   print_claude_path_guidance
 fi
 

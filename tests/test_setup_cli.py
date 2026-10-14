@@ -306,6 +306,54 @@ class SetupCliTests(unittest.TestCase):
         # 既定のプロファイルにも明示の目印を置く。引き継いだ personal を上書きし、目印の脱落も検出できるようにする
         self.assertEqual(settings["env"]["CLAUDE_PROFILE"], "default")
 
+    def test_profiles_pin_codex_home_for_child_codex(self):
+        # 個人プロファイルのセッションから素の codex を起動しても、個人用の CODEX_HOME で動くようにする（ADR 0036）
+        (self.home / ".claude").mkdir()
+        # setup.sh を個人プロファイルのセッションから実行しても、引き継いだ CODEX_HOME ではなく HOME から決める
+        result = run_setup(self.repository, self.home, "--claude", extra_env={"CODEX_HOME": "/inherited/codex"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        personal = json.loads((self.home / ".claude" / "settings.personal.json").read_text(encoding="utf-8"))
+        settings = json.loads((self.home / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        # 設定ファイルの env は ~ を展開しないので、絶対パスで書く
+        self.assertEqual(personal["env"]["CODEX_HOME"], str(self.home / ".codex-personal"))
+        # 既定のプロファイルにも置き、紛れ込んだ個人用の値を会社用へ戻す
+        self.assertEqual(settings["env"]["CODEX_HOME"], str(self.home / ".codex"))
+
+    def run_claude_setup_with_personal_home(self, prepare):
+        (self.home / ".claude").mkdir()
+        (self.home / ".codex").mkdir()
+        prepare(self.home / ".codex-personal")
+        result = run_setup(self.repository, self.home, "--claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        personal = json.loads((self.home / ".claude" / "settings.personal.json").read_text(encoding="utf-8"))
+        return result.stdout + result.stderr, personal["env"]["CODEX_HOME"]
+
+    def test_warns_when_personal_codex_home_is_missing(self):
+        output, codex_home = self.run_claude_setup_with_personal_home(lambda path: None)
+        self.assertIn("CODEX_HOME", output)
+        self.assertIn("見つかりません", output)
+        # 無い場所を指したままにする。子の codex はエラーで止まり、会社用へ黙って落ちない
+        self.assertEqual(codex_home, str(self.home / ".codex-personal"))
+
+    def test_warns_when_personal_codex_home_is_not_private(self):
+        output, codex_home = self.run_claude_setup_with_personal_home(lambda path: path.mkdir(mode=0o755))
+        self.assertIn("CODEX_HOME", output)
+        self.assertIn("700", output)
+        self.assertEqual(codex_home, str(self.home / ".codex-personal"))
+
+    def test_warns_when_personal_codex_home_is_company_home(self):
+        output, codex_home = self.run_claude_setup_with_personal_home(lambda path: path.symlink_to(self.home / ".codex"))
+        self.assertIn("CODEX_HOME", output)
+        self.assertIn("会社用", output)
+        # 会社用の実体を指すなら、存在しない番兵を書いて子の codex を止める（fail-closed）
+        self.assertNotEqual(codex_home, str(self.home / ".codex-personal"))
+        self.assertFalse(Path(codex_home).exists())
+
+    def test_no_codex_home_warning_for_private_personal_home(self):
+        output, codex_home = self.run_claude_setup_with_personal_home(lambda path: path.mkdir(mode=0o700))
+        self.assertNotIn("CODEX_HOME", output)
+        self.assertEqual(codex_home, str(self.home / ".codex-personal"))
+
     def test_code_learning_skill_is_linked_for_both_hosts(self):
         (self.home / ".claude").mkdir()
         (self.home / ".codex").mkdir()
