@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """skillのホスト別配布境界とCodex routing skillを検証する。"""
 import json
+import os
 import re
 import tempfile
 import unittest
@@ -171,6 +172,61 @@ class TestExternalSkillSubmodule(unittest.TestCase):
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         self.assertIn("yomiyasu", manifest["shared"])
         self.assertTrue((SKILLS_DIR / "yomiyasu" / "SKILL.md").is_file())
+
+
+AWS_SUBMODULE = "agent-toolkit-for-aws"
+AWS_SKILLS = (
+    "aws-billing-and-cost-management", "aws-compute", "aws-containers", "aws-database",
+    "aws-iam", "aws-networking", "aws-observability", "aws-security", "aws-serverless",
+    "aws-storage", "aws-well-architected-review", "signing-in-to-aws",
+)
+
+
+def declared_submodule_paths():
+    text = (REPO_ROOT / ".gitmodules").read_text(encoding="utf-8")
+    return re.findall(r"^\s*path\s*=\s*(\S+)\s*$", text, flags=re.MULTILINE)
+
+
+class TestAwsSkillSubmodule(unittest.TestCase):
+    """AWSスキルを上流submodule内へのsymlinkとして共有配布しているか。"""
+
+    def test_submodule_is_declared(self):
+        gitmodules = (REPO_ROOT / ".gitmodules").read_text(encoding="utf-8")
+        self.assertIn(f"path = {AWS_SUBMODULE}", gitmodules)
+        self.assertIn("url = https://github.com/aws/agent-toolkit-for-aws.git", gitmodules)
+
+    def test_selected_skills_are_relative_links_listed_as_shared(self):
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        for name in AWS_SKILLS:
+            with self.subTest(name=name):
+                link = SKILLS_DIR / name
+                self.assertTrue(link.is_symlink())
+                self.assertEqual(
+                    os.readlink(link), f"../{AWS_SUBMODULE}/skills/core-skills/{name}"
+                )
+                self.assertIn(name, manifest["shared"])
+
+    def test_every_skill_symlink_points_into_declared_submodule(self):
+        declared = declared_submodule_paths()
+        for link in SKILLS_DIR.iterdir():
+            if not link.is_symlink():
+                continue
+            with self.subTest(link=link.name):
+                target = os.readlink(link)
+                self.assertFalse(os.path.isabs(target))
+                relative = os.path.normpath(os.path.join("skills", target))
+                self.assertTrue(
+                    any(relative == path or relative.startswith(path + "/") for path in declared),
+                    relative,
+                )
+
+    def test_links_resolve_to_skills_when_submodule_is_initialized(self):
+        """上流で名前やパスが変わったら、ここで気づく。"""
+        if not (REPO_ROOT / AWS_SUBMODULE / ".git").exists():
+            self.skipTest("submoduleが未初期化")
+        for name in AWS_SKILLS:
+            with self.subTest(name=name):
+                self.assertTrue((SKILLS_DIR / name / "SKILL.md").is_file())
 
 
 if __name__ == "__main__":
