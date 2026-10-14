@@ -325,29 +325,34 @@ class SetupCliTests(unittest.TestCase):
         prepare(self.home / ".codex-personal")
         result = run_setup(self.repository, self.home, "--claude")
         self.assertEqual(result.returncode, 0, result.stderr)
-        # 検査で引っかかっても値は書く。子の codex がエラーで止まるので、会社用へ黙って落ちない
         personal = json.loads((self.home / ".claude" / "settings.personal.json").read_text(encoding="utf-8"))
-        self.assertEqual(personal["env"]["CODEX_HOME"], str(self.home / ".codex-personal"))
-        return result.stdout + result.stderr
+        return result.stdout + result.stderr, personal["env"]["CODEX_HOME"]
 
     def test_warns_when_personal_codex_home_is_missing(self):
-        output = self.run_claude_setup_with_personal_home(lambda path: None)
+        output, codex_home = self.run_claude_setup_with_personal_home(lambda path: None)
         self.assertIn("CODEX_HOME", output)
         self.assertIn("見つかりません", output)
+        # 無い場所を指したままにする。子の codex はエラーで止まり、会社用へ黙って落ちない
+        self.assertEqual(codex_home, str(self.home / ".codex-personal"))
 
     def test_warns_when_personal_codex_home_is_not_private(self):
-        output = self.run_claude_setup_with_personal_home(lambda path: path.mkdir(mode=0o755))
+        output, codex_home = self.run_claude_setup_with_personal_home(lambda path: path.mkdir(mode=0o755))
         self.assertIn("CODEX_HOME", output)
         self.assertIn("700", output)
+        self.assertEqual(codex_home, str(self.home / ".codex-personal"))
 
     def test_warns_when_personal_codex_home_is_company_home(self):
-        output = self.run_claude_setup_with_personal_home(lambda path: path.symlink_to(self.home / ".codex"))
+        output, codex_home = self.run_claude_setup_with_personal_home(lambda path: path.symlink_to(self.home / ".codex"))
         self.assertIn("CODEX_HOME", output)
         self.assertIn("会社用", output)
+        # 会社用の実体を指すなら、存在しない番兵を書いて子の codex を止める（fail-closed）
+        self.assertNotEqual(codex_home, str(self.home / ".codex-personal"))
+        self.assertFalse(Path(codex_home).exists())
 
     def test_no_codex_home_warning_for_private_personal_home(self):
-        output = self.run_claude_setup_with_personal_home(lambda path: path.mkdir(mode=0o700))
+        output, codex_home = self.run_claude_setup_with_personal_home(lambda path: path.mkdir(mode=0o700))
         self.assertNotIn("CODEX_HOME", output)
+        self.assertEqual(codex_home, str(self.home / ".codex-personal"))
 
     def test_code_learning_skill_is_linked_for_both_hosts(self):
         (self.home / ".claude").mkdir()
