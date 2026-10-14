@@ -6,4 +6,16 @@
 
 set -euo pipefail
 
-cat | python3 "$(dirname "$0")/guard-dangerous-bash.py"
+# 個人用のセッションから会社用の claude / codex を起動させない検査も、ここから呼ぶ（ADR 0036）。
+# このラッパーは Claude Code と Codex（codex/hooks.json）の両方から呼ばれるので、設定を変えずに両方へ効く。
+hook_dir="$(dirname "$0")"
+payload="$(cat)"
+# 片方が落ちても（exit 1 は Claude Code では「通す」）、もう片方の判定は走らせる。どちらかが 2 なら止める
+dangerous=0
+profile=0
+printf '%s' "$payload" | python3 "$hook_dir/guard-dangerous-bash.py" || dangerous=$?
+printf '%s' "$payload" | python3 "$hook_dir/guard-agent-profile.py" || profile=$?
+if [ "$dangerous" -eq 2 ] || [ "$profile" -eq 2 ]; then
+  exit 2
+fi
+exit $((dangerous > profile ? dangerous : profile))

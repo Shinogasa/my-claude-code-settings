@@ -333,6 +333,11 @@ ccp auth status      # 個人: authMethod = "claude.ai" + email/subscriptionType
 `CODEX_HOME=<HOME>/.codex-personal` を、`settings.json` の `env` に `CODEX_HOME=<HOME>/.codex` を書く（ADR 0036）。
 `ccp` のセッションから素の `codex` を起動しても、個人用で動く。`~/.codex-personal` が無いときや、ログインしていないときは、会社用へは切り替わらずエラーで止まる。
 会社用を使うよう指示されたときは、`CODEX_HOME=~/.codex codex ...` と明示する。
+
+**フックで止めるもの**: `hooks/guard-agent-profile.py` は、個人用のセッションで2種類のコマンドを止める（ADR 0036の追記）。
+1つは素の `claude` で、`claude-headless` か `ccp` を案内する。もう1つは、`CODEX_HOME` が無いか、会社用の実体を指したままの素の `codex` である。
+会社用を明示した書き方（`CODEX_HOME=~/.codex codex ...`、`CLAUDE_PROFILE=default claude-headless ...`）は通す。
+Codexで効かせるには、`/hooks` での承認が要る。
 `setup.sh` は、`~/.codex-personal` が無いとき、会社用と同じ実体のとき、権限が700でないときに警告する。
 
 ### 機密でない機能トグルの置き場
@@ -457,6 +462,7 @@ hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyring
 │   └── ecc-development-workflow.md  # 開発ワークフロー
 ├── hooks/                       # hookスクリプト（配線は settings.json.template と codex/hooks.json）
 │   ├── guard-dangerous-bash.sh  #   危険コマンド判定のエントリポイント（実処理は .py）
+│   ├── guard-agent-profile.py   #   個人用のセッションで、会社用の claude / codex の起動を止める
 │   ├── rtk-rewrite.py           #   rtk の書き換え。linked worktreeのgitは書き換えさせない
 │   ├── warn-branch-behind-main.sh # terraform 実行時にブランチの遅れを警告する
 │   ├── block-commit-on-merged-pr.py # マージ済みPRのブランチへのコミットを止める
