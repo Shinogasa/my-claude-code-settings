@@ -147,6 +147,79 @@ class AgentProfileGuardTests(unittest.TestCase):
         result = self.run_hook("rm -rf /", self.claude_personal(), script=WRAPPER)
         self.assertEqual(result.returncode, BLOCK, result.stderr)
 
+    def test_wrapper_runs_profile_guard_even_if_dangerous_guard_crashes(self):
+        # 1本目が落ちても（exit 1 は Claude Code では「通す」）、2本目の判定は走らせる
+        hooks = self.home / "hooks"
+        hooks.mkdir()
+        (hooks / "guard-dangerous-bash.sh").write_text(WRAPPER.read_text(encoding="utf-8"), encoding="utf-8")
+        (hooks / "guard-dangerous-bash.sh").chmod(0o755)
+        (hooks / "guard-dangerous-bash.py").write_text("import sys\nsys.exit(1)\n", encoding="utf-8")
+        (hooks / "guard-agent-profile.py").write_text(HOOK.read_text(encoding="utf-8"), encoding="utf-8")
+        result = self.run_hook("claude -p hi", self.claude_personal(), script=hooks / "guard-dangerous-bash.sh")
+        self.assertEqual(result.returncode, BLOCK, result.stderr)
+
+    # --- セキュリティレビュー（2026-10-14）で見つかった抜け道 ---
+
+    def test_blocks_command_substitution(self):
+        for command in ('out="$(claude -p x)"', 'echo "$(claude -p x)"', "echo `claude -p x`",
+                        "x=$(claude -p x)", 'echo "$(echo "$(claude -p x)")"'):
+            with self.subTest(command=command):
+                self.assertBlocked(command, self.claude_personal())
+        self.assertBlocked('out="$(codex exec x)"', self.env(CLAUDE_PROFILE="personal"))
+
+    def test_single_quoted_substitution_is_data(self):
+        self.assertAllowed("echo '$(claude -p x)'", self.claude_personal())
+
+    def test_blocks_agent_on_heredoc_line(self):
+        self.assertBlocked("cat <<'EOF' | claude -p\nbody\nEOF", self.claude_personal())
+        self.assertBlocked("claude -p <<EOF\nbody\nEOF", self.claude_personal())
+
+    def test_heredoc_body_is_data(self):
+        self.assertAllowed("cat <<'EOF' > note.txt\nclaude -p x\nEOF", self.claude_personal())
+
+    def test_blocks_wrapped_launches(self):
+        for command in ("timeout 600 claude -p x", "nice -n 5 claude -p x", "nohup claude -p x",
+                        "sudo claude -p x", "echo x | xargs claude -p", "xargs -n 1 claude -p",
+                        "caffeinate -i claude -p x", "stdbuf -oL claude -p x",
+                        "find . -name x -exec claude -p {} \\;", "npx @anthropic-ai/claude-code -p x",
+                        "env -C /tmp claude -p x", "CLAUDE -p x", "Claude -p x"):
+            with self.subTest(command=command):
+                self.assertBlocked(command, self.claude_personal())
+        for command in ("npx @openai/codex exec x", "bunx codex exec x", "timeout 9 codex exec x"):
+            with self.subTest(command=command):
+                self.assertBlocked(command, self.env(CLAUDE_PROFILE="personal"))
+
+    def test_blocks_unresolvable_command_names_mentioning_agents(self):
+        for command in ("c=claude; $c -p x", '"${CLAUDE_BIN:-claude}" -p x',
+                        "$(command -v claude) -p x", "~/.local/bin/clau?e -p x"):
+            with self.subTest(command=command):
+                self.assertBlocked(command, self.claude_personal())
+
+    def test_explicit_company_codex_home_must_be_real(self):
+        for command in ("CODEX_HOME= codex exec x", "CODEX_HOME=x env -u CODEX_HOME codex exec x",
+                        "CODEX_HOME=x env -i codex exec x", "export CODEX_HOME; codex exec x",
+                        "export -n CODEX_HOME; codex exec x"):
+            with self.subTest(command=command):
+                self.assertBlocked(command, self.claude_personal())
+
+    def test_only_read_only_claude_subcommands_are_safe(self):
+        for command in ("claude auth logout", "claude mcp add x y", "claude update", "claude plugin install x"):
+            with self.subTest(command=command):
+                self.assertBlocked(command, self.claude_personal())
+        for command in ("command -v claude", "which claude", "type claude"):
+            with self.subTest(command=command):
+                self.assertAllowed(command, self.claude_personal())
+
+    def test_unparseable_command_with_agent_paths_only_is_allowed(self):
+        # ~/.claude/ や ~/.codex のようなパスは、起動ではない
+        self.assertAllowed("cat ~/.claude/settings.json ~/.codex/config.toml 'unterminated", self.claude_personal())
+
+    def test_malformed_payload_does_not_crash(self):
+        payload = json.dumps({"tool_name": "Bash", "tool_input": "claude -p x"})
+        result = subprocess.run([sys.executable, str(HOOK)], input=payload, capture_output=True,
+                                text=True, env=self.claude_personal(), timeout=30)
+        self.assertIn(result.returncode, (ALLOW, BLOCK), result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
