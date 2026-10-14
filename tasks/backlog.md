@@ -145,6 +145,15 @@ SessionStartの検査（`hooks/check-codex-base-provider.py`）にもplugin監�
 
 **着手条件**: Codexの作業を再開したとき。
 
+### P3: `setup.sh` が `.env` の値を環境変数で子プロセスへ渡す
+
+2026-10-14の `--dry-run` のセキュリティレビュー（Low、以前からある挙動）。`validate_claude_generation_inputs` が、
+`ANTHROPIC_AUTH_TOKEN` を含む `.env` の全値を `SETUP_ENV_JSON` としてexportする。そのため、`claude plugin list` を含む
+以降のすべての子プロセスがトークンを受け取る。画面には出ない。
+
+**決めること**: exportを `prepare_claude_files` の直前まで遅らせるか、引数かファイルで渡す形に替えるか。
+**着手条件**: `setup.sh` の生成処理に手を入れる別の作業が来たとき。
+
 ### P2: `context7` / `serena` のCodex向け候補を個別評価する
 
 両者は有用候補だが、Claude版のimportをそのまま使わない。Codex公式・curated・公開pluginを

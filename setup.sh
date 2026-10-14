@@ -836,7 +836,7 @@ for plugin_id, enabled in plugins.items():
     if enabled:
         print(plugin_id)
 PY
-)"
+)" || return 1  # || の左辺で呼ばれるので set -e が効かない。失敗を「導入するものは無い」に畳まない
   while IFS= read -r plugin_id; do
     [ -n "$plugin_id" ] || continue
     if python3 -c '
