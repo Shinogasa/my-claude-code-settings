@@ -459,7 +459,7 @@ hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyring
 │   ├── skill-read-check.py      #   スキルの必読資料の読み漏れ確認
 │   ├── detect-parallel-sessions.sh # 同じ作業ツリーの並列セッションを知らせる（SessionStart）
 │   ├── inject-superpowers.sh    #   Codexで using-superpowers の読込を指示する（SessionStart）
-│   ├── check-codex-base-provider.py # 会社用のCODEX_HOMEが個人アカウントへ倒れうる状態を警告する
+│   ├── check-codex-base-provider.py # 会社用のCODEX_HOMEが個人アカウントで動きうる状態を警告する
 │   ├── codex-model-switch-hook.py #  Codex親セッションのモデル切替中の操作を制御する
 │   └── hook_support.py          #   会話記録の読み取りと出力の補助
 ├── bin/                         # CLIと起動ラッパー（PATHを通して使う）
