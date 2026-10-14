@@ -1082,13 +1082,13 @@ Python や Markdown だけを触る作業中も常に効いている。
 **決めること**: Codex のフック（`codex/hooks.json`）で同じ挙動を作るか、助言スキルだけを共有するか。
 `principle-reviewer` の指示文が名指しする原則集のパスは `~/.claude/skills/work-principles/` だけで、Codex では読む先が違う。対応するときに、ホスト別のパスを併記する。
 
-### `test_principle_review_hook` が並列の全件実行でまれに落ちる
+### `test_principle_review_hook` の `test_only_excluded_paths_pass_with_message` が並列の全件実行でまれに落ちる
 
-**決めること**: 壁時計のしきい値を負荷に強くするか（余裕を広げる・フックの期限から導く）、時間に敏感なテストを並列から外すか。
-`run.sh --all` と同じファイル一覧を並列で11回流し、2回落ちた（2026-10-11）。単独や直列の discover では落ちていない。
+素通しを期待した場面で `deny` が返った（2026-10-11、並列11回中1回）。同じ手順を負荷をかけて150回繰り返しても再現しなかった。
+2026-10-14に、失敗したときにフックの出力全体がメッセージに残るようにした。同じときに落ちた
+`test_hanging_git_is_killed_with_its_group` は、しきい値をホストのtimeout（`settings.json.template` の30秒）から導く形に直した。
 
-- `SlowGitTests::test_hanging_git_is_killed_with_its_group`: フック全体が20秒未満で終わることを検査しているが、フックは止まった git を設計どおり10秒待つ。負荷で残りの時間が延び、全体で23.4秒になった
-- `UntrustedPathTests::test_only_excluded_paths_pass_with_message`: 素通しを期待した場面で `deny` が返った。`deny` の理由の出力は記録できていない。同じ手順を、負荷をかけて150回繰り返しても再現しなかった
+**着手条件**: 再び落ちて、`deny` の理由が記録できたとき。
 
 ### `permissions.deny` で Read・Grep の機密パスを拒否するか
 
