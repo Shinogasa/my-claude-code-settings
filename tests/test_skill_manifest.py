@@ -98,6 +98,14 @@ class TestSkillManifest(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 assert_complete_classification({"learning-mode"}, actual)
 
+    def test_dangling_skill_symlink_is_counted(self):
+        """submoduleが未初期化でも、symlinkのskillを分類の対象に含める。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "learning-mode").mkdir()
+            (root / "ext-skill").symlink_to("../missing-submodule/ext-skill")
+            self.assertEqual(managed_skill_directories(root), {"learning-mode", "ext-skill"})
+
     def test_host_specific_entries_are_fixed(self):
         self.assertEqual(self.manifest["claude"], ["claude-code-best-practice", "work-principles"])
         self.assertEqual(self.manifest["codex"], ["codex-cli-best-practice"])
