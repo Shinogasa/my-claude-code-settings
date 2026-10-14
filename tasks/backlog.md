@@ -1090,6 +1090,13 @@ Python や Markdown だけを触る作業中も常に効いている。
 - `SlowGitTests::test_hanging_git_is_killed_with_its_group`: フック全体が20秒未満で終わることを検査しているが、フックは止まった git を設計どおり10秒待つ。負荷で残りの時間が延び、全体で23.4秒になった
 - `UntrustedPathTests::test_only_excluded_paths_pass_with_message`: 素通しを期待した場面で `deny` が返った。`deny` の理由の出力は記録できていない。同じ手順を、負荷をかけて150回繰り返しても再現しなかった
 
+### `test_block_commit_on_merged_pr` が並列の全件実行で1回落ちた
+
+2026-10-14、`tests/run.sh --all` で `MergedPrHookTests::test_commit_on_branch_with_only_merged_pr_is_blocked` が1回落ちた。
+単独で3回、全件をもう1回流すと通った。失敗の出力は残していない。変更していたのは `setup.sh`・README・backlogだけで、このフックには触れていない。
+
+**着手条件**: もう一度落ちたとき。そのときは失敗の出力を残す。
+
 ### `permissions.deny` で Read・Grep の機密パスを拒否するか
 
 **決めること**: 拒否するパス（`~/.ssh`・`~/.aws`・`.env` など、どこまで含めるか）と、`settings.json.template` に書くと全セッションの Read・Grep に効くことを受け入れるか。
