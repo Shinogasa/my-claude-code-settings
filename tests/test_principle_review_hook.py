@@ -27,6 +27,15 @@ principle_review = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(principle_review)
 
 
+def host_timeout_seconds():
+    """settings.json.template で、ホストがこのフックを打ち切るまでの秒数。"""
+    settings = json.loads((REPO_ROOT / "settings.json.template").read_text(encoding="utf-8"))
+    timeouts = [hook["timeout"] for entry in settings["hooks"]["PreToolUse"] for hook in entry["hooks"]
+                if "principle-review.py" in hook["command"]]
+    assert len(timeouts) == 1, timeouts
+    return timeouts[0]
+
+
 class ClassifyTests(unittest.TestCase):
     def test_spec_and_plan_locations(self):
         self.assertEqual(principle_review.classify("docs/superpowers/specs/a.md"), "spec")
@@ -405,7 +414,11 @@ class SlowGitTests(HookCase):
         env, pid_file = self.fake_git("wait; exit 1")
         started = time.monotonic()
         output = self.run_hook("git commit -m x", extra_env=env)[1]
-        self.assertLess(time.monotonic() - started, 20)
+        # 確かめたいのは、ホストに打ち切られる前に戻ること。フックは止まった git を設計どおり
+        # GIT_TIMEOUT_SECONDS 待つので、固定の短いしきい値では負荷で落ちる（並列の全件実行で23.4秒）。
+        # 孫（sleep 60）を殺せなければ、この上限を超える
+        self.assertLess(principle_review.TIME_BUDGET_SECONDS, host_timeout_seconds())
+        self.assertLess(time.monotonic() - started, host_timeout_seconds())
         self.assertIn("検査できなかった", reason_of(output))
         self.assert_killed(pid_file)
 
@@ -444,7 +457,8 @@ class UntrustedPathTests(HookCase):
     def test_only_excluded_paths_pass_with_message(self):
         self.stage("docs/adr/x\ny.md")
         output = self.run_hook("git commit -m x")[1]
-        self.assertIsNone(decision_of(output))
+        # 並列の全件実行でまれに deny が返るが再現しない。次に落ちたときに理由が残るよう、出力を添える
+        self.assertIsNone(decision_of(output), json.dumps(output, ensure_ascii=False))
         self.assertIn("対象外にした", output["systemMessage"])
 
     def test_control_characters_in_repository_root_are_excluded(self):
