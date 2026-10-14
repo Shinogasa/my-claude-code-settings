@@ -220,6 +220,24 @@ class TestAwsSkillSubmodule(unittest.TestCase):
                     relative,
                 )
 
+    def test_unresolved_links_cover_every_symlink_not_only_aws(self):
+        """AWS_SKILLSに無いsymlinkでも、初期化済みsubmoduleで先を失えば検出する。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".gitmodules").write_text(
+                '[submodule "ext"]\n\tpath = ext\n[submodule "uninit"]\n\tpath = uninit\n',
+                encoding="utf-8",
+            )
+            (root / "ext" / "good").mkdir(parents=True)
+            (root / "ext" / "good" / "SKILL.md").write_text("x\n", encoding="utf-8")
+            (root / "ext" / ".git").write_text("gitdir: x\n", encoding="utf-8")
+            skills = root / "skills"
+            skills.mkdir()
+            (skills / "good").symlink_to("../ext/good")
+            (skills / "renamed").symlink_to("../ext/old-name")
+            (skills / "not-yet").symlink_to("../uninit/skill")
+            self.assertEqual(unresolved_skill_links(skills, root), {"renamed"})
+
     def test_links_resolve_to_skills_when_submodule_is_initialized(self):
         """上流で名前やパスが変わったら、ここで気づく。"""
         if not (REPO_ROOT / AWS_SUBMODULE / ".git").exists():
