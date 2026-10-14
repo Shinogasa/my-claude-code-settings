@@ -182,9 +182,27 @@ AWS_SKILLS = (
 )
 
 
-def declared_submodule_paths():
-    text = (REPO_ROOT / ".gitmodules").read_text(encoding="utf-8")
+def declared_submodule_paths(root=REPO_ROOT):
+    text = (root / ".gitmodules").read_text(encoding="utf-8")
     return re.findall(r"^\s*path\s*=\s*(\S+)\s*$", text, flags=re.MULTILINE)
+
+
+def unresolved_skill_links(skills_dir, root=REPO_ROOT):
+    """初期化済みsubmoduleを指すのに、SKILL.mdへ解決できないskill symlinkの名前を返す。"""
+    declared = declared_submodule_paths(root)
+    base = os.path.relpath(skills_dir, root)
+    unresolved = set()
+    for link in skills_dir.iterdir():
+        if not link.is_symlink():
+            continue
+        relative = os.path.normpath(os.path.join(base, os.readlink(link)))
+        owners = [path for path in declared if relative.startswith(path + "/")]
+        # 未初期化のsubmoduleは、新しい端末と同じ状態なので検査しない
+        if owners and not (root / owners[0] / ".git").exists():
+            continue
+        if not (link / "SKILL.md").is_file():
+            unresolved.add(link.name)
+    return unresolved
 
 
 class TestAwsSkillSubmodule(unittest.TestCase):
@@ -239,12 +257,8 @@ class TestAwsSkillSubmodule(unittest.TestCase):
             self.assertEqual(unresolved_skill_links(skills, root), {"renamed"})
 
     def test_links_resolve_to_skills_when_submodule_is_initialized(self):
-        """上流で名前やパスが変わったら、ここで気づく。"""
-        if not (REPO_ROOT / AWS_SUBMODULE / ".git").exists():
-            self.skipTest("submoduleが未初期化")
-        for name in AWS_SKILLS:
-            with self.subTest(name=name):
-                self.assertTrue((SKILLS_DIR / name / "SKILL.md").is_file())
+        """上流で名前やパスが変わったら、ここで気づく。AWS_SKILLSに無いsymlinkも対象にする。"""
+        self.assertEqual(unresolved_skill_links(SKILLS_DIR), set())
 
 
 if __name__ == "__main__":
