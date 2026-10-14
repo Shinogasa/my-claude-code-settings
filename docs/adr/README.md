@@ -105,3 +105,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0031](0031-config-repo-worktree-scope.md) | 設定リポジトリでworktreeを使ってよい範囲を、動作中の設定に効かない作業へ広げる | 2026-10-09 | accepted |
 | [0032](0032-jp-doc-review-pr-target-from-cd.md) | 日本語文書のレビューで、PRを作るリポジトリを cd の移動先から決める | 2026-10-09 | accepted |
 | [0035](0035-aws-skills-via-upstream-submodule.md) | AWSスキルを上流submoduleへのsymlinkとmanifestで配布する | 2026-10-14 | accepted |
+| [0036](0036-child-codex-follows-session-profile.md) | 個人プロファイルのセッションから起動する `codex` を、環境変数で個人用に固定する | 2026-10-14 | accepted |

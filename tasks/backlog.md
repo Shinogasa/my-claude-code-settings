@@ -24,6 +24,17 @@
 
 ## Claude Codeのプロファイル切り替え
 
+### P1: 個人用のセッションから起動する素の `claude` を止める（ADR 0036の続き）
+
+ADR 0036で、個人用のClaude Codeから起動する `codex` を個人用に固定した。`claude` は子が `settings.json` を読み直すので、
+環境変数では縛れない。ユーザーが2026-10-14に「1から順に対応する」と決めた残りの2つを行う。
+
+- ② `hooks/guard-dangerous-bash.py` で、`CLAUDE_PROFILE=personal` のときに素の `claude` の起動を止め、`claude-headless` を案内する。
+  同じフックで、`CLAUDE_PROFILE=personal` なのに `CODEX_HOME` が無ければ警告し、`setup.sh` の実行忘れに気づけるようにする
+- ③ 同じフックで、Codexの個人用（`CODEX_HOME` が `~/.codex-personal`）のときに素の `claude` を止め、`ccp -p` を案内する
+
+**決めること**: なし（方針はユーザーが決定済み）。`hooks/` を触るので、ADR 0031に従い本体で作業する。
+
 ### P3: サブエージェントやフックが起動する `claude -p` も、親と同じプロファイルで動かす
 
 2026-10-04に `bin/claude-headless` と、`settings.personal.json` の目印 `CLAUDE_PROFILE=personal` を入れた。
