@@ -82,7 +82,7 @@ aws-billing-and-cost-management, aws-compute, aws-containers, aws-database, aws-
 
 理由の詳細はADR 0035に書く。
 
-- Claude Codeプラグイン `aws-core`: 有効・無効をプラグイン単位でしか切り替えられず、25個（core-skillsの24個に aws-secrets-manager を加えたもの）とMCP設定（`--skip-auth` 付き）が一式で入る。Codexには入らない
+- Claude Codeプラグイン `aws-core`: 有効・無効をプラグイン単位でしか切り替えられず、25個（core-skillsの24個に aws-secrets-manager を加えたもの）とMCP設定（`--skip-auth` 付き）が一式で入る（Codex向けのプラグインもあるが、同じく一式で入る）
 - 12個をコピーしてコミットする: 上流との差分を追えなくなり、更新のたびに手作業でコピーし直すことになる
 - `setup.sh` から `aws agent-toolkit add-skill` を呼ぶ: 中身がリポジトリに残らず、導入するたびに最新版が入る。各端末のaws-cliと、us-east-1でしか動かないtoolkitのAPIにも依存する
 

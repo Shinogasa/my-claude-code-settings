@@ -403,9 +403,11 @@ hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyring
 ├── AGENTS.md                    # このリポジトリのCodex project guidance
 ├── claude-code-best-practice/   # ベストプラクティス（git submodule）
 ├── codex-cli-best-practice/     # Codexベストプラクティス（git submodule、補助資料）
+├── agent-toolkit-for-aws/       # AWS公式のスキル集（git submodule。skills/ のsymlinkから一部だけ配布）
 ├── manifests/
 │   └── skills.json              # ホストごとに配布するskillの一覧
 ├── skills/                      # カスタムスキル（配布するものは manifests/skills.json で決める）
+│   ├── aws-*/, signing-in-to-aws/  # AWSスキル（agent-toolkit-for-aws内へのsymlink）
 │   ├── backend-patterns/        #   バックエンドパターン
 │   ├── claude-code-best-practice/  # 設定ベストプラクティス参照（Claude Code）
 │   ├── codex-cli-best-practice/ #   Codex設定の補助資料の参照（Codex CLI）
@@ -580,6 +582,35 @@ config、memoryの例を横断して確認できる。
 ```bash
 git submodule update --remote
 ```
+
+## agent-toolkit-for-aws（submodule）
+
+[aws/agent-toolkit-for-aws](https://github.com/aws/agent-toolkit-for-aws) をgit submoduleとして内包している。
+配布するのは、`skills/` にsymlinkを置き、`manifests/skills.json` に載せたスキルだけ（経緯はADR 0035）。
+
+スキルを増やす・減らす:
+
+```bash
+ln -s ../agent-toolkit-for-aws/skills/core-skills/<名前> skills/<名前>   # 増やす
+# manifests/skills.json の shared に <名前> を足して、bash setup.sh --all を実行する
+```
+
+減らすときは、symlinkとmanifestの行を消してから `setup.sh` を実行する。
+
+上流の更新を取り込む:
+
+```bash
+git submodule update --remote agent-toolkit-for-aws
+git -C agent-toolkit-for-aws diff HEAD@{1} -- $(cd skills && for l in aws-* signing-in-to-aws; do printf 'skills/core-skills/%s ' "$l"; done)
+```
+
+配布しているスキルの差分を読んでからコミットする。上流でスキルの名前やパスが変わると、`tests/test_skill_manifest.py` が失敗する。
+パスを付けない `git submodule update --remote` は、このsubmoduleも進める。ほかのsubmoduleだけを更新したいときは、パスを指定する。
+
+**`aws agent-toolkit add-skill` と `update-skill` は使わない。** 配布先はsymlinkなので、symlinkの先にあるsubmoduleの中身が書き換わる
+（2026-10-14に一時的な `HOME` で確かめた）。
+誤って実行した場合は、`git status` にsubmoduleの未コミットの変更（`modified: agent-toolkit-for-aws (modified content, untracked content)`）として出る。
+`git -C agent-toolkit-for-aws checkout . && git -C agent-toolkit-for-aws clean -fd` で戻す。
 
 ## CLAUDE.md と rules/ の使い分け
 
