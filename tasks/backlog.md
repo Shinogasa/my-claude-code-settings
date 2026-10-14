@@ -31,6 +31,11 @@ ADR 0036で、個人用のClaude Codeから起動する `codex` を個人用に�
 
 - ② `hooks/guard-dangerous-bash.py` で、`CLAUDE_PROFILE=personal` のときに素の `claude` の起動を止め、`claude-headless` を案内する。
   同じフックで、`CLAUDE_PROFILE=personal` なのに `CODEX_HOME` が無ければ警告し、`setup.sh` の実行忘れに気づけるようにする
+  さらに、`CODEX_HOME` の実体が会社用の `~/.codex` と同じなら、Bashの `codex` を止める（`setup.sh` の後の差し替えを捕まえる。セキュリティレビューのMedium-1）
+- 2026-10-14のセキュリティレビューで残ったLow（実害が出てから直す）
+  - 実体の比較はディレクトリしか見ない。中の `auth.json` だけを会社用へのsymlinkにすると素通りする（`cxp` も同じ）
+  - `stat -f '%Lp'` は、GNU coreutilsの `stat` がPATHの先にあると失敗し、`-c '%a'` に落ちる。素通りではなく、警告が余分に出る側に倒れる（実機では未確認）
+  - `OPENAI_API_KEY` などがシェルにあると、`CODEX_HOME` を切り替えてもAPIキーの認証が優先されるかもしれない（codexの優先順位は未確認。2026-10-14時点で、この端末には設定されていない）
 - ③ 同じフックで、Codexの個人用（`CODEX_HOME` が `~/.codex-personal`）のときに素の `claude` を止め、`ccp -p` を案内する
 
 **決めること**: なし（方針はユーザーが決定済み）。`hooks/` を触るので、ADR 0031に従い本体で作業する。

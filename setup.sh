@@ -678,7 +678,8 @@ PY
 }
 
 # settings.personal.json の CODEX_HOME が指す先を、cxp と同じ条件で検査する（ADR 0036）。
-# 引っかかっても値は書いたままにする。子の codex はエラーで止まるか、利用者が警告で気づく
+# 無い・権限が違うときは値を書いたままにし、子の codex のエラーか警告で気づく。
+# 会社用と同じ実体のときは、prepare_claude_files が番兵を書いて止める
 check_personal_codex_home() {
   if [ ! -d "$CODEX_PERSONAL_DIR" ]; then
     yellow "個人用の CODEX_HOME（$CODEX_PERSONAL_DIR）が見つかりません。ccp のセッションから起動する codex はエラーで止まります。"
@@ -686,7 +687,7 @@ check_personal_codex_home() {
   fi
   if [ -d "$CODEX_DIR" ] \
     && [ "$(cd "$CODEX_PERSONAL_DIR" && pwd -P)" = "$(cd "$CODEX_DIR" && pwd -P)" ]; then
-    yellow "個人用の CODEX_HOME（$CODEX_PERSONAL_DIR）の実体が会社用の $CODEX_DIR と同じです。ccp のセッションから起動する codex が会社用で動きます。別のディレクトリにしてください。"
+    yellow "個人用の CODEX_HOME（$CODEX_PERSONAL_DIR）の実体が会社用の $CODEX_DIR と同じです。会社用で動かないよう、ccp のセッションから起動する codex はエラーで止めます。別のディレクトリにしてください。"
     return 0
   fi
   local mode
@@ -741,6 +742,14 @@ Path(settings_staged).write_text(
     json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
     encoding="utf-8",
 )
+# 個人用が会社用と同じ実体なら、存在しない番兵を書いて子の codex を止める（fail-closed、ADR 0036）
+personal_codex_home = codex_personal_home
+if (
+    os.path.isdir(codex_personal_home)
+    and os.path.isdir(codex_home)
+    and os.path.realpath(codex_personal_home) == os.path.realpath(codex_home)
+):
+    personal_codex_home = codex_personal_home + ".SAME-AS-COMPANY-HOME"
 Path(personal_staged).write_text(
     json.dumps(
         # CLAUDE_PROFILE は、このプロファイルで起動したセッションの子の claude -p が
@@ -749,7 +758,7 @@ Path(personal_staged).write_text(
         {"env": {
             **{key: "" for key in env_template_values},
             "CLAUDE_PROFILE": "personal",
-            "CODEX_HOME": codex_personal_home,
+            "CODEX_HOME": personal_codex_home,
         }},
         ensure_ascii=False,
         indent=2,
