@@ -62,13 +62,21 @@ aws-billing-and-cost-management, aws-compute, aws-containers, aws-database, aws-
 ## 運用
 
 - 更新: `git submodule update --remote agent-toolkit-for-aws` で上流を取り込み、12個のディレクトリの差分を読んでからコミットする
-- 移行した後は `aws agent-toolkit add-skill` と `update-skill` を使わない。symlinkを経由して、submoduleの中身を書き換えるおそれがある（実際に書き換わるかは未確認）
+- 移行した後は `aws agent-toolkit add-skill` と `update-skill` を使わない。symlinkを経由して、submoduleの中身を書き換えるおそれがある
+  - 実装の最初に、捨ててよい環境（一時的な `HOME` など）で `update-skill` がsymlinkの先を書き換えるかを確かめ、結果をこの節とREADMEに書く
+  - 書き換えた場合でも、submoduleに未コミットの変更が出るので `git status` で検出できる。READMEには、この検出方法と、`git -C agent-toolkit-for-aws checkout .` で戻す手順を書く
 - スキルを増やすときは、symlinkを足してmanifestに追加する。減らすときは、その逆を行う
 - 運用手順はREADMEに書く
 
 ## 作業場所
 
 触るのは `.gitmodules`、`agent-toolkit-for-aws/`（新規）、`skills/` に新しく置くsymlink、`manifests/skills.json`、`setup.sh`、`tests/`、`docs/`、README。既存のスキルは書き換えない。新しいsymlinkは、本体で `setup.sh` を実行するまで動作中のエージェントに影響しないため、worktreeで作業する（ADR 0031）。
+
+## 採った案の弱点
+
+- 上流の未選択スキル（12個）や、プラグイン・ツール類もcloneされる（約12.8MB）。配布はしないが、ディスクとcloneの時間は増える
+- symlinkが二段になる（`~/.claude/skills/<名前>` → `skills/<名前>` → submodule内）。各ホストがこの連鎖を解決できるかは、完了条件で確かめる
+- submoduleを手で進めないと更新されない。上流の修正を取り込み忘れても、気づく仕組みは無い
 
 ## 却下した案
 
@@ -83,3 +91,5 @@ aws-billing-and-cost-management, aws-compute, aws-containers, aws-database, aws-
 - 新しい端末を想定し、submoduleを初期化していない状態から `setup.sh --all --dry-run` を実行しても、事前検査で止まらない
 - テストがすべて通る
 - 今の端末で移行した後、12個がsymlinkとして `~/.claude/skills/` と `~/.agents/skills/` に入っている
+- 移行した後に新しく始めたClaude Codeのセッションで、スキル一覧に `aws-iam` が出る
+- 移行した後に新しく始めたCodexのセッションで、`aws-iam` のスキルを読み込める
