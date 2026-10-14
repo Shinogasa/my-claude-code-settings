@@ -122,6 +122,13 @@ class TestHook(unittest.TestCase):
         missing = Path(self._tmp.name) / "no-such-command"
         self.assertEqual(run_hook(self.repo, missing, self.settings_repo), QUIET)
 
+    def test_silent_when_detect_reports_undetectable(self):
+        # 検出コマンドは、検出できないと終了コード2で終わる。セッション開始を妨げないよう黙る
+        undetectable = Path(self._tmp.name) / "detect-undetectable"
+        undetectable.write_text("#!/bin/bash\necho '検出できなかった: lsof が無い' >&2\nexit 2\n")
+        undetectable.chmod(undetectable.stat().st_mode | stat.S_IEXEC)
+        self.assertEqual(run_hook(self.repo, undetectable, self.settings_repo), QUIET)
+
     def test_resolves_codex_detector_before_claude_detector(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             home = Path(temporary_directory) / "home"
