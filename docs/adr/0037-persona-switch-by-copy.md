@@ -21,21 +21,21 @@ status: accepted
 - `bin/persona <名前>` が、選んだ版を `rules/persona.md` へ書き写す。引数なしなら今の版と候補を表示する
 - `rules/persona.md` はGitで追跡しない。無ければ `setup.sh`（`bin/persona --ensure`）が既定の `casual` を作る
 - `.githooks/post-checkout` と `post-merge` も `bin/persona --ensure` を実行する。
-  追跡していたころのコミットから、追跡を外したコミットへ移ると、git が `rules/persona.md` を消すため
+  追跡していたころのコミットから、追跡を外したコミットへ移ると、gitが `rules/persona.md` を消すため
 - `rules/persona.md` がどの版とも一致しないときは、手で編集したとみなして上書きしない。
-  黙って止まらず、理由と対処（`personas/` に保存するか、`rules/persona.md` を消す）を標準エラーに出し、終了コード1で終える
+  何も出さずに止まるのではなく、理由と対処（`personas/` に保存するか、`rules/persona.md` を消す）を標準エラーに出し、終了コード1で終える
 
 ## 検討した代替案
 
 ### 片方のPRを開いたままにし、使いたいときにブランチを切り替える
 
-採らなかった。開いたままのブランチは main から遅れ、切り替えるたびに競合を解くことになる。
+採らなかった。開いたままのブランチはmainから遅れ、切り替えるたびに競合を解くことになる。
 また `~/.claude/rules` は本体の作業ツリーを指すので、本体でブランチを切り替えると、
 並列で動いているセッションが読む規約まで入れ替わる（`rules/parallel-worktree.md`）。
 
 ### `rules/persona.md` を `personas/<名前>.md` へのシンボリックリンクにする
 
-採らなかった。2026-10-22に、使い捨てのプロジェクトで `.claude/rules/` に3種類の rule を置き、
+採らなかった。2026-10-22に、使い捨てのプロジェクトで `.claude/rules/` に3種類のruleを置き、
 `claude -p` に合言葉を答えさせた。
 
 | `.claude/rules/` に置いたもの | 読まれたか |
@@ -46,7 +46,7 @@ status: accepted
 
 `~/.claude/rules/persona.md` から `<リポジトリ>/personas/` を指すと、3つ目と同じく `~/.claude` の外を指す。
 ユーザー階層で同じ判定になるかは、本番の `~/.claude` を書き換えずには確かめられず、未確認のまま残した。
-読まれなければペルソナが黙って消えるので、確かめられない方式は採らない。
+読まれなければ、気づかないうちにペルソナが消えるので、確かめられない方式は採らない。
 
 ### 選んだ版を追跡し、切り替えをコミットとして残す
 
@@ -55,19 +55,19 @@ status: accepted
 
 ## 結果
 
-- セッションを始める前に `persona <名前>` を打つだけで切り替えられる。Codex CLI も同じ `rules/` を読むので、同じ操作で切り替わる
+- セッションを始める前に `persona <名前>` を打つだけで切り替えられる。Codex CLIも同じ `rules/` を読むので、同じ操作で切り替わる
 - `rules/persona.md` を直接編集しても、ほかの版には反映されない。口調を直すときは `personas/` 側を編集し、もう一度書き写す
 - `rules/persona.md` が無くなる経路は2つあり、どちらも塞いだ
-  - 新しくcloneした直後。この時点では `~/.claude/rules` などへのリンクもまだ無く、ほかの rule も一緒に効いていない。
+  - 新しくcloneした直後。この時点では `~/.claude/rules` などへのリンクもまだ無く、ほかのruleもまだ適用されていない。
     `setup.sh` がリンクを張るのと同じ実行で `rules/persona.md` を作る
-  - setup済みの環境で、このADRのコミットを pull したとき。リンクは残ったまま、git が `rules/persona.md` を消す。
-    scratch のcloneで再現した。フックが既定の版を作り直す
+  - setup済みの環境で、このADRのコミットをpullしたとき。リンクは残ったまま、gitが `rules/persona.md` を消す。
+    使い捨てのcloneで再現した。フックが既定の版を作り直す
 - フックが働くのは `core.hooksPath` が `.githooks` のときだけで、`setup.sh` が設定する。`git reset --hard` など、
-  post-checkout と post-merge を呼ばない操作で消えたときは戻らない。`persona` を引数なしで実行すれば、無いことに気づける
+  post-checkoutとpost-mergeを呼ばない操作で消えたときは戻らない。`persona` を引数なしで実行すれば、無いことに気づける
 - 会話の途中での切り替えはできない。必要になったら別に検討する
 
 ## 根拠
 
-- 2026-10-22 の実験（上の表）。`claude-headless -p` を `--setting-sources project` で実行した。陽性対照の実体ファイルは読まれ、リンクの無い陰性対照では UNKNOWN を返した
+- 2026-10-22 の実験（上の表）。`claude-headless -p` を `--setting-sources project` で実行した。陽性対照の実体ファイルは読まれ、リンクの無い陰性対照ではUNKNOWNを返した
 - 2026-10-22 に `~/.claude/bin/persona` で `polite` と `casual` を切り替え、新しいセッションがそれぞれの口調で答えることを確かめた
 - `rules/parallel-worktree.md`（本体でブランチを切り替えると並列セッションの規約が変わる）

@@ -421,7 +421,7 @@ persona            # 今の版と候補を表示する
 persona polite     # 切り替える。反映されるのは次に始めるセッションから
 ```
 
-`rules/persona.md` はGitで追跡しない。無ければ `setup.sh` が `casual` を作る。git が消したとき（追跡していたころのコミットとの間でpullやチェックアウトをしたとき）は、`.githooks/post-checkout` と `post-merge` が作り直す。
+`rules/persona.md` はGitで追跡しない。無ければ `setup.sh` が `casual` を作る。追跡していたころのコミットとの間でpullやチェックアウトをすると、gitがこのファイルを消す。そのときは `.githooks/post-checkout` と `post-merge` が作り直す。
 `rules/persona.md` を直接編集すると、どの版とも一致しなくなり、`persona` は上書きを拒む。口調を直すときは `personas/` 側を編集し、もう一度 `persona <名前>` を実行する。
 シンボリックリンクではなく書き写す理由は `docs/adr/0037-persona-switch-by-copy.md` を参照。
 
