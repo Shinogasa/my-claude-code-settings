@@ -932,11 +932,14 @@ def handle_pre_tool_use_agent(payload: dict) -> None:
         write_json(_allow_path(key), {"paths": [*known, *(path for path in paths if path not in known)]})
         for path in paths:
             sources().write_snapshot(key, path)  # 差分の検査で比べる原文。レビュワーが直す前の本文
+        sources().acquire(key)
 
 
 def handle_reviewer_stop(payload: dict) -> None:
-    """jp-doc-reviewer の定義の Stop（SubagentStop に変わる）。このセッションの原文の写しを消す。"""
-    sources().remove_session(session_key(payload))
+    """jp-doc-reviewer の定義の Stop（SubagentStop に変わる）。動いているレビュワーが無くなったら、このセッションの写しを消す。"""
+    key = session_key(payload)
+    with session_lock(key):
+        sources().release(key)
 
 
 def _read_allowed(key: str) -> Optional[List[str]]:

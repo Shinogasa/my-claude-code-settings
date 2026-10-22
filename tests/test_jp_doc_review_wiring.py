@@ -77,7 +77,8 @@ class ReviewerAgentTests(unittest.TestCase):
 
     def test_report_lists_important_changes_as_pairs(self):
         report = self.body.split("## 報告", 1)[1]
-        for marker in ("→", "件数の上限は無い", "意味が変わりうる直しは無い"):
+        for marker in ("→", "件数の上限は無い", "意味が変わりうる直しは無い", "対を1つも書かない",
+                       "「実行しなかった検査」の案内は、報告に書かない"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, report)
 

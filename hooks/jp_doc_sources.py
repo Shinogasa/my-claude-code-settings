@@ -53,3 +53,34 @@ def find_snapshot(real_path: str, session: str) -> Optional[Path]:
 
 def remove_session(session: str) -> None:
     shutil.rmtree(sources_dir() / session, ignore_errors=True)
+
+
+def _active_path(session: str) -> Path:
+    return sources_dir() / session / ".active"
+
+
+def _read_active(session: str) -> int:
+    try:
+        return max(0, int(_active_path(session).read_text(encoding="ascii").strip() or 0))
+    except (OSError, ValueError):
+        return 0
+
+
+def acquire(session: str) -> None:
+    """レビュワーを1つ起動したことを数える。呼び出し側がセッションのロックを持っていること。"""
+    path = _active_path(session)
+    _ensure_private_dir(path.parent)
+    path.write_text(str(_read_active(session) + 1), encoding="ascii")
+    os.chmod(path, 0o600)
+
+
+def release(session: str) -> None:
+    """レビュワーが1つ終わったことを数え、動いているものが無くなったら写しを消す。
+
+    同じセッションで並行するレビュワーの写しを、先に終わった側が消さないため。呼び出し側がセッションのロックを持っていること。
+    """
+    remaining = _read_active(session) - 1
+    if remaining > 0:
+        _active_path(session).write_text(str(remaining), encoding="ascii")
+        return
+    remove_session(session)

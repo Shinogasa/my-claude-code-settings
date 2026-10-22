@@ -658,11 +658,23 @@ class ReviewerAllowTests(HookCase):
         self.assertFalse((self.state / "sources" / "s1").exists())
         self.assertTrue(self.snapshot(doc, "s2").is_file())
 
+    def test_parallel_reviewers_in_one_session_keep_snapshots_until_last_stop(self):
+        # 同じセッションで2つのレビュワーが並行すると、先に終わった側が後の側の写しを消していた（コードレビューの指摘）
+        first, second = self.write_file("docs/a.md", "原文A"), self.write_file("docs/b.md", "原文B")
+        self.agent(str(first))
+        self.agent(str(second))
+        stop = {"session_id": "s1", "agent_type": "jp-doc-reviewer"}
+        self.run_hook("reviewer-stop", stop)
+        self.assertTrue(self.snapshot(second).is_file())
+        self.run_hook("reviewer-stop", stop)
+        self.assertFalse((self.state / "sources" / "s1").exists())
+
     def test_cleanup_removes_old_snapshots(self):
         old, new = self.write_file("docs/old.md", "古い"), self.write_file("docs/new.md", "新しい")
         self.agent(str(old), session="s0")
         eight_days_ago = time.time() - 8 * 86400
-        os.utime(self.snapshot(old, "s0"), (eight_days_ago, eight_days_ago))
+        for entry in (self.state / "sources" / "s0").iterdir():  # 落ちたレビュワーの写しと、起動の数の記録
+            os.utime(entry, (eight_days_ago, eight_days_ago))
         (self.state / ".last-cleanup").unlink(missing_ok=True)
         self.agent(str(new))
         self.assertFalse((self.state / "sources" / "s0").exists())
@@ -673,7 +685,8 @@ class ReviewerAllowTests(HookCase):
         old = self.write_file("docs/old.md", "古い")
         self.agent(str(old), session="s0")
         eight_days_ago = time.time() - 8 * 86400
-        os.utime(self.snapshot(old, "s0"), (eight_days_ago, eight_days_ago))
+        for entry in (self.state / "sources" / "s0").iterdir():  # 落ちたレビュワーの写しと、起動の数の記録
+            os.utime(entry, (eight_days_ago, eight_days_ago))
         (self.state / ".last-cleanup").unlink(missing_ok=True)
         self.run_hook("pre-tool-use-bash", {"session_id": "s9", "cwd": str(self.repo), "tool_name": "Bash",
                                             "tool_input": {"command": "gh pr create --fill"}})
