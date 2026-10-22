@@ -5,7 +5,7 @@
 	path = codex-cli-best-practice
 	url = git@github.com:shanraisshan/codex-cli-best-practice.git
 [submodule "skills/yomiyasu"]
-	path = skills/yomiyasu
+	path = vendor/yomiyasu
 	url = https://github.com/nanaism/yomiyasu.git
 [submodule "agent-toolkit-for-aws"]
 	path = agent-toolkit-for-aws

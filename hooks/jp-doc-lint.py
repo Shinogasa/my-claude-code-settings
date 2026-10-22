@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import List
 
 HTML_SUFFIXES = {".html", ".htm"}
-LINTER_RELATIVE_PATHS = ("scripts/yomiyasu_lint.py", "skills/yomiyasu/scripts/yomiyasu_lint.py")
+# スキル本体の隣だけを探す。v2のsubmoduleのルートにも古い版が残るので、そちらは見ない
+LINTER_RELATIVE_PATHS = ("scripts/yomiyasu_lint.py",)
 LINTER_TIMEOUT_SECONDS = 20
 EXIT_CANNOT_CHECK = 2
 # この要素の始まりと終わりで行を分ける。1行のHTMLでも、文の区切りを崩さないため
@@ -94,7 +95,7 @@ def run_linter(text: str) -> dict:
     try:
         result = json.loads(completed.stdout)
         char_count = result["metrics"]["char_count"]
-        result["findings"], result["score"]
+        result["findings"], result["rule_penalty_score"]  # v2で score から改名された
     except (ValueError, KeyError, TypeError) as error:
         raise CannotCheck(f"リンターの出力を読めなかった（{type(error).__name__}）") from error
     if char_count == 0:
@@ -107,7 +108,7 @@ def render(result: dict, converted: bool) -> str:
     if converted:
         lines.append("HTMLをテキストに直して検査した。行番号は直した後のテキストの行で、下書きの行とは一致しない。")
     metrics = result["metrics"]
-    lines.append(f"スコア: {result['score']}/100 ・文字数: {metrics['char_count']}")
+    lines.append(f"スコア: {result['rule_penalty_score']}/100 ・文字数: {metrics['char_count']}")
     findings = result["findings"]
     if not findings:
         lines.append("[PASS] 指摘なし")

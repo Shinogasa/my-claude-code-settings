@@ -433,6 +433,7 @@ persona polite     # 切り替える。反映されるのは次に始めるセ�
 ├── claude-code-best-practice/   # ベストプラクティス（git submodule）
 ├── codex-cli-best-practice/     # Codexベストプラクティス（git submodule、補助資料）
 ├── agent-toolkit-for-aws/       # AWS公式のスキル集（git submodule。skills/ のsymlinkから一部だけ配布）
+├── vendor/yomiyasu/             # yomiyasu（git submodule。skills/yomiyasu のsymlinkから本体だけ配布）
 ├── manifests/
 │   └── skills.json              # ホストごとに配布するskillの一覧
 ├── skills/                      # カスタムスキル（配布するものは manifests/skills.json で決める）
@@ -446,7 +447,7 @@ persona polite     # 切り替える。反映されるのは次に始めるセ�
 │   ├── learning-mode/           #   学習モードの手順と書式
 │   ├── source-command-*/        #   commands/ をCodexのskillとして共有する
 │   ├── work-principles/         #   仕事の原則で助言する（principles.json は生成物）
-│   └── yomiyasu/                #   日本語文書の書き直し（git submodule）
+│   └── yomiyasu -> ../vendor/yomiyasu/skills/yomiyasu  # 日本語文書の書き直し（submodule内の本体へのsymlink）
 ├── commands/                    # スラッシュコマンド
 │   ├── explain.md               #   プロジェクト説明
 │   └── pr-create.md             #   PR作成
@@ -556,13 +557,24 @@ Editは、依頼文に書かれたファイルだけに絞る。`Agent|Task` の
 yomiyasuの置き場、フック、レビュワーの定義、`settings*.json` は、依頼文に書かれていても通さない。
 パスは `/` を含む英数字と `._~-` の連続として取り出すので、日本語やスペースを含むパスは取り出せず、レビュワーは直せない。
 
-yomiyasuはsubmodule（`skills/yomiyasu`）として固定している。npx版のyomiyasuを入れていたPCでは、
+yomiyasuはsubmodule（`vendor/yomiyasu`）として固定し、スキル本体の `vendor/yomiyasu/skills/yomiyasu/` を
+`skills/yomiyasu` のsymlinkで配る（v2で本体が入れ子に移ったため。ADR 0038）。npx版のyomiyasuを入れていたPCでは、
 先に `npx skills remove -g yomiyasu` で外してから `bash setup.sh --claude` を実行する。
 npx版を残すと、`npx skills update` がリンクをたどってsubmoduleの中身を上書きするおそれがある。
 既存のリンクが残っていれば、setup.shが衝突として止まるので、中身を確かめてから置き換える。
 
-レビュワーはyomiyasuの `SKILL.md`、`references/`、`scripts/yomiyasu_lint.py` をそのまま読み、実行する。
-固定を上げるとき（`git submodule update --remote skills/yomiyasu` など）は、差分を読んでからコミットする。
+レビュワーはyomiyasuの `SKILL.md` と `references/` をそのまま読み、ラッパー経由で `scripts/yomiyasu_lint.py` と
+`scripts/yomiyasu_check.py` を実行する。固定を上げるとき（`git submodule update --remote vendor/yomiyasu` など）は、差分を読んでからコミットする。
+
+2026-10-22より前の版（`skills/yomiyasu` がsubmoduleだった版）から追いつくPCでは、`git pull` の前後で次を実行する。
+
+```bash
+git pull                          # skills/yomiyasu の古いディレクトリとぶつかって止まったら、次の2行を先に実行する
+rm -rf skills/yomiyasu            # 古いsubmoduleの作業ツリー（中身は .git/modules に残る）
+git checkout -- skills/yomiyasu   # symlinkを取り出す
+git submodule sync && git submodule update --init vendor/yomiyasu
+bash setup.sh --all
+```
 
 設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯と却下した案は
 `docs/adr/0024-jp-doc-review-hook.md` を参照。レビューの時機をPR作成時へ移した経緯は `docs/adr/0025-jp-doc-review-at-pr-creation.md` にある。

@@ -848,6 +848,8 @@ def handle_pre_tool_use_reviewer_bash(payload: dict) -> None:
     }})
 
 
+# スキル本体（yomiyasu_skill().parent）の外にある、submoduleのルート。scripts/ などの古い版も書き換えさせない
+YOMIYASU_SUBMODULE = HOOK_DIR.parent / "vendor" / "yomiyasu"
 PROTECTED_CLAUDE_HOME_FILES = ("settings.json", "settings.local.json", "settings.personal.json")
 
 
@@ -906,7 +908,7 @@ def _read_allowed(key: str) -> Optional[List[str]]:
 
 def _protected_paths() -> List[str]:
     """レビュワーのEditで書き換えさせないものの実体。制限の仕組みそのもの。許可リストに入っていても守る。"""
-    paths = [yomiyasu_skill().parent, Path(__file__).resolve().parent, reviewer_definition(), diffs_dir(),
+    paths = [yomiyasu_skill().parent, YOMIYASU_SUBMODULE, Path(__file__).resolve().parent, reviewer_definition(), diffs_dir(),
              *(claude_home() / name for name in PROTECTED_CLAUDE_HOME_FILES)]
     return [os.path.realpath(path) for path in paths]
 
