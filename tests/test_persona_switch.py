@@ -108,6 +108,59 @@ class PersonaSwitchTests(unittest.TestCase):
         self.assertEqual(self.active.read_text(encoding="utf-8"), POLITE)
 
 
+def git(cwd, *args):
+    return subprocess.run(
+        ["git", "-C", str(cwd), "-c", "user.name=test", "-c", "user.email=test@example.invalid", *args],
+        capture_output=True, text=True, check=True,
+    )
+
+
+class GitHookTests(unittest.TestCase):
+    """rules/persona.md を追跡から外すコミットを取り込むと、git がファイルを消す。
+    消えたままだとリンクはあるのにペルソナが効かないので、フックで既定の版を戻す。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name).resolve() / "repository"
+        self.repo.mkdir()
+        git(self.repo, "init", "-q", "-b", "main")
+        # 追跡していたころの main
+        (self.repo / "rules").mkdir()
+        (self.repo / "rules" / "persona.md").write_text("# old\n", encoding="utf-8")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "old")
+        # 追跡を外し、personas/ とフックを足すブランチ
+        git(self.repo, "switch", "-q", "-c", "switch")
+        (self.repo / "bin").mkdir()
+        shutil.copy2(SCRIPT, self.repo / "bin" / "persona")
+        (self.repo / "personas").mkdir()
+        (self.repo / "personas" / "casual.md").write_text(CASUAL, encoding="utf-8")
+        (self.repo / "personas" / "polite.md").write_text(POLITE, encoding="utf-8")
+        shutil.copytree(REPO_ROOT / ".githooks", self.repo / ".githooks")
+        (self.repo / ".gitignore").write_text("rules/persona.md\n", encoding="utf-8")
+        git(self.repo, "rm", "-q", "--cached", "rules/persona.md")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "switch")
+        git(self.repo, "switch", "-q", "main")
+        git(self.repo, "config", "core.hooksPath", ".githooks")
+        self.active = self.repo / "rules" / "persona.md"
+
+    def test_merge_restores_the_default_persona(self):
+        git(self.repo, "merge", "-q", "--ff-only", "switch")
+        self.assertEqual(self.active.read_text(encoding="utf-8"), CASUAL)
+
+    def test_checkout_restores_the_default_persona(self):
+        git(self.repo, "switch", "-q", "switch")
+        self.assertEqual(self.active.read_text(encoding="utf-8"), CASUAL)
+
+    def test_hooks_keep_the_chosen_persona(self):
+        git(self.repo, "switch", "-q", "switch")
+        subprocess.run([str(self.repo / "bin" / "persona"), "polite"], check=True, capture_output=True)
+        git(self.repo, "switch", "-q", "-c", "other")
+        self.assertEqual(self.active.read_text(encoding="utf-8"), POLITE)
+
+
 class RepositoryPersonaTests(unittest.TestCase):
     """リポジトリに置く版と、追跡しない生成物の境界。"""
 
