@@ -10,6 +10,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RULE_PATH = ROOT / "rules" / "completion-anchor.md"
+TASK_MANAGEMENT = (ROOT / "rules" / "task-management.md").read_text(encoding="utf-8")
+GITIGNORE = (ROOT / ".gitignore").read_text(encoding="utf-8")
 
 
 def read_rule() -> str:
@@ -54,6 +56,18 @@ class TestCompletionAnchorRule(unittest.TestCase):
     def test_rule_asks_to_log_parallel_cases(self):
         self.assertIn("並列", self.rule)
         self.assertIn("tasks/backlog.md", self.rule)
+
+
+class TestCompletionAnchorWiring(unittest.TestCase):
+    """既存の指示とignoreが新しいruleにつながっていることを確かめる。"""
+
+    def test_task_management_drops_single_file_premise(self):
+        self.assertNotIn("常に1ファイルで足りる", TASK_MANAGEMENT)
+        self.assertIn("rules/completion-anchor.md", TASK_MANAGEMENT)
+        self.assertIn("tasks/todo/", TASK_MANAGEMENT)
+
+    def test_gitignore_covers_task_files(self):
+        self.assertIn("tasks/todo/", GITIGNORE.splitlines())
 
 
 if __name__ == "__main__":
