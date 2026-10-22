@@ -29,7 +29,7 @@ def copy_repository(base: Path) -> Path:
         "env.json.template", "setup.sh", "statusline.js",
     ):
         shutil.copy2(ROOT / relative, repository / relative)
-    for relative in (".githooks", "agents", "bin", "codex", "commands", "hooks", "manifests", "output-styles", "rules", "skills"):
+    for relative in (".githooks", "agents", "bin", "codex", "commands", "hooks", "manifests", "output-styles", "personas", "rules", "skills"):
         shutil.copytree(ROOT / relative, repository / relative, symlinks=True)
     return repository
 
