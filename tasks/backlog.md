@@ -1037,6 +1037,22 @@ Python や Markdown だけを触る作業中も常に効いている。
 2026-10-01 時点で先方の作業ツリーに未コミットの変更があったため、追記は保留している。
 追記したらこの項目を参照だけに縮める。
 
+### P2: 公式の best-practices ページと、このリポジトリの運用方針を比べる
+
+2026-10-22に調べたところ、submodule `claude-code-best-practice` は https://code.claude.com/docs/en/best-practices を
+ベースにしていない。ドリフト検出のworkflow（`.claude/commands/workflows/best-practice/` などの10ファイル）が比べるのは、
+settings・skills・slash-commands・sub-agents・overview・cli-reference の各リファレンスと、Claude Code の CHANGELOG だけ。
+best-practices ページは README のリンク集に1行出てくるだけだった。
+submoduleがカバーするのは仕様（キー名、frontmatter、hookイベント）までで、運用の考え方
+（CLAUDE.mdに書くこと、コンテキストの管理、検証のさせ方、計画から実装への流れ、サブエージェントの使い方）はカバーしていない。
+このリポジトリの `CLAUDE.md` と `rules/` が扱っているのは、その運用の考え方のほうである。
+参照表の `claude-memory.md`・`claude-mcp.md`・`claude-power-ups.md` は手で更新されていて、自動では追随しない。
+
+**やること**: 公式ページの項目ごとに、このリポジトリのどのファイルで実現しているか、食い違っているか、抜けているかを表にする。
+
+**決めること**: 比較の結果を受けて、`skills/claude-code-best-practice/SKILL.md` の参照表に公式ページを足すか。
+食い違いが出た項目について、公式に合わせるか、このリポジトリの方針を残すか（残すならADRに理由を書く）。
+
 ---
 
 ## リンク先のディレクトリへの混入
