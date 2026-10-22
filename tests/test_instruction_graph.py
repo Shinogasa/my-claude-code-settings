@@ -31,6 +31,9 @@ SESSION_RULES = (
     "rules/security-review-policy.md",
 )
 
+# 生成物の rule と、setup.sh が既定で書き写す元
+GENERATED_RULES = {"rules/persona.md": "personas/casual.md"}
+
 
 class TestSharedInstructionIndex(unittest.TestCase):
     """CLAUDE.mdが両ホスト共通の指示indexになっているか。"""
@@ -77,6 +80,9 @@ class TestSharedInstructionIndex(unittest.TestCase):
 
     def test_session_rules_exist_as_files(self):
         for rule in SESSION_RULES:
+            # rules/persona.md は追跡しない生成物で、cloneした直後には無い。元になる既定の版を見る
+            if rule in GENERATED_RULES:
+                rule = GENERATED_RULES[rule]
             with self.subTest(rule=rule):
                 self.assertTrue((REPO_ROOT / rule).is_file())
 

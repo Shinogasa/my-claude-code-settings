@@ -27,7 +27,7 @@ def copy_repository(base: Path) -> Path:
         "env.json.template", "setup.sh", "statusline.js",
     ):
         shutil.copy2(ROOT / relative, repository / relative)
-    for relative in (".githooks", "agents", "bin", "codex", "commands", "hooks", "manifests", "output-styles", "rules", "skills"):
+    for relative in (".githooks", "agents", "bin", "codex", "commands", "hooks", "manifests", "output-styles", "personas", "rules", "skills"):
         shutil.copytree(ROOT / relative, repository / relative, symlinks=True)
     return repository
 
@@ -406,6 +406,34 @@ class SetupCliTests(unittest.TestCase):
             (self.home / ".config/agent-learning/config.json").exists()
         )
         self.assertFalse((self.repository / ".learning-store.json").exists())
+
+    def test_creates_default_persona_when_missing(self):
+        # 新しくcloneした環境では、追跡しない rules/persona.md が無い
+        active = self.repository / "rules" / "persona.md"
+        active.unlink(missing_ok=True)
+        (self.home / ".claude").mkdir()
+
+        result = run_setup(self.repository, self.home, "--claude")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(active.is_symlink())
+        self.assertEqual(
+            active.read_bytes(),
+            (self.repository / "personas" / "casual.md").read_bytes(),
+        )
+
+    def test_keeps_the_chosen_persona(self):
+        active = self.repository / "rules" / "persona.md"
+        active.write_bytes((self.repository / "personas" / "polite.md").read_bytes())
+        (self.home / ".claude").mkdir()
+
+        result = run_setup(self.repository, self.home, "--claude")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            active.read_bytes(),
+            (self.repository / "personas" / "polite.md").read_bytes(),
+        )
 
     def test_codex_installs_global_rtk_instructions(self):
         (self.home / ".codex").mkdir()
