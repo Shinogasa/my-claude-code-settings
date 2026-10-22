@@ -107,3 +107,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0035](0035-aws-skills-via-upstream-submodule.md) | AWSスキルを上流submoduleへのsymlinkとmanifestで配布する | 2026-10-14 | accepted |
 | [0036](0036-child-codex-follows-session-profile.md) | 個人プロファイルのセッションから起動する `codex` を、環境変数で個人用に固定する | 2026-10-14 | accepted |
 | [0037](0037-persona-switch-by-copy.md) | ペルソナの版を `personas/` に置き、使う版を `rules/persona.md` へ書き写して切り替える | 2026-10-22 | accepted |
+| [0038](0038-completion-anchor-rule.md) | 作業のぶれを、並列化ではなく完了条件の固定と仕分けで防ぐ | 2026-10-22 | accepted |
