@@ -668,6 +668,17 @@ class ReviewerAllowTests(HookCase):
         self.assertFalse((self.state / "sources" / "s0").exists())
         self.assertTrue(self.snapshot(new).is_file())
 
+    def test_pr_create_cleanup_also_removes_old_snapshots(self):
+        # Stop が走らず、レビュワーを二度と起動しなくても、写しは保存日数で消える（セキュリティレビューの指摘）
+        old = self.write_file("docs/old.md", "古い")
+        self.agent(str(old), session="s0")
+        eight_days_ago = time.time() - 8 * 86400
+        os.utime(self.snapshot(old, "s0"), (eight_days_ago, eight_days_ago))
+        (self.state / ".last-cleanup").unlink(missing_ok=True)
+        self.run_hook("pre-tool-use-bash", {"session_id": "s9", "cwd": str(self.repo), "tool_name": "Bash",
+                                            "tool_input": {"command": "gh pr create --fill"}})
+        self.assertFalse((self.state / "sources" / "s0").exists())
+
     def test_second_call_adds_to_the_first(self):
         first, second = self.write_file("docs/a.md", "x"), self.write_file("docs/b.md", "x")
         self.agent("docs/a.md")
@@ -741,6 +752,14 @@ class ReviewerEditTests(HookCase):
         for path in protected:
             with self.subTest(path=str(path)):
                 self.assertDenied(str(path))
+
+    def test_state_dir_is_denied_even_when_listed(self):
+        # 原文の写しと許可リストを書き換えさせない（セキュリティレビューの指摘）
+        targets = [self.state / "s1.reviewer-allow.json", self.state / "sources" / "s1" / "0123456789abcdef"]
+        self.allow(*targets)
+        for target in targets:
+            with self.subTest(path=str(target)):
+                self.assertDenied(str(target))
 
     def test_vendored_submodule_is_denied_even_when_listed(self):
         # スキル本体の外（submoduleのルートの scripts/ など）も、レビュワーに書き換えさせない

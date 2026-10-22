@@ -289,6 +289,7 @@ def cleanup_old_state() -> None:
     limit = now - STATE_RETENTION_DAYS * 86400
     for directory in (state_dir(), drafts_dir(), diffs_dir()):
         _remove_older_files(directory, limit)
+    cleanup_old_sources()  # Stop が走らず、レビュワーを二度と起動しなくても、写しを残し続けない
     _write_private(stamp, "")
 
 
@@ -920,7 +921,7 @@ def handle_pre_tool_use_agent(payload: dict) -> None:
         return  # サブエージェントがさらに呼んだ依頼では、許可を広げない
     key = session_key(payload)
     cleanup_old_state()
-    cleanup_old_sources()
+    cleanup_old_sources()  # 掃除の間引き（1時間）に関係なく、起動のたびに見る
     prompt = tool_input.get("prompt")
     paths = _requested_files(prompt if isinstance(prompt, str) else "", payload.get("cwd"))
     if not paths:
@@ -953,6 +954,7 @@ def _read_allowed(key: str) -> Optional[List[str]]:
 def _protected_paths() -> List[str]:
     """レビュワーのEditで書き換えさせないものの実体。制限の仕組みそのもの。許可リストに入っていても守る。"""
     paths = [yomiyasu_skill().parent, YOMIYASU_SUBMODULE, Path(__file__).resolve().parent, reviewer_definition(), diffs_dir(),
+             state_dir() / "sources",
              *(claude_home() / name for name in PROTECTED_CLAUDE_HOME_FILES)]
     return [os.path.realpath(path) for path in paths]
 
@@ -964,6 +966,8 @@ def _is_editable(key: str, file_path: str, cwd: object) -> bool:
     real = os.path.realpath(path)
     if any(real == protected or real.startswith(protected + os.sep) for protected in _protected_paths()):
         return False
+    if os.path.dirname(real) == os.path.realpath(state_dir()):
+        return False  # 許可リストなどの状態ファイル。下書き（drafts/）はレビュワーが直す対象なので、直下だけを守る
     return real in (_read_allowed(key) or [])
 
 
