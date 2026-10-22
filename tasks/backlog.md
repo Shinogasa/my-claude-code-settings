@@ -894,6 +894,18 @@ macOS の `pgrep` は呼び出し元の祖先プロセスを返さない（実�
 
 ## フックの実行環境
 
+### P3: 保護ブランチ上のローカルマージの、止めていない経路
+
+2026-10-23に、main / master 上の `git merge` を止めた。そのときの自動セキュリティレビューの指摘のうち、次を残した。
+
+- main 上の `git pull origin feat/x` のように、取り込む ref を指定した `git pull` で、作業ブランチを取り込める。
+  main の更新に使う `git pull` は通すと決めたので、引数の無い形と区別するかどうかは決めていない
+- `git -c alias.m=merge m feat/x` のような alias、`git cherry-pick` / `git rebase` / `git am` でも main を進められる
+  （`bash -c` と同じく、既知の限界として扱っている）
+
+**決めること**: ref を指定した `git pull` を止めるか。止めるなら、通す形（引数なし、`--ff-only` だけ、など）をどこまでにするか。
+エージェントがこの形でローカルマージした事例が出たら着手する。
+
 ### P2: guard-dangerous-bash が「検査できなかった」を通す経路の残り
 
 2026-10-12に、gitの照会のタイムアウトと起動失敗では止めるように直した（`GitQueryFailed`）。そのときのsecurity-reviewerの指摘のうち、
