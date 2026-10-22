@@ -192,6 +192,13 @@ class PrReviewTests(HookCase):
         self.assertIn("jp-doc-reviewer", reason)
         self.assertIn("main", reason)
 
+    def test_reason_asks_to_show_pairs_without_summary(self):
+        # 直した内容を、ユーザーが元と後の対で確かめられるようにする（ADR 0038）
+        self.commit_file("docs/a.md", JP_LONG)
+        reason = self.reason(self.pr())
+        self.assertIn("元 → 後", reason)
+        self.assertIn("要約せず", reason)
+
     def test_document_written_only_by_the_user_needs_confirmation(self):
         path = self.commit_file("docs/mine.md", JP_LONG, claude=False)
         reason = self.reason(self.pr())
@@ -877,6 +884,11 @@ class ConfluenceTests(HookCase):
         reason = self.pre(JP_LONG, pageId="9")[1]["hookSpecificOutput"]["permissionDecisionReason"]
         self.assertIn("レビュワーが変えた点をユーザーに見せ、投稿してよいかを確かめてから送る", reason)
         self.assertIn("ユーザーの確認なしに2回目を送らない", reason)
+
+    def test_confluence_reason_asks_to_show_pairs_without_summary(self):
+        reason = self.pre(JP_LONG, pageId="9")[1]["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("元 → 後", reason)
+        self.assertIn("要約せず", reason)
 
     def test_draft_suffix_follows_content_format(self):
         self.pre(JP_LONG, contentFormat="markdown", pageId="1")

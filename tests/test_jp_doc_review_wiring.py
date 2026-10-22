@@ -75,6 +75,18 @@ class ReviewerAgentTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.body)
 
+    def test_report_lists_important_changes_as_pairs(self):
+        report = self.body.split("## 報告", 1)[1]
+        for marker in ("→", "件数の上限は無い", "意味が変わりうる直しは無い"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, report)
+
+    def test_steps_run_the_check_last_and_do_not_edit_after(self):
+        for marker in ("references/review-points.md", "最後のラッパーの後はEditしない", "1回だけ直す"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.body)
+        self.assertNotIn("verify --", self.body)
+
     def test_report_section_has_room_for_unread_references(self):
         report = self.body.split("## 報告", 1)[1]
         self.assertIn("読めなかった資料（あれば）", report)
