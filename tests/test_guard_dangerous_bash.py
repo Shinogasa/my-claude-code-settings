@@ -662,6 +662,17 @@ class TestProtectedBranchMerge(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(run_guard(command, cwd=self.on_main), ALLOW)
 
+    def test_abort_as_option_value_is_blocked(self):
+        # -m の値として --abort を渡すと、マージは実行される
+        self.assertEqual(run_guard("git merge -m --abort feat/x", cwd=self.on_main), BLOCK)
+
+    def test_switch_to_main_then_merge_is_blocked(self):
+        # フックは実行前のブランチしか見られない。finishing-a-development-branch の手順の形
+        for command in ("git checkout main && git pull && git merge feat/x",
+                        "git switch main; git merge feat/x"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command, cwd=self.on_feature), BLOCK)
+
     def test_merge_on_feature_branch_is_allowed(self):
         # 作業ブランチに main を取り込むのは、PRの前の普通の操作
         self.assertEqual(run_guard("git merge main", cwd=self.on_feature), ALLOW)
