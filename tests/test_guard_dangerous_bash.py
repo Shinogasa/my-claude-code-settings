@@ -621,6 +621,55 @@ class TestVerificationBypass(unittest.TestCase):
             run_guard('git commit -m "normal"', cwd=self.repo_with_hooks), ALLOW)
 
 
+class TestProtectedBranchMerge(unittest.TestCase):
+    """保護ブランチ (main / master) 上でのローカルマージの判定。
+
+    取り込みは必ずPRで行う（2026-10-22、ユーザーの判断）。git merge は git commit を通らずに
+    コミットを作るので、直接コミットの判定では止まらなかった。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmps = [tempfile.TemporaryDirectory() for _ in range(3)]
+        cls.on_main = make_repo(cls._tmps[0].name, with_hooks=False, branch="main")
+        cls.on_master = make_repo(cls._tmps[1].name, with_hooks=False, branch="master")
+        cls.on_feature = make_repo(cls._tmps[2].name, with_hooks=False, branch="feat/x")
+
+    @classmethod
+    def tearDownClass(cls):
+        for tmp in cls._tmps:
+            tmp.cleanup()
+
+    def test_merge_on_main_is_blocked(self):
+        self.assertEqual(run_guard("git merge feat/x", cwd=self.on_main), BLOCK)
+
+    def test_merge_on_master_is_blocked(self):
+        self.assertEqual(run_guard("git merge --no-ff feat/x", cwd=self.on_master), BLOCK)
+
+    def test_fast_forward_only_merge_on_main_is_blocked(self):
+        # --ff-only でも、手元の作業ブランチを取り込めばPRを通らずにmainが進む
+        self.assertEqual(run_guard("git merge --ff-only feat/x", cwd=self.on_main), BLOCK)
+
+    def test_merge_with_git_c_into_main_is_blocked(self):
+        self.assertEqual(run_guard(f"git -C {self.on_main} merge feat/x"), BLOCK)
+
+    def test_merge_chained_after_checkout_is_blocked_when_cwd_is_main(self):
+        self.assertEqual(run_guard("git fetch && git merge origin/feat/x", cwd=self.on_main), BLOCK)
+
+    def test_abort_on_main_is_allowed(self):
+        # 進行中のマージをやめる操作は、mainを進めない
+        for command in ("git merge --abort", "git merge --quit"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command, cwd=self.on_main), ALLOW)
+
+    def test_merge_on_feature_branch_is_allowed(self):
+        # 作業ブランチに main を取り込むのは、PRの前の普通の操作
+        self.assertEqual(run_guard("git merge main", cwd=self.on_feature), ALLOW)
+
+    def test_pull_on_main_is_allowed(self):
+        self.assertEqual(run_guard("git pull --ff-only", cwd=self.on_main), ALLOW)
+
+
 class TestProtectedBranchCommit(unittest.TestCase):
     """保護ブランチ (main / master) への直接コミットの判定。
 
