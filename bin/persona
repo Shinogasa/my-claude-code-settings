@@ -1,0 +1,95 @@
+#!/bin/bash
+# 応答人格（ペルソナ）を切り替える。personas/<名前>.md を rules/persona.md へ書き写す。
+#
+#   persona            今の版と候補を表示する
+#   persona <名前>     その版に切り替える。反映されるのは次に始めるセッションから
+#   persona --ensure   rules/persona.md が無いときだけ既定の版を作る（setup.sh が呼ぶ）
+#
+# シンボリックリンクにせず書き写すのは、プロジェクトの外を指すリンクの rule を
+# Claude Code が読み込まなかったため（2026-10-22 の実験）。
+# rules/persona.md は追跡しない。personas/ のどの版とも一致しないときは、手で編集した
+# とみなして上書きしない。編集を残したいなら personas/ に保存してから切り替える。
+
+set -euo pipefail
+
+DEFAULT_PERSONA=casual
+
+# ~/.claude/bin や ~/.codex/bin はリポジトリの bin/ へのリンクなので、実体のパスから辿る
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+PERSONAS_DIR="$ROOT/personas"
+ACTIVE="$ROOT/rules/persona.md"
+
+list_personas() {
+  local file
+  for file in "$PERSONAS_DIR"/*.md; do
+    [ -e "$file" ] || continue
+    basename "$file" .md
+  done
+}
+
+# 今の rules/persona.md と同じ内容の版の名前を出す。無ければ何も出さない
+current_persona() {
+  local name
+  [ -f "$ACTIVE" ] || return 0
+  for name in $(list_personas); do
+    if cmp -s "$ACTIVE" "$PERSONAS_DIR/$name.md"; then
+      printf '%s\n' "$name"
+      return 0
+    fi
+  done
+}
+
+candidates() {
+  list_personas | tr '\n' ' ' | sed 's/ $//'
+}
+
+# 同じディレクトリに一時ファイルを書いてから置き換え、途中で止まっても中途半端な rule を残さない。
+# 一時ファイルの拡張子を .md にしないのは、rule として読み込まれないようにするため
+install_persona() {
+  local source="$1" temporary="$ROOT/rules/.persona.tmp"
+  cp "$source" "$temporary"
+  mv "$temporary" "$ACTIVE"
+}
+
+show() {
+  local current
+  if [ ! -f "$ACTIVE" ]; then
+    echo "エラー: rules/persona.md がありません。persona <名前> で選んでください（候補: $(candidates)）" >&2
+    exit 1
+  fi
+  current="$(current_persona)"
+  if [ -z "$current" ]; then
+    echo "エラー: rules/persona.md は personas/ のどの版とも一致しません（手で編集された可能性があります）。候補: $(candidates)" >&2
+    exit 1
+  fi
+  echo "現在: ${current}（候補: $(candidates)）"
+}
+
+ensure() {
+  [ -e "$ACTIVE" ] && return 0
+  install_persona "$PERSONAS_DIR/$DEFAULT_PERSONA.md"
+  echo "rules/persona.md が無かったので、既定の $DEFAULT_PERSONA を作りました"
+}
+
+switch() {
+  local name="$1"
+  # 名前にパスを含めさせない。personas/ の外のファイルを rule にできてしまう
+  if [[ ! "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || [ ! -f "$PERSONAS_DIR/$name.md" ]; then
+    echo "エラー: ペルソナ '$name' はありません。候補: $(candidates)" >&2
+    exit 1
+  fi
+  if [ -e "$ACTIVE" ] && [ -z "$(current_persona)" ]; then
+    echo "エラー: rules/persona.md は personas/ のどの版とも一致しないので、上書きしません。" >&2
+    echo "  編集を残すなら personas/ に保存してから、捨てるなら rules/persona.md を消してから、もう一度実行してください。" >&2
+    exit 1
+  fi
+  install_persona "$PERSONAS_DIR/$name.md"
+  echo "$name に切り替えました。次に始めるセッションから反映されます"
+}
+
+case "${1-}" in
+  "") show ;;
+  --ensure) ensure ;;
+  -*) echo "Usage: persona [<名前> | --ensure]" >&2; exit 2 ;;
+  *) switch "$1" ;;
+esac

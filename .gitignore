@@ -16,6 +16,9 @@ settings.json
 *.swp
 __pycache__/
 
+# 使うペルソナは bin/persona が personas/ から書き写す。どれを使うかは人ごとの好みなので追跡しない。
+rules/persona.md
+
 # todo.md はタスクごとに使い捨てる一時ファイル (rules/task-management.md参照)。
 tasks/todo.md
 

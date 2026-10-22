@@ -827,6 +827,11 @@ setup_git_hooks() {
   fi
 }
 
+# rules/persona.md は追跡しない生成物。新しくcloneした環境でもペルソナが抜けないよう、無ければ既定の版を作る
+setup_persona() {
+  "$SCRIPT_DIR/bin/persona" --ensure || return 1
+}
+
 print_claude_path_guidance() {
   case ":$PATH:" in
     *":$CLAUDE_DIR/bin:"*) green "$CLAUDE_DIR/bin は PATH に含まれています" ;;
@@ -951,6 +956,7 @@ report_dry_run() {
     printf 'codex config: %s のSSH署名とサブエージェント既定値を更新しうる\n' "$CODEX_DIR/config.toml"
   fi
   printf 'git: submodule の初期化と core.hooksPath の設定を行う\n'
+  [ -e "$SCRIPT_DIR/rules/persona.md" ] || printf 'persona: rules/persona.md が無いので既定の版を作る\n'
 }
 
 # 監査ツールは exit 1 で違反、exit 2 で監査自体の失敗を返す。
@@ -1033,6 +1039,7 @@ fi
 initialize_submodules || exit 1
 validate_sources false || exit 1
 setup_git_hooks || exit 1
+setup_persona || exit 1
 
 # 競合の判定を通った後で移行する。以降の再検査は、移行後の実際の配置を見る。
 migrate_legacy_skill_parents || exit 1
