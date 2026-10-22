@@ -167,11 +167,15 @@ class TestExternalSkillSubmodule(unittest.TestCase):
 
     def test_yomiyasu_is_declared_submodule_listed_as_shared(self):
         gitmodules = (REPO_ROOT / ".gitmodules").read_text(encoding="utf-8")
-        self.assertIn("path = skills/yomiyasu", gitmodules)
+        self.assertIn("path = vendor/yomiyasu", gitmodules)
         self.assertIn("url = https://github.com/nanaism/yomiyasu.git", gitmodules)
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         self.assertIn("yomiyasu", manifest["shared"])
-        self.assertTrue((SKILLS_DIR / "yomiyasu" / "SKILL.md").is_file())
+        # v2でスキル本体が入れ子に移ったので、submoduleは skills/ の外に置き、本体をsymlinkで配る（ADR 0038）
+        link = SKILLS_DIR / "yomiyasu"
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(os.readlink(link), "../vendor/yomiyasu/skills/yomiyasu")
+        self.assertTrue((link / "SKILL.md").is_file())
 
 
 AWS_SUBMODULE = "agent-toolkit-for-aws"

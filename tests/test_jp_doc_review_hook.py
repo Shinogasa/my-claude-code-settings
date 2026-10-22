@@ -685,6 +685,12 @@ class ReviewerEditTests(HookCase):
             with self.subTest(path=str(path)):
                 self.assertDenied(str(path))
 
+    def test_vendored_submodule_is_denied_even_when_listed(self):
+        # スキル本体の外（submoduleのルートの scripts/ など）も、レビュワーに書き換えさせない
+        target = REPO_ROOT / "vendor" / "yomiyasu" / "scripts" / "yomiyasu_lint.py"
+        self.allow(target)
+        self.assertDenied(str(target))
+
     def test_symlink_to_protected_file_is_denied_even_when_listed(self):
         link = self.repo / "link.md"
         link.symlink_to(self.skill)

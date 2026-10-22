@@ -48,6 +48,19 @@ class WrapperCase(unittest.TestCase):
         self.skill.write_text("", encoding="utf-8")
 
 
+class LinterLocationTests(WrapperCase):
+    def test_nested_linter_path_is_not_searched(self):
+        # v2のsubmoduleのルートには古い版のリンターも残る。スキル本体の隣の scripts/ だけを探す
+        script = self.base / "fake" / "skills" / "yomiyasu" / "scripts" / "yomiyasu_lint.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("print('{}')", encoding="utf-8")
+        self.skill = self.base / "fake" / "SKILL.md"
+        self.skill.write_text("", encoding="utf-8")
+        result = self.run_wrapper(self.write("a.md", SLOP_SENTENCE + "\n"))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("見つからない", result.stdout)
+
+
 class HtmlTests(WrapperCase):
     def test_html_paragraph_is_checked_as_text(self):
         draft = self.write("d.html", f"<p>{SLOP_SENTENCE}</p>\n")
