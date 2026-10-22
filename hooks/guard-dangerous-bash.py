@@ -39,7 +39,8 @@ allowlist なら新しい読み取り操作が誤ってブロックされる。�
 (2026-10-22、ユーザーの判断)。git merge は git commit を通らずにコミットを作るため、
 直接コミットの判定では止まらなかった。`--ff-only` でも、手元の作業ブランチを取り込めば
 PRを通らずに main が進むので止める。進行中のマージをやめる `--abort` / `--quit` と、
-main の更新に使う `git pull` は通す。
+main の更新に使う `git pull` は通す。フックは実行前のブランチしか見られないので、
+同じコマンドの中で `git switch` / `git checkout` の後に来る merge は、ブランチを問わず止める。
 
 判定対象のリポジトリは、PreToolUse が渡す cwd を起点に、同じコマンド内の `cd` と
 `git -C` を順に適用して決める。cwd は前回までの cd に追従するが、同じコマンド内の
@@ -106,6 +107,8 @@ ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 NO_VERIFY_SUBCOMMANDS = {"commit", "merge", "push"}
 # 進行中のマージをやめるだけで、ブランチを進めないオプション。
 MERGE_STOP_OPTIONS = {"--abort", "--quit"}
+# HEAD のブランチを変えうるサブコマンド。checkout はファイルの復元にも使うが、区別しない。
+BRANCH_SWITCH_SUBCOMMANDS = {"switch", "checkout"}
 # 値を伴う git のグローバルオプション (サブコマンド探索時に2トークン読み飛ばす)
 GIT_GLOBAL_OPTS_WITH_VALUE = {
     "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
@@ -627,7 +630,16 @@ def is_git_merge(tokens: list) -> bool:
     if not tokens or tokens[0] != "git":
         return False
     subcommand, args = extract_subcommand(tokens)
-    return subcommand == "merge" and not MERGE_STOP_OPTIONS & set(args)
+    # --abort / --quit はほかの引数と併用できない。併用に見えるのは -m の値などなので、マージとして扱う
+    return subcommand == "merge" and not (len(args) == 1 and args[0] in MERGE_STOP_OPTIONS)
+
+
+def is_git_branch_switch(tokens: list) -> bool:
+    """HEAD のブランチを変えうる git switch / checkout か判定する。"""
+    if not tokens or tokens[0] != "git":
+        return False
+    subcommand, _ = extract_subcommand(tokens)
+    return subcommand in BRANCH_SWITCH_SUBCOMMANDS
 
 
 class GitQueryFailed(Exception):
@@ -899,6 +911,9 @@ def run_checks() -> int:
     bypass_dirs = set()
     commit_dirs = set()
     merge_dirs = set()
+    # 同じコマンドの中でブランチを切り替えると、実行前のブランチでは判定できない。
+    branch_switched = False
+    merge_after_switch = False
     candidates = {os.path.abspath(cwd)}
     # これまでに通りうるディレクトリすべて。&& の連鎖が切れたら、どこにいてもおかしくない。
     seen = set(candidates)
@@ -975,6 +990,17 @@ def run_checks() -> int:
             commit_dirs |= git_target_dirs(simple_command, candidates)
         if is_git_merge(simple_command):
             merge_dirs |= git_target_dirs(simple_command, candidates)
+            merge_after_switch = merge_after_switch or branch_switched
+        if is_git_branch_switch(simple_command):
+            branch_switched = True
+
+    if merge_after_switch:
+        print("ブロック: ブランチを切り替えた後の git merge は、マージ先のブランチを判定できません。",
+              file=sys.stderr)
+        print("  保護ブランチ (main / master) への取り込みはPRで行います。", file=sys.stderr)
+        print("  作業ブランチへの取り込みなら、切り替えとマージを別のコマンドに分けてください。",
+              file=sys.stderr)
+        return 2
 
     if UNRESOLVED in bypass_dirs | commit_dirs | merge_dirs:
         print("ブロック: git commit / merge の対象リポジトリを特定できません。", file=sys.stderr)
