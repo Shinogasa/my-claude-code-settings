@@ -129,6 +129,9 @@ def _is_disposable(path: Path) -> bool:
     """
     if path.name == "todo.md" and path.parent.name == "tasks":
         return True
+    # タスクごとの使い捨てファイル（rules/completion-anchor.md）
+    if path.parent.name == "todo" and path.parent.parent.name == "tasks":
+        return True
     if ".superpowers" in path.parts[:-1]:
         return True
     roots = [claude_home(), drafts_dir(), *temporary_roots()]
