@@ -20,6 +20,8 @@ status: accepted
 - 版は `personas/<名前>.md` に置く。`rules/` の外に置くのは、`rules/` 内の `.md` がすべて読み込まれるため
 - `bin/persona <名前>` が、選んだ版を `rules/persona.md` へ書き写す。引数なしなら今の版と候補を表示する
 - `rules/persona.md` はGitで追跡しない。無ければ `setup.sh`（`bin/persona --ensure`）が既定の `casual` を作る
+- `.githooks/post-checkout` と `post-merge` も `bin/persona --ensure` を実行する。
+  追跡していたころのコミットから、追跡を外したコミットへ移ると、git が `rules/persona.md` を消すため
 - `rules/persona.md` がどの版とも一致しないときは、手で編集したとみなして上書きしない。
   黙って止まらず、理由と対処（`personas/` に保存するか、`rules/persona.md` を消す）を標準エラーに出し、終了コード1で終える
 
@@ -55,9 +57,13 @@ status: accepted
 
 - セッションを始める前に `persona <名前>` を打つだけで切り替えられる。Codex CLI も同じ `rules/` を読むので、同じ操作で切り替わる
 - `rules/persona.md` を直接編集しても、ほかの版には反映されない。口調を直すときは `personas/` 側を編集し、もう一度書き写す
-- 新しくcloneした直後は `rules/persona.md` が無い。ただしこの時点では `~/.claude/rules` などへのリンクもまだ無く、
-  ほかの rule も一緒に効いていない。`setup.sh` がリンクを張るのと同じ実行で `rules/persona.md` を作るので、
-  ペルソナだけが黙って抜ける期間はできない。シンボリックリンク案で避けた「リンクはあるのに読まれない」状態とは違う
+- `rules/persona.md` が無くなる経路は2つあり、どちらも塞いだ
+  - 新しくcloneした直後。この時点では `~/.claude/rules` などへのリンクもまだ無く、ほかの rule も一緒に効いていない。
+    `setup.sh` がリンクを張るのと同じ実行で `rules/persona.md` を作る
+  - setup済みの環境で、このADRのコミットを pull したとき。リンクは残ったまま、git が `rules/persona.md` を消す。
+    scratch のcloneで再現した。フックが既定の版を作り直す
+- フックが働くのは `core.hooksPath` が `.githooks` のときだけで、`setup.sh` が設定する。`git reset --hard` など、
+  post-checkout と post-merge を呼ばない操作で消えたときは戻らない。`persona` を引数なしで実行すれば、無いことに気づける
 - 会話の途中での切り替えはできない。必要になったら別に検討する
 
 ## 根拠
