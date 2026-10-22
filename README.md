@@ -609,10 +609,10 @@ config、memoryの例を横断して確認できる。
 `--help`を優先し、このsubmoduleだけを根拠に設定しない。** 差分の一覧は
 [Codex互換性監査](docs/codex-compatibility-audit.md#codex-cli-best-practice-の評価)を参照。
 
-最新化:
+最新化（パスを付けないと、ほかのsubmoduleも進む）:
 
 ```bash
-git submodule update --remote
+git submodule update --remote codex-cli-best-practice
 ```
 
 ## agent-toolkit-for-aws（submodule）
