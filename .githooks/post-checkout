@@ -1,0 +1,14 @@
+#!/bin/bash
+# post-checkout / post-merge フック: rules/persona.md が無ければ既定のペルソナを作る。
+#
+# rules/persona.md は追跡しない生成物（ADR 0037）。追跡していたころのコミットから、
+# 追跡を外したコミットへ移ると、git はこのファイルを消す。~/.claude/rules などのリンクは
+# 残るので、消えたままだとペルソナだけが黙って効かなくなる。
+# bin/persona の無いコミットでは何もしない。フックの失敗は、チェックアウトを止めずに知らせる。
+
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -x "$root/bin/persona" ] || exit 0
+if ! "$root/bin/persona" --ensure; then
+  echo "注意: rules/persona.md を作れませんでした。bin/persona --ensure を手で実行してください。" >&2
+fi
+exit 0

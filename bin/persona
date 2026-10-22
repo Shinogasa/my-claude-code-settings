@@ -47,6 +47,7 @@ candidates() {
 # 一時ファイルの拡張子を .md にしないのは、rule として読み込まれないようにするため
 install_persona() {
   local source="$1" temporary="$ROOT/rules/.persona.tmp"
+  mkdir -p "$ROOT/rules"
   cp "$source" "$temporary"
   mv "$temporary" "$ACTIVE"
 }
