@@ -106,3 +106,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0032](0032-jp-doc-review-pr-target-from-cd.md) | 日本語文書のレビューで、PRを作るリポジトリを cd の移動先から決める | 2026-10-09 | accepted |
 | [0035](0035-aws-skills-via-upstream-submodule.md) | AWSスキルを上流submoduleへのsymlinkとmanifestで配布する | 2026-10-14 | accepted |
 | [0036](0036-child-codex-follows-session-profile.md) | 個人プロファイルのセッションから起動する `codex` を、環境変数で個人用に固定する | 2026-10-14 | accepted |
+| [0037](0037-persona-switch-by-copy.md) | ペルソナの版を `personas/` に置き、使う版を `rules/persona.md` へ書き写して切り替える | 2026-10-22 | accepted |

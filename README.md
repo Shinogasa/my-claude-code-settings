@@ -56,7 +56,7 @@ bash setup.sh --claude
 | `commands/` | `~/.claude/commands/` | カスタムスラッシュコマンド |
 | `rules/` | `~/.claude/rules/` | 条件付きルール |
 | `agents/` | `~/.claude/agents/` | サブエージェント定義 |
-| `bin/` | `~/.claude/bin/` | 起動ラッパー。`ccp` と `cxp` は個人アカウントで起動し、`claude-headless` は親と同じプロファイルで `claude -p` を起動する |
+| `bin/` | `~/.claude/bin/` | 起動ラッパー。`ccp` と `cxp` は個人アカウントで起動し、`claude-headless` は親と同じプロファイルで `claude -p` を起動する。`persona` は応答の口調を切り替える |
 | `hooks/` | `~/.claude/hooks/` | 危険コマンドブロック等のhooksスクリプト（Claude向けrtkフックはsettings.json.template側で管理） |
 | `statusline.js` | `~/.claude/statusline.js` | ステータスライン表示スクリプト |
 | `output-styles/` | `~/.claude/output-styles/` | カスタムアウトプットスタイル |
@@ -407,6 +407,24 @@ hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyring
 会社のMCPサーバや設定を個人セッションが引き継ぐため、allowlistによる無効化や所有キーの管理が必要だった
 （ADR 0005・0006・0023）。`CODEX_HOME` を分けたことで、これらの仕組みは削除した。
 
+## ペルソナの切り替え
+
+応答の口調は `personas/` に置いた版から選ぶ。使う版は `rules/persona.md` へ書き写され、Claude CodeとCodex CLIの両方が読む。
+
+| 名前 | 口調 |
+|---|---|
+| `casual`（既定） | ステージでファンや仲間に向けるタメ口 |
+| `polite` | 原作でプロデューサーに向ける丁寧語 |
+
+```bash
+persona            # 今の版と候補を表示する
+persona polite     # 切り替える。反映されるのは次に始めるセッションから
+```
+
+`rules/persona.md` はGitで追跡しない。無ければ `setup.sh` が `casual` を作る。
+`rules/persona.md` を直接編集すると、どの版とも一致しなくなり、`persona` は上書きを拒む。口調を直すときは `personas/` 側を編集し、もう一度 `persona <名前>` を実行する。
+シンボリックリンクではなく書き写す理由は `docs/adr/0037-persona-switch-by-copy.md` を参照。
+
 ## ディレクトリ構成
 
 ```
@@ -455,11 +473,12 @@ hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyring
 │   ├── proving-absence.md       #   「無い」と主張するときの形式
 │   ├── parallel-worktree.md     #   並列セッションとworktreeの分離
 │   ├── security-review-policy.md #  セキュリティレビューを必須にする境界
-│   ├── persona.md               #   応答の口調
+│   ├── persona.md               #   応答の口調（bin/persona が personas/ から書き写す。追跡しない）
 │   ├── output-formatting.md     #   URL表示フォーマット
 │   ├── task-management.md       #   タスク管理手順
 │   ├── ecc-coding-style.md      #   コーディングスタイル
 │   └── ecc-development-workflow.md  # 開発ワークフロー
+├── personas/                    # 応答の口調の版（casual.md が既定、polite.md）
 ├── hooks/                       # hookスクリプト（配線は settings.json.template と codex/hooks.json）
 │   ├── guard-dangerous-bash.sh  #   危険コマンド判定のエントリポイント（実処理は .py）
 │   ├── guard-agent-profile.py   #   個人用のセッションで、会社用の claude / codex の起動を止める
@@ -480,6 +499,7 @@ hookは `/hooks` で承認するまで動かない。認証情報をOSのkeyring
 │   ├── ccp / cxp                #   個人アカウントで Claude Code / Codex CLI を起動する
 │   ├── claude-headless          #   親と同じプロファイルで claude -p を起動する
 │   ├── detect-parallel-sessions #   並列セッションの検出（終了コード2は「検出できなかった」）
+│   ├── persona                  #   応答の口調を切り替える（personas/ → rules/persona.md）
 │   ├── learning-store.py        #   専用学習storeを操作するCLI（実装は learning_store/）
 │   ├── setup-state.py           #   setup.sh の分類・退避・リンク適用
 │   ├── generate-codex-agents.py #   agents/*.md から codex/agents/*.toml を生成する
