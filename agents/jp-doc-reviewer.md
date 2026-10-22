@@ -14,6 +14,10 @@ hooks:
       hooks:
         - type: command
           command: python3 ~/.claude/hooks/jp-doc-review.py pre-tool-use-reviewer-edit
+  Stop:
+    - hooks:
+        - type: command
+          command: python3 ~/.claude/hooks/jp-doc-review.py reviewer-stop
 ---
 
 # 日本語文書レビュワー

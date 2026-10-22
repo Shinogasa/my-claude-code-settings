@@ -29,6 +29,15 @@ from hook_support import (  # noqa: E402
 
 
 @functools.lru_cache(maxsize=None)
+def sources():
+    """jp_doc_sources.py を読み込む。使う場面（レビュワーの起動と終わり、掃除）でだけ読み、PR作成の判定は巻き込まない。"""
+    spec = importlib.util.spec_from_file_location("jp_doc_sources", HOOK_DIR / "jp_doc_sources.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@functools.lru_cache(maxsize=None)
 def guard():
     """guard-dangerous-bash.py を読み込む。cd の移動先の解決を、コミットの判定とそろえるために使う。"""
     spec = importlib.util.spec_from_file_location("guard_dangerous_bash", HOOK_DIR / "guard-dangerous-bash.py")
@@ -279,15 +288,33 @@ def cleanup_old_state() -> None:
         pass
     limit = now - STATE_RETENTION_DAYS * 86400
     for directory in (state_dir(), drafts_dir(), diffs_dir()):
-        if not directory.is_dir():
-            continue
-        for entry in directory.iterdir():
-            try:
-                if entry.is_file() and entry.stat().st_mtime < limit:
-                    entry.unlink()
-            except FileNotFoundError:
-                continue  # 並行して動いた別のフックが先に消した
+        _remove_older_files(directory, limit)
     _write_private(stamp, "")
+
+
+def _remove_older_files(directory: Path, limit: float) -> None:
+    if not directory.is_dir():
+        return
+    for entry in directory.iterdir():
+        try:
+            if entry.is_file() and entry.stat().st_mtime < limit:
+                entry.unlink()
+        except FileNotFoundError:
+            continue  # 並行して動いた別のフックが先に消した
+
+
+def cleanup_old_sources() -> None:
+    """レビュワーが途中で落ちて Stop が走らなかった写しを、保存日数を過ぎたら消す。レビュワーを起動するときだけ呼ぶ。"""
+    root = sources().sources_dir()
+    if not root.is_dir():
+        return
+    limit = time.time() - STATE_RETENTION_DAYS * 86400
+    for directory in (entry for entry in root.iterdir() if entry.is_dir()):
+        _remove_older_files(directory, limit)
+        try:
+            directory.rmdir()  # 写しが残っていれば消えない
+        except OSError:
+            pass
 
 
 def _transcript_size(payload: dict) -> Optional[int]:
@@ -837,6 +864,13 @@ def handle_pre_tool_use_reviewer_bash(payload: dict) -> None:
     tool_input = payload.get("tool_input")
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
     if isinstance(command, str) and _is_linter_command(command):
+        # ラッパーが自分のセッションの写しを選べるよう、セッションを足す。レビュワー自身は --session を書けない
+        # （3語の形しか通さない）。session_key は安全な文字だけを返すので、クォートは要らない
+        emit({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {"command": f"{command} --session {session_key(payload)}"},
+        }})
         return
     emit({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
@@ -884,6 +918,7 @@ def handle_pre_tool_use_agent(payload: dict) -> None:
         return  # サブエージェントがさらに呼んだ依頼では、許可を広げない
     key = session_key(payload)
     cleanup_old_state()
+    cleanup_old_sources()
     prompt = tool_input.get("prompt")
     paths = _requested_files(prompt if isinstance(prompt, str) else "", payload.get("cwd"))
     if not paths:
@@ -892,6 +927,13 @@ def handle_pre_tool_use_agent(payload: dict) -> None:
     with session_lock(key):
         known = _read_allowed(key) or []
         write_json(_allow_path(key), {"paths": [*known, *(path for path in paths if path not in known)]})
+        for path in paths:
+            sources().write_snapshot(key, path)  # 差分の検査で比べる原文。レビュワーが直す前の本文
+
+
+def handle_reviewer_stop(payload: dict) -> None:
+    """jp-doc-reviewer の定義の Stop（SubagentStop に変わる）。このセッションの原文の写しを消す。"""
+    sources().remove_session(session_key(payload))
 
 
 def _read_allowed(key: str) -> Optional[List[str]]:
@@ -951,6 +993,7 @@ HANDLERS = {
     "pre-tool-use-agent": handle_pre_tool_use_agent,
     "pre-tool-use-reviewer-bash": handle_pre_tool_use_reviewer_bash,
     "pre-tool-use-reviewer-edit": handle_pre_tool_use_reviewer_edit,
+    "reviewer-stop": handle_reviewer_stop,
 }
 
 
