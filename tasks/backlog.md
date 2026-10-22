@@ -901,7 +901,9 @@ macOS の `pgrep` は呼び出し元の祖先プロセスを返さない（実�
 - main 上の `git pull origin feat/x` のように、取り込む ref を指定した `git pull` で、作業ブランチを取り込める。
   main の更新に使う `git pull` は通すと決めたので、引数の無い形と区別するかどうかは決めていない
 - `git -c alias.m=merge m feat/x` のような alias、`git cherry-pick` / `git rebase` / `git am` でも main を進められる
-  （`bash -c` と同じく、既知の限界として扱っている）
+  （`bash -c` と同じく、既知の限界として扱っている）。`git symbolic-ref` などでブランチを変えた後の merge も追わない
+- `git switch main && git commit` のように、同じコマンドの中で main へ切り替えた後のコミットは通る（以前からある穴）。
+  merge と同じく切り替え後を一律に止めると、`git switch -c <branch> && git commit`（CLAUDE.mdの復帰の手順）まで止まる
 
 **決めること**: ref を指定した `git pull` を止めるか。止めるなら、通す形（引数なし、`--ff-only` だけ、など）をどこまでにするか。
 エージェントがこの形でローカルマージした事例が出たら着手する。
