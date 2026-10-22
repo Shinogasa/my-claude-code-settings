@@ -29,6 +29,15 @@ from hook_support import (  # noqa: E402
 
 
 @functools.lru_cache(maxsize=None)
+def sources():
+    """jp_doc_sources.py を読み込む。使う場面（レビュワーの起動と終わり、掃除）でだけ読み、PR作成の判定は巻き込まない。"""
+    spec = importlib.util.spec_from_file_location("jp_doc_sources", HOOK_DIR / "jp_doc_sources.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@functools.lru_cache(maxsize=None)
 def guard():
     """guard-dangerous-bash.py を読み込む。cd の移動先の解決を、コミットの判定とそろえるために使う。"""
     spec = importlib.util.spec_from_file_location("guard_dangerous_bash", HOOK_DIR / "guard-dangerous-bash.py")
@@ -279,15 +288,34 @@ def cleanup_old_state() -> None:
         pass
     limit = now - STATE_RETENTION_DAYS * 86400
     for directory in (state_dir(), drafts_dir(), diffs_dir()):
-        if not directory.is_dir():
-            continue
-        for entry in directory.iterdir():
-            try:
-                if entry.is_file() and entry.stat().st_mtime < limit:
-                    entry.unlink()
-            except FileNotFoundError:
-                continue  # 並行して動いた別のフックが先に消した
+        _remove_older_files(directory, limit)
+    cleanup_old_sources()  # Stop が走らず、レビュワーを二度と起動しなくても、写しを残し続けない
     _write_private(stamp, "")
+
+
+def _remove_older_files(directory: Path, limit: float) -> None:
+    if not directory.is_dir():
+        return
+    for entry in directory.iterdir():
+        try:
+            if entry.is_file() and entry.stat().st_mtime < limit:
+                entry.unlink()
+        except FileNotFoundError:
+            continue  # 並行して動いた別のフックが先に消した
+
+
+def cleanup_old_sources() -> None:
+    """レビュワーが途中で落ちて Stop が走らなかった写しを、保存日数を過ぎたら消す。レビュワーを起動するときだけ呼ぶ。"""
+    root = sources().sources_dir()
+    if not root.is_dir():
+        return
+    limit = time.time() - STATE_RETENTION_DAYS * 86400
+    for directory in (entry for entry in root.iterdir() if entry.is_dir()):
+        _remove_older_files(directory, limit)
+        try:
+            directory.rmdir()  # 写しが残っていれば消えない
+        except OSError:
+            pass
 
 
 def _transcript_size(payload: dict) -> Optional[int]:
@@ -533,7 +561,8 @@ def _pr_reason(base_ref: str, authored: List[str], others: List[str], diff: Path
         f"{base_ref} から変わった行の差分を、{diff} に書き出した。依頼文にはこのパスも書き、",
         "レビュワーには、この差分で足された行だけを直させること。差分のファイルは読むだけで、レビュワーは直せない。",
         "直したらコミットしてpushし、もう一度 gh pr create を実行して。2回目は止めない。",
-        "レビュワーの報告を受けたら、変えた点と書き手に確かめたい点をユーザーに伝えて。",
+        "レビュワーの報告を受けたら、重要な直しの「元 → 後」の対を要約せずにそのままユーザーに見せ、"
+        "書き手に確かめたい点も伝えて。",
     ]
     return "\n".join(lines)
 
@@ -702,6 +731,7 @@ def _confluence_reason(draft: Path) -> str:
         "レビュワーには、このセッションで書いた箇所だけを直させること。"
         "HTMLのタグ、data-*属性、ADFの構造は変えさせない。\n"
         "レビューが終わったら、レビュワーが変えた点をユーザーに見せ、投稿してよいかを確かめてから送る。"
+        "重要な直しの「元 → 後」の対は、要約せずにそのまま見せる。"
         "ユーザーの確認なしに2回目を送らない。\n"
         "確認が取れたら、直した下書きの内容で、同じツールを同じ投稿先へもう一度呼んで投稿して。"
     )
@@ -837,6 +867,13 @@ def handle_pre_tool_use_reviewer_bash(payload: dict) -> None:
     tool_input = payload.get("tool_input")
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
     if isinstance(command, str) and _is_linter_command(command):
+        # ラッパーが自分のセッションの写しを選べるよう、セッションを足す。レビュワー自身は --session を書けない
+        # （3語の形しか通さない）。session_key は安全な文字だけを返すので、クォートは要らない
+        emit({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {"command": f"{command} --session {session_key(payload)}"},
+        }})
         return
     emit({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
@@ -848,6 +885,8 @@ def handle_pre_tool_use_reviewer_bash(payload: dict) -> None:
     }})
 
 
+# スキル本体（yomiyasu_skill().parent）の外にある、submoduleのルート。scripts/ などの古い版も書き換えさせない
+YOMIYASU_SUBMODULE = HOOK_DIR.parent / "vendor" / "yomiyasu"
 PROTECTED_CLAUDE_HOME_FILES = ("settings.json", "settings.local.json", "settings.personal.json")
 
 
@@ -882,6 +921,7 @@ def handle_pre_tool_use_agent(payload: dict) -> None:
         return  # サブエージェントがさらに呼んだ依頼では、許可を広げない
     key = session_key(payload)
     cleanup_old_state()
+    cleanup_old_sources()  # 掃除の間引き（1時間）に関係なく、起動のたびに見る
     prompt = tool_input.get("prompt")
     paths = _requested_files(prompt if isinstance(prompt, str) else "", payload.get("cwd"))
     if not paths:
@@ -890,6 +930,16 @@ def handle_pre_tool_use_agent(payload: dict) -> None:
     with session_lock(key):
         known = _read_allowed(key) or []
         write_json(_allow_path(key), {"paths": [*known, *(path for path in paths if path not in known)]})
+        for path in paths:
+            sources().write_snapshot(key, path)  # 差分の検査で比べる原文。レビュワーが直す前の本文
+        sources().acquire(key)
+
+
+def handle_reviewer_stop(payload: dict) -> None:
+    """jp-doc-reviewer の定義の Stop（SubagentStop に変わる）。動いているレビュワーが無くなったら、このセッションの写しを消す。"""
+    key = session_key(payload)
+    with session_lock(key):
+        sources().release(key)
 
 
 def _read_allowed(key: str) -> Optional[List[str]]:
@@ -906,7 +956,8 @@ def _read_allowed(key: str) -> Optional[List[str]]:
 
 def _protected_paths() -> List[str]:
     """レビュワーのEditで書き換えさせないものの実体。制限の仕組みそのもの。許可リストに入っていても守る。"""
-    paths = [yomiyasu_skill().parent, Path(__file__).resolve().parent, reviewer_definition(), diffs_dir(),
+    paths = [yomiyasu_skill().parent, YOMIYASU_SUBMODULE, Path(__file__).resolve().parent, reviewer_definition(), diffs_dir(),
+             state_dir() / "sources",
              *(claude_home() / name for name in PROTECTED_CLAUDE_HOME_FILES)]
     return [os.path.realpath(path) for path in paths]
 
@@ -918,6 +969,8 @@ def _is_editable(key: str, file_path: str, cwd: object) -> bool:
     real = os.path.realpath(path)
     if any(real == protected or real.startswith(protected + os.sep) for protected in _protected_paths()):
         return False
+    if os.path.dirname(real) == os.path.realpath(state_dir()):
+        return False  # 許可リストなどの状態ファイル。下書き（drafts/）はレビュワーが直す対象なので、直下だけを守る
     return real in (_read_allowed(key) or [])
 
 
@@ -949,6 +1002,7 @@ HANDLERS = {
     "pre-tool-use-agent": handle_pre_tool_use_agent,
     "pre-tool-use-reviewer-bash": handle_pre_tool_use_reviewer_bash,
     "pre-tool-use-reviewer-edit": handle_pre_tool_use_reviewer_edit,
+    "reviewer-stop": handle_reviewer_stop,
 }
 
 

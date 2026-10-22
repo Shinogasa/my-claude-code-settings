@@ -33,6 +33,13 @@ class ReviewerAgentTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, frontmatter)
 
+    def test_stop_removes_source_snapshots(self):
+        # 定義の Stop は SubagentStop に変わる。レビュワーが終わったら原文の写しを消す
+        frontmatter = AGENT.read_text(encoding="utf-8").split("---\n")[1]
+        for marker in ("Stop:", "command: python3 ~/.claude/hooks/jp-doc-review.py reviewer-stop"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, frontmatter)
+
     def test_edit_is_guarded_by_agent_hook(self):
         frontmatter = AGENT.read_text(encoding="utf-8").split("---\n")[1]
         for marker in ("matcher: Edit",
@@ -67,6 +74,19 @@ class ReviewerAgentTests(unittest.TestCase):
         for marker in ("範囲を指定されたら、その範囲だけ", "指定が無ければファイル全体"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.body)
+
+    def test_report_lists_important_changes_as_pairs(self):
+        report = self.body.split("## 報告", 1)[1]
+        for marker in ("→", "件数の上限は無い", "意味が変わりうる直しは無い", "対を1つも書かない",
+                       "「実行しなかった検査」の案内は、報告に書かない"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, report)
+
+    def test_steps_run_the_check_last_and_do_not_edit_after(self):
+        for marker in ("references/review-points.md", "最後のラッパーの後はEditしない", "1回だけ直す"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.body)
+        self.assertNotIn("verify --", self.body)
 
     def test_report_section_has_room_for_unread_references(self):
         report = self.body.split("## 報告", 1)[1]

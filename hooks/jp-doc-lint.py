@@ -7,19 +7,32 @@ yomiyasu_lint.py は < で始まる行を地の文から外すので、HTMLの�
 
 リンターが数えた文字数が0のとき、リンターが失敗したときは、「問題なし」にせず終了コード2で止める。
 
+続けて、レビュワーの起動時にフックが取った原文の写し（jp_doc_sources.py）と今のファイルで、
+yomiyasu_check.py run --no-record を実行する（差分の検査）。作業repoに記録を残さないよう、一時ディレクトリで動かす。
+写しが無いとき、検査が失敗したときも、「問題なし」にせず終了コード2で止める。
+
 使い方: python3 ~/.claude/hooks/jp-doc-lint.py '<ファイル>'
+（--session <ID> は、jp-doc-review.py のフックが足す。レビュワーは書かない）
 """
+import importlib.util
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 HTML_SUFFIXES = {".html", ".htm"}
-LINTER_RELATIVE_PATHS = ("scripts/yomiyasu_lint.py", "skills/yomiyasu/scripts/yomiyasu_lint.py")
+# スキル本体の隣だけを探す。v2のsubmoduleのルートにも古い版が残るので、そちらは見ない
+LINTER_RELATIVE_PATHS = ("scripts/yomiyasu_lint.py",)
+CHECK_RELATIVE_PATH = "scripts/yomiyasu_check.py"
 LINTER_TIMEOUT_SECONDS = 20
+CHECK_TIMEOUT_SECONDS = 60
+SESSION_ID = re.compile(r"[A-Za-z0-9_-]+")  # jp-doc-review.py の session_key が返す文字だけ
 EXIT_CANNOT_CHECK = 2
 # この要素の始まりと終わりで行を分ける。1行のHTMLでも、文の区切りを崩さないため
 BLOCK_TAGS = {
@@ -71,9 +84,13 @@ def html_to_text(html: str) -> str:
     return "\n".join(line for line in lines if line) + "\n"
 
 
-def find_linter() -> Path:
+def yomiyasu_skill() -> Path:
     override = os.environ.get("JP_DOC_REVIEW_YOMIYASU_SKILL")
-    skill = Path(override) if override else Path.home() / ".claude" / "skills" / "yomiyasu" / "SKILL.md"
+    return Path(override) if override else Path.home() / ".claude" / "skills" / "yomiyasu" / "SKILL.md"
+
+
+def find_linter() -> Path:
+    skill = yomiyasu_skill()
     for relative in LINTER_RELATIVE_PATHS:
         candidate = skill.parent / relative
         if candidate.is_file():
@@ -94,7 +111,7 @@ def run_linter(text: str) -> dict:
     try:
         result = json.loads(completed.stdout)
         char_count = result["metrics"]["char_count"]
-        result["findings"], result["score"]
+        result["findings"], result["rule_penalty_score"]  # v2で score から改名された
     except (ValueError, KeyError, TypeError) as error:
         raise CannotCheck(f"リンターの出力を読めなかった（{type(error).__name__}）") from error
     if char_count == 0:
@@ -107,7 +124,7 @@ def render(result: dict, converted: bool) -> str:
     if converted:
         lines.append("HTMLをテキストに直して検査した。行番号は直した後のテキストの行で、下書きの行とは一致しない。")
     metrics = result["metrics"]
-    lines.append(f"スコア: {result['score']}/100 ・文字数: {metrics['char_count']}")
+    lines.append(f"スコア: {result['rule_penalty_score']}/100 ・文字数: {metrics['char_count']}")
     findings = result["findings"]
     if not findings:
         lines.append("[PASS] 指摘なし")
@@ -117,11 +134,66 @@ def render(result: dict, converted: bool) -> str:
     return "\n".join(lines)
 
 
+def _sources():
+    spec = importlib.util.spec_from_file_location("jp_doc_sources", Path(__file__).resolve().parent / "jp_doc_sources.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def run_diff_check(path: Path, converted: bool, session: Optional[str]) -> str:
+    """原文の写しと今のファイルで yomiyasu_check.py run --no-record を実行し、その出力を返す。"""
+    if session is None:
+        raise CannotCheck("セッションが渡されていない（フックを通さずに呼ばれた）")
+    sources = _sources()
+    snapshot = sources.find_snapshot(os.path.realpath(path), session)
+    if snapshot is None:
+        raise CannotCheck("原文の写しが無い（レビュワーの起動時に写しを取れなかったか、依頼文にこのファイルが無い）")
+    check = yomiyasu_skill().parent / CHECK_RELATIVE_PATH
+    if not check.is_file():
+        raise CannotCheck(f"yomiyasuの検査スクリプトが {check.parent} に見つからない")
+    sources.sources_dir().mkdir(mode=0o700, parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(dir=sources.sources_dir(), prefix=".check-"))  # 0700で作られる
+    try:
+        suffix = ".txt" if converted else path.suffix
+        texts = {"source": snapshot.read_text(encoding="utf-8"), "final": path.read_text(encoding="utf-8")}
+        files = {}
+        for name, text in texts.items():
+            files[name] = work / f"{name}{suffix}"
+            files[name].write_text(html_to_text(text) if converted else text, encoding="utf-8")
+        try:
+            completed = subprocess.run(
+                [sys.executable, str(check), "run", "--no-record", "--source", str(files["source"]),
+                 "--final", str(files["final"])],
+                capture_output=True, text=True, timeout=CHECK_TIMEOUT_SECONDS, cwd=work,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise CannotCheck(f"検査スクリプトが{CHECK_TIMEOUT_SECONDS}秒で終わらなかった") from error
+    except (OSError, UnicodeDecodeError) as error:
+        raise CannotCheck(f"原文の写しか今のファイルを読めなかった（{type(error).__name__}）") from error
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    if completed.returncode not in (0, 1):  # 1は --fail-on に当たったとき。ここでは付けないが、実行はできている
+        raise CannotCheck(f"検査スクリプトが終了コード{completed.returncode}で終わった: {completed.stderr.strip()[-300:]}")
+    return completed.stdout.rstrip()
+
+
+def parse_args(argv: List[str]) -> Optional[tuple]:
+    """<ファイル> か <ファイル> --session <ID> を受け取る。それ以外は None。"""
+    if len(argv) == 2:
+        return Path(argv[1]), None
+    if len(argv) == 4 and argv[2] == "--session" and SESSION_ID.fullmatch(argv[3]):
+        return Path(argv[1]), argv[3]
+    return None
+
+
 def main(argv: List[str]) -> int:
-    if len(argv) != 2:
+    parsed = parse_args(argv)
+    if parsed is None:
         print(f"使い方: {Path(argv[0]).name} <ファイル>", file=sys.stderr)
         return EXIT_CANNOT_CHECK
-    path = Path(argv[1])
+    path, session = parsed
+    status = 0
     try:
         try:
             content = path.read_text(encoding="utf-8")
@@ -133,7 +205,13 @@ def main(argv: List[str]) -> int:
         print(f"[ERROR] 検査できなかった: {error}。「指摘なし」として扱わず、報告に書くこと。")
         return EXIT_CANNOT_CHECK
     print(render(result, converted))
-    return 0
+    print("\n## 差分の検査")
+    try:
+        print(run_diff_check(path, converted, session))
+    except CannotCheck as error:
+        print(f"[ERROR] 差分の検査を実行できなかった: {error}。「指摘なし」として扱わず、報告に書くこと。")
+        status = EXIT_CANNOT_CHECK
+    return status
 
 
 if __name__ == "__main__":

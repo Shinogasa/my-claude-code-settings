@@ -5,7 +5,10 @@
 
 実行: python3 -m unittest tests.test_jp_doc_lint
 """
+import hashlib
+import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -34,10 +37,35 @@ class WrapperCase(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
-    def run_wrapper(self, *args):
-        env = {**os.environ, "JP_DOC_REVIEW_YOMIYASU_SKILL": str(self.skill)}
-        return subprocess.run([sys.executable, str(WRAPPER), *map(str, args)],
-                              capture_output=True, text=True, env=env, timeout=30)
+    def snapshot(self, path, text=None, session="t"):
+        """フックが依頼の時点で取る原文の写しを置く。text を省くと、今の中身をそのまま写す。"""
+        digest = hashlib.sha256(os.path.realpath(path).encode("utf-8")).hexdigest()[:16]
+        target = self.base / "state" / "sources" / session / digest
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(Path(path).read_text(encoding="utf-8") if text is None else text, encoding="utf-8")
+        return target
+
+    def run_wrapper(self, *args, session="t", with_snapshot=True):
+        """フックを通したときと同じく --session を足して呼ぶ。原文の写しは、既定で今の中身と同じものを置く。"""
+        if args and session and with_snapshot and Path(args[0]).is_file() and not self.snapshot_exists(args[0], session):
+            self.snapshot(args[0], session=session)
+        extra = ["--session", session] if args and session else []
+        env = {**os.environ, "JP_DOC_REVIEW_YOMIYASU_SKILL": str(self.skill),
+               "JP_DOC_REVIEW_STATE_DIR": str(self.base / "state")}
+        return subprocess.run([sys.executable, str(WRAPPER), *map(str, args), *extra],
+                              capture_output=True, text=True, env=env, timeout=60, cwd=self.base)
+
+    def snapshot_exists(self, path, session):
+        digest = hashlib.sha256(os.path.realpath(path).encode("utf-8")).hexdigest()[:16]
+        return (self.base / "state" / "sources" / session / digest).is_file()
+
+    def fake_check(self, body):
+        """本物のスクリプトを写した置き場の yomiyasu_check.py だけを偽物にし、そのSKILL.mdを指す。"""
+        fake = self.base / "fake-skill"
+        shutil.copytree(REAL_SKILL.parent / "scripts", fake / "scripts")
+        (fake / "scripts" / "yomiyasu_check.py").write_text(body, encoding="utf-8")
+        self.skill = fake / "SKILL.md"
+        self.skill.write_text("", encoding="utf-8")
 
     def fake_linter(self, body):
         """scripts/yomiyasu_lint.py に偽物を置き、そのSKILL.mdを指す。"""
@@ -46,6 +74,19 @@ class WrapperCase(unittest.TestCase):
         script.write_text(body, encoding="utf-8")
         self.skill = self.base / "fake" / "SKILL.md"
         self.skill.write_text("", encoding="utf-8")
+
+
+class LinterLocationTests(WrapperCase):
+    def test_nested_linter_path_is_not_searched(self):
+        # v2のsubmoduleのルートには古い版のリンターも残る。スキル本体の隣の scripts/ だけを探す
+        script = self.base / "fake" / "skills" / "yomiyasu" / "scripts" / "yomiyasu_lint.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("print('{}')", encoding="utf-8")
+        self.skill = self.base / "fake" / "SKILL.md"
+        self.skill.write_text("", encoding="utf-8")
+        result = self.run_wrapper(self.write("a.md", SLOP_SENTENCE + "\n"))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("見つからない", result.stdout)
 
 
 class HtmlTests(WrapperCase):
@@ -93,6 +134,82 @@ class MarkdownTests(WrapperCase):
         result = self.run_wrapper(self.write("a.md", f"<p>{SLOP_SENTENCE}</p>\n"))
         self.assertEqual(result.returncode, 2)
         self.assertIn(CANNOT_CHECK, result.stdout + result.stderr)
+
+
+class DiffCheckTests(WrapperCase):
+    RECORD_ARGS = ("import json, os, sys\n"
+                   "out = os.environ['JP_DOC_REVIEW_STATE_DIR'] + '/args.json'\n"
+                   "files = {a: open(a, encoding='utf-8').read() for a in sys.argv[1:] if os.path.isfile(a)}\n"
+                   "json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'files': files}, open(out, 'w'))\n"
+                   "print('偽の検査')\n")
+
+    def recorded(self):
+        return json.loads((self.base / "state" / "args.json").read_text(encoding="utf-8"))
+
+    def test_diff_check_runs_with_snapshot(self):
+        doc = self.write("a.md", "新しい設定は来月から有効になる。\n")
+        self.snapshot(doc, "新しい設定は来月から有効になるとされる。\n", session="s1")
+        result = self.run_wrapper(doc, session="s1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("## 差分の検査", result.stdout)
+        self.assertIn("伝聞（とされる）", result.stdout)
+
+    def test_diff_check_without_snapshot_cannot_check(self):
+        result = self.run_wrapper(self.write("a.md", SLOP_SENTENCE + "\n"), with_snapshot=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("手触り", result.stdout)  # lint の結果は出す
+        self.assertIn("差分の検査を実行できなかった", result.stdout)
+
+    def test_diff_check_without_session_cannot_check(self):
+        doc = self.write("a.md", SLOP_SENTENCE + "\n")
+        self.snapshot(doc)
+        result = self.run_wrapper(doc, session=None)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("差分の検査を実行できなかった", result.stdout)
+
+    def test_other_session_snapshot_is_not_used(self):
+        doc = self.write("a.md", SLOP_SENTENCE + "\n")
+        self.snapshot(doc, session="s2")
+        result = self.run_wrapper(doc, session="s1", with_snapshot=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("差分の検査を実行できなかった", result.stdout)
+
+    def test_unsafe_session_is_rejected(self):
+        doc = self.write("a.md", SLOP_SENTENCE + "\n")
+        result = self.run_wrapper(doc, session="../x", with_snapshot=False)
+        self.assertEqual(result.returncode, 2)
+
+    def test_diff_check_passes_no_record(self):
+        self.fake_check(self.RECORD_ARGS)
+        doc = self.write("a.md", SLOP_SENTENCE + "\n")
+        result = self.run_wrapper(doc)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        argv = self.recorded()["argv"]
+        self.assertEqual(argv[0], "run")
+        for flag in ("--no-record", "--source", "--final"):
+            self.assertIn(flag, argv)
+        self.assertNotIn("verify", argv)
+        self.assertNotEqual(os.path.realpath(self.recorded()["cwd"]), os.path.realpath(self.base))
+        self.assertFalse((self.base / ".yomiyasu").exists())
+
+    def test_html_draft_is_converted_for_diff(self):
+        self.fake_check(self.RECORD_ARGS)
+        draft = self.write("d.html", f"<p>{SLOP_SENTENCE}</p>\n")
+        self.snapshot(draft, "<p>元の文です。</p>\n")
+        result = self.run_wrapper(draft)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        files = self.recorded()["files"]
+        self.assertEqual(len(files), 2)
+        for path, text in files.items():
+            with self.subTest(path=path):
+                self.assertNotIn("<p>", text)
+                self.assertFalse(Path(path).exists())  # 直したテキストの一時ファイルは残さない
+
+    def test_diff_check_failure_is_cannot_check(self):
+        self.fake_check("import sys\nsys.exit(3)\n")
+        result = self.run_wrapper(self.write("a.md", SLOP_SENTENCE + "\n"))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("差分の検査を実行できなかった", result.stdout)
 
 
 class FailureTests(WrapperCase):

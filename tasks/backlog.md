@@ -66,11 +66,14 @@ Stopの `decision: block` で作業を続けさせられる。ただし0.159.2�
 **決めること**: Claude Code用の `hooks/jp-doc-review.py` を共有するか、Codex用の入口を分けるか。
 `/hooks` で信頼されていないフックが通知なくスキップされる問題を、どう利用者に知らせるか。
 
-### P3: スキル一覧に `yomiyasu:yomiyasu` が重複して出る
+### P3: 日本語レビューの報告に出す「元 → 後」の対の上限を決め直す
 
-yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/` に入っている。
+yomiyasu v2対応（`docs/superpowers/specs/2026-10-22-yomiyasu-v2-design.md`）では、重要な直しだけを選び、件数の上限は設けなかった。
+今後どれだけ直しが出るかは予想できないためである。
 
-**決めること**: 上流に報告するか、こちらで重複を読み込まない設定にするか。
+**着手条件**: 1回の報告で対が10組を超えたとき。
+
+**決めること**: 上限の数と、超えた分の見せ方（件数だけ出す、など）。
 
 ### P3: レビュワーがリンターを実際に呼んだかを確かめる
 
@@ -1053,6 +1056,24 @@ submoduleがカバーするのは仕様（キー名、frontmatter、hookイベ�
 **決めること**: 比較の結果を受けて、`skills/claude-code-best-practice/SKILL.md` の参照表に公式ページを足すか。
 食い違いが出た項目について、公式に合わせるか、このリポジトリの方針を残すか（残すならADRに理由を書く）。
 
+### P3: superpowersプラグインを v7.0.1 へ上げる（marketplace待ち）
+
+2026-10-22の時点で、インストール済みは v7.0.0（`bb92a77`）、上流の最新は v7.0.1（`2ce8aa1`）。
+公式marketplace（`anthropics/claude-plugins-official` の `marketplace.json`）が `bb92a77` を固定しているので、`/plugin update` では上がらない。
+
+**着手条件**: marketplaceの固定が v7.0.1 以降に進んだとき。そのときは `/plugin update` で上げ、v7.0.0からの変更が
+このリポジトリの学習モードやworkflowの前提（`rules/`、`output-styles/`）と食い違わないかを確かめる。
+
+### P3: 更新の洗い出し（2026-10-22）で確かめられなかったもの
+
+submoduleとプラグインの更新を洗い出したとき、次は版を比べられなかった。「更新なし」ではなく「未確認」である。
+
+- `skills/backend-patterns`・`skills/coding-standards`（everything-claude-code 由来）、`skills/grill-me`: 上流から写したときのcommitを記録していない
+- Codexの `superpowers@openai-api-curated`（`codex/plugin-policy.json`）: 版を見ていない
+- `claude-md-management`・`learning-output-style`・`gopls-lsp`・`swift-lsp`: 1.0.0でSHAが無く、marketplaceの版と突き合わせられない
+
+**決めること**: 写したスキルを上流と比べるか、比べるなら写したcommitを記録する仕組み（READMEか、スキルの先頭のコメント）を作るか。
+
 ---
 
 ## リンク先のディレクトリへの混入
@@ -1074,6 +1095,14 @@ submoduleがカバーするのは仕様（キー名、frontmatter、hookイベ�
 ## 仕事の原則集
 
 `jp-doc-review` の課題は、上の「日本語文書レビュー（yomiyasu）の続き」にある（P1）。ここには重ねて書かない。
+
+### 原則レビューで、何に引っかかったのかが一目で分からない
+
+2026-10-22にユーザーから聞いた。原則レビュー（`principle-reviewer`）の結果を見ても、成果物のどの箇所が、どの原則に
+引っかかったのかがぱっと分からない。日本語レビューで同じ不満があり、yomiyasu v2対応（`docs/superpowers/specs/2026-10-22-yomiyasu-v2-design.md`）で
+「元 → 後」の対を見せる形にした。こちらはまだ手を付けていない。
+
+**決めること**: 引っかかった箇所の示し方（成果物の引用と原則名の対にするか、など）と、問いの数の上限。
 
 ### 原則集の basis を照合して公開する
 
