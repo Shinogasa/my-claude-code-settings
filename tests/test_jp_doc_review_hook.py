@@ -223,6 +223,15 @@ class PrReviewTests(HookCase):
         self.commit_file("tasks/todo.md", JP_LONG)
         self.assertEqual(self.pr(), (0, {}, ""))
 
+    def test_task_files_under_todo_dir_are_not_candidates(self):
+        self.commit_file("tasks/todo/fix-cert.md", JP_LONG)
+        self.assertEqual(self.pr(), (0, {}, ""))
+
+    def test_other_files_named_todo_dir_are_still_candidates(self):
+        # tasks/ の下でない todo/ は使い捨てではない
+        self.commit_file("docs/todo/plan.md", JP_LONG)
+        self.assertEqual(decision_of(self.pr()), "deny")
+
     def test_second_pr_create_passes_and_reports_missing_reviewer(self):
         self.commit_file("docs/a.md", JP_LONG)
         transcript = self.transcript({"type": "user", "message": {"content": "x"}})
