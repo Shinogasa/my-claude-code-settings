@@ -94,6 +94,10 @@ TDDの流れが終わるまで、これらのコミットをsquashしたり書�
 初回コミット（コミットが1つも無いリポジトリ）と detached HEAD は対象外。
 意図的に直接コミットする場合はユーザー自身が端末で実行する。
 
+ブランチを仕上げるときは、ローカルでmainへマージせず、pushしてPRを作る。superpowersの
+finishing-a-development-branch がローカルマージを選択肢に出しても、提示しない。
+保護ブランチ上の `git merge` も同じフックが止める（`--abort` / `--quit` と `git pull` は通す）。
+
 ### セッションの見つけやすさ（Claude Code）
 
 - worktreeへ移ったセッションは、`/resume` の初期表示に出ない。見つからないときは、`/resume` の画面で
