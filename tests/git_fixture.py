@@ -20,11 +20,16 @@ def git(cwd, *arguments):
             "HOME": home,
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_COUNT": "2",
+            # identが無いと、reflogを書く操作でgitがホスト名をmDNSで引き、並列時に5秒待つ。
+            "GIT_CONFIG_COUNT": "4",
             "GIT_CONFIG_KEY_0": "commit.gpgSign",
             "GIT_CONFIG_VALUE_0": "false",
             "GIT_CONFIG_KEY_1": "core.hooksPath",
             "GIT_CONFIG_VALUE_1": os.devnull,
+            "GIT_CONFIG_KEY_2": "user.email",
+            "GIT_CONFIG_VALUE_2": "fixture@example.invalid",
+            "GIT_CONFIG_KEY_3": "user.name",
+            "GIT_CONFIG_VALUE_3": "fixture",
         })
         return subprocess.run(
             ["git", "-C", str(cwd), *arguments],
