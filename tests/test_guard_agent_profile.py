@@ -199,6 +199,17 @@ class AgentProfileGuardTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertBlocked(command, self.claude_personal())
 
+    def test_blocks_wrapped_launches_with_option_values_or_command_strings(self):
+        # 2026-10-23 のセキュリティレビューで見つかった形。オプションの値や、1語にまとめたコマンド文字列に隠れる
+        for command in ("env -S'claude -p x'", "env -iS 'claude -p x'",
+                        "npm exec --package foo -- claude -p x", "npx -p foo -- claude -p x",
+                        "npm exec -c 'claude -p x'", "npx -c 'claude -p x'",
+                        "npm --prefix x exec claude -p x", "pnpm -C dir exec claude -p x",
+                        "script -q -c 'claude -p x' /dev/null", "script -F pipe claude -p x",
+                        "watch 'claude -p x'"):
+            with self.subTest(command=command):
+                self.assertBlocked(command, self.claude_personal())
+
     def test_package_manager_subcommands_without_agents_are_allowed(self):
         for command in ("npm exec -- prettier --check .", "pnpm dlx create-vite x", "watch ls", "env -S 'ls -l'"):
             with self.subTest(command=command):
