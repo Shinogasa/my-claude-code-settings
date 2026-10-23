@@ -19,8 +19,9 @@ __pycache__/
 # 使うペルソナは bin/persona が personas/ から書き写す。どれを使うかは人ごとの好みなので追跡しない。
 rules/persona.md
 
-# todo.md はタスクごとに使い捨てる一時ファイル (rules/task-management.md参照)。
+# todo.md と todo/ はタスクごとに使い捨てる一時ファイル (rules/task-management.md参照)。
 tasks/todo.md
+tasks/todo/
 
 # 親セッションの切替状態はsession固有であり、公開リポジトリへ記録しない。
 .superpowers/model-switch/

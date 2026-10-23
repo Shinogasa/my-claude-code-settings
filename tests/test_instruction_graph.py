@@ -29,6 +29,7 @@ SESSION_RULES = (
     "rules/output-formatting.md",
     "rules/persona.md",
     "rules/security-review-policy.md",
+    "rules/fix-completion-criteria.md",
 )
 
 # 生成物の rule と、setup.sh が既定で書き写す元

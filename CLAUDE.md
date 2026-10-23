@@ -39,6 +39,7 @@ skills / commands / rules / CLAUDE.md は、同じファイルを両ホストへ
 - `rules/output-formatting.md`
 - `rules/persona.md`
 - `rules/security-review-policy.md`
+- `rules/fix-completion-criteria.md`
 
 Markdownリンクは参照先への経路にすぎず、内容がコンテキストへ展開（transclusion）された
 証明にはならない。リンクの存在ではなく、ファイルを全文読んだことを確認する。
