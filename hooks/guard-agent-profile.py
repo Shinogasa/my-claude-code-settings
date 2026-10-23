@@ -26,6 +26,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -39,19 +40,29 @@ CLAUDE_SAFE_ARGS = (("--version",), ("-v",), ("--help",), ("-h",), ("doctor",),
 CODEX_SAFE_ARGS = (("--version",), ("-V",), ("--help",), ("-h",))
 # パスの一部（~/.claude/、~/.codex、claude.json、claude-headless）には反応しない
 AGENT_WORD_RE = re.compile(r"(?<![\w.])(claude|codex)(?![\w./-])", re.IGNORECASE)
+AGENTS = {"claude", "codex"}
+# env の短いフラグのうち、-S の前にまとめて書けるもの（値を取らない -i、-0、-v）
+ENV_SPLIT_SHORT_RE = re.compile(r"-[i0v]*S.*", re.DOTALL)
+# script の -c / --command と、-qc のようなまとめ書き
+SCRIPT_COMMAND_RE = re.compile(r"--command|-[a-zA-Z]*c")
 HEREDOC_START_RE = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([A-Za-z_][\w-]*)\2")
 UNRESOLVED_NAME_RE = re.compile(r"[$`*?\[{]")
 # 実際のコマンドの前に置かれ、後ろのコマンドを起動するもの。値を取るオプションも併記する
 WRAPPERS = {
     "timeout": {"-s", "--signal", "-k", "--kill-after"}, "gtimeout": {"-s", "--signal", "-k", "--kill-after"},
     "nice": {"-n", "--adjustment"}, "nohup": set(), "caffeinate": {"-t", "-w"}, "setsid": set(),
-    "stdbuf": {"-i", "-o", "-e"}, "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U"},
-    "xargs": {"-n", "-I", "-L", "-P", "-s", "-d", "-E", "-a", "--max-args", "--max-procs", "--delimiter"},
+    "stdbuf": {"-i", "-o", "-e"}, "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-R", "-U"},
+    "xargs": {"-n", "-I", "-J", "-L", "-P", "-R", "-S", "-s", "-d", "-E", "-a",
+              "--max-args", "--max-procs", "--delimiter"},
     "env": {"-C", "--chdir", "-S", "--split-string", "-u", "--unset"},
     "exec": {"-a"}, "time": set(), "command": set(), "builtin": set(),
+    "watch": {"-n", "--interval"}, "script": {"-t"},
 }
-TAKES_DURATION = {"timeout", "gtimeout"}
+# オプションの後ろに、コマンドの前の位置引数を1つ取るもの（timeout の時間、script の記録先のファイル）
+TAKES_ONE_ARGUMENT = {"timeout", "gtimeout", "script"}
 PACKAGE_RUNNERS = {"npx", "bunx", "pnpx"}
+# サブコマンドでパッケージを起動するもの（npm exec、pnpm dlx など）
+PACKAGE_RUNNER_SUBCOMMANDS = {"npm": {"exec", "x"}, "pnpm": {"dlx", "exec"}, "yarn": {"dlx", "exec"}, "bun": {"x"}}
 FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
 
 
@@ -148,6 +159,14 @@ def matching_paren(command: str, open_index: int) -> int:
     return len(command)
 
 
+def split_string(value: str) -> list:
+    """env -S の値を、env と同じように空白で分ける。分けられなければ1語のまま残す（後段が名前で判定する）。"""
+    try:
+        return shlex.split(value)
+    except ValueError:
+        return [value]
+
+
 def drop_env_unsets(raw: list):
     """`env -u NAME` と `env -i` を見て、CODEX_HOME を消すかどうかと、`-u NAME` を除いたトークン列を返す。"""
     cleared = False
@@ -164,7 +183,26 @@ def drop_env_unsets(raw: list):
             cleared = cleared or raw[index + 1] == "CODEX_HOME"
             index += 2
             continue
-        elif in_env and token in ("-C", "--chdir", "-S", "--split-string") and index + 1 < len(raw):
+        elif in_env and token in ("-S", "--split-string") and index + 1 < len(raw):
+            # 値をコマンドとして分けて実行する（env -S 'claude -p x'）。分けたトークンに置き換える
+            raw = raw[:index] + split_string(raw[index + 1]) + raw[index + 2:]
+            continue
+        elif in_env and ENV_SPLIT_SHORT_RE.fullmatch(token):
+            # 短いフラグのまとめ書き（-iS 'x'）と、値を続けた形（-S'x'）。S より後ろか次のトークンが値。
+            # S より前は値を取らないフラグに限る。-uSHELL は -u SHELL で、-S の形ではない
+            flags, value = token[1:].split("S", 1)
+            cleared = cleared or "i" in flags
+            if value:
+                raw = raw[:index] + split_string(value) + raw[index + 1:]
+            elif index + 1 < len(raw):
+                raw = raw[:index] + split_string(raw[index + 1]) + raw[index + 2:]
+            else:
+                index += 1
+            continue
+        elif in_env and token.startswith("--split-string="):
+            raw = raw[:index] + split_string(token.split("=", 1)[1]) + raw[index + 1:]
+            continue
+        elif in_env and token in ("-C", "--chdir") and index + 1 < len(raw):
             # 値を取るオプション。guard の前置き除去は値を読み飛ばさないので、ここで落とす
             index += 2
             continue
@@ -180,7 +218,43 @@ def drop_env_unsets(raw: list):
 
 
 def unwrap(tokens: list):
-    """前置き（timeout、xargs、npx、find -exec など）を剥がし、(名前, 引数) を返す。起動でなければ None。"""
+    """前置き（timeout、xargs、npx、find -exec など）を剥がし、(名前, 引数) を返す。起動でなければ None。
+
+    名前を読み切れなくても、前置きやパッケージの起動の後ろに次のものがあれば起動とみなす。
+    値を取るオプション（npx -p foo、script -c 'claude'）をすべて数え上げるのは無理なので、止める側に倒す。
+    - 先頭の語が claude / codex の、1語にまとめたコマンド文字列（watch 'claude -p x'、script -c 'claude'）
+    - パッケージの起動なら、claude / codex という単独の語（npx -p foo -- claude、npm --prefix x exec claude）
+    ただの引数（xargs grep claude、git log --grep=claude）では止めない。
+    """
+    result = unwrap_names(tokens)
+    if result is not None and result[0] in AGENTS:
+        return result
+    rest, is_package = launched_part(tokens)
+    for token in rest:
+        words = split_string(token) if any(char.isspace() for char in token) else []
+        if words and os.path.basename(words[0]).lower() in AGENTS:
+            return os.path.basename(words[0]).lower(), words[1:]
+        if is_package and os.path.basename(token).lower() in AGENTS:
+            return os.path.basename(token).lower(), []
+    return result
+
+
+def launched_part(tokens: list):
+    """最初の前置き・パッケージの起動より後ろのトークンと、パッケージの起動かどうか。無ければ ([], False)。"""
+    for index, token in enumerate(tokens):
+        name = os.path.basename(token).lower()
+        subcommands = PACKAGE_RUNNER_SUBCOMMANDS.get(name, ())
+        if name in PACKAGE_RUNNERS or any(t in subcommands for t in tokens[index + 1:]):
+            return tokens[index + 1:], True
+        if name in WRAPPERS:
+            return tokens[index + 1:], False
+        if not ("=" in token and not token.startswith("-")):
+            return [], False
+    return [], False
+
+
+def unwrap_names(tokens: list):
+    """前置きを剥がして、起動する名前と引数を読む。"""
     index = 0
     while index < len(tokens):
         name = os.path.basename(tokens[index]).lower()
@@ -191,13 +265,17 @@ def unwrap(tokens: list):
             while index < len(tokens) and (tokens[index].startswith("-") or (name == "env" and "=" in tokens[index])):
                 option = tokens[index]
                 index += 1
+                if name == "script" and SCRIPT_COMMAND_RE.fullmatch(option) and index < len(tokens):
+                    # util-linux の script -c CMD は、値をコマンドとして実行する
+                    return unwrap_names(split_string(tokens[index]))
                 if option in WRAPPERS[name] and index < len(tokens):
                     index += 1
-            if name in TAKES_DURATION and index < len(tokens):
+            if name in TAKES_ONE_ARGUMENT and index < len(tokens):
                 index += 1
             continue
-        if name in PACKAGE_RUNNERS:
-            index += 1
+        if name in PACKAGE_RUNNERS or (index + 1 < len(tokens)
+                                       and tokens[index + 1] in PACKAGE_RUNNER_SUBCOMMANDS.get(name, ())):
+            index += 1 if name in PACKAGE_RUNNERS else 2
             while index < len(tokens) and tokens[index].startswith("-"):
                 index += 1
             if index >= len(tokens):
@@ -207,11 +285,12 @@ def unwrap(tokens: list):
                 return "claude", tokens[index + 1:]
             if re.search(r"(^|/)codex(@|$)", package):
                 return "codex", tokens[index + 1:]
-            return None
+            # パッケージ名でなく、入っているコマンドの名前のこともある（pnpm exec claude、npm exec --package=X -- claude）
+            return unwrap_names(tokens[index:])
         if name == "find":
             for position in range(index + 1, len(tokens)):
                 if tokens[position] in FIND_EXEC:
-                    return unwrap(tokens[position + 1:])
+                    return unwrap_names(tokens[position + 1:])
             return None
         return name, tokens[index + 1:]
     return None

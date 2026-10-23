@@ -189,6 +189,52 @@ class AgentProfileGuardTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertBlocked(command, self.env(CLAUDE_PROFILE="personal"))
 
+    def test_blocks_more_wrapped_launches(self):
+        # 2026-10-23 の調査で見逃していた起動の形
+        for command in ("npm exec -- @anthropic-ai/claude-code -p x", "npm x @anthropic-ai/claude-code -p x",
+                        "pnpm dlx @anthropic-ai/claude-code -p x", "yarn dlx @anthropic-ai/claude-code -p x",
+                        "script -q /dev/null claude -p x", "watch claude -p x", "watch -n 5 claude -p x",
+                        "env -S 'claude -p hi'", "env --split-string='claude -p hi'",
+                        "pnpm exec claude -p x", "npm exec --package=@anthropic-ai/claude-code -- claude -p x"):
+            with self.subTest(command=command):
+                self.assertBlocked(command, self.claude_personal())
+
+    def test_blocks_wrapped_launches_with_option_values_or_command_strings(self):
+        # 2026-10-23 のセキュリティレビューで見つかった形。オプションの値や、1語にまとめたコマンド文字列に隠れる
+        for command in ("env -S'claude -p x'", "env -iS 'claude -p x'",
+                        "npm exec --package foo -- claude -p x", "npx -p foo -- claude -p x",
+                        "npm exec -c 'claude -p x'", "npx -c 'claude -p x'",
+                        "npm --prefix x exec claude -p x", "pnpm -C dir exec claude -p x",
+                        "script -q -c 'claude -p x' /dev/null", "script -F pipe claude -p x",
+                        "watch 'claude -p x'"):
+            with self.subTest(command=command):
+                self.assertBlocked(command, self.claude_personal())
+
+    def test_wrapper_options_with_values_are_skipped(self):
+        # 値を取るのに表に無かったオプション（自動のセキュリティレビューの指摘）
+        for command in ("xargs -J % claude -p %", "xargs -R 2 claude -p", "xargs -S 512 claude -p",
+                        "sudo -T 60 claude -p x", "sudo -R /x claude -p x",
+                        "script -c claude /dev/null", "script -qc 'claude -p x' /dev/null"):
+            with self.subTest(command=command):
+                self.assertBlocked(command, self.claude_personal())
+
+    def test_env_unset_with_capital_s_is_not_read_as_split_string(self):
+        # -uSHELL は -u SHELL。S より前がフラグでなければ -S の形ではない
+        self.assertBlocked("env -uSHELL claude -p x", self.claude_personal())
+
+    def test_agent_words_as_arguments_of_wrapped_commands_are_allowed(self):
+        # 前置きの後ろに語があるだけでは起動ではない（セキュリティレビューの指摘した誤検知）
+        for command in ("xargs grep claude", "time grep -ri codex .", "timeout 30 git log --grep=claude",
+                        'time git commit -m "update codex docs"', "watch -n 5 'pgrep claude'",
+                        'nohup gh pr create --title "fix claude hook"'):
+            with self.subTest(command=command):
+                self.assertAllowed(command, self.claude_personal())
+
+    def test_package_manager_subcommands_without_agents_are_allowed(self):
+        for command in ("npm exec -- prettier --check .", "pnpm dlx create-vite x", "watch ls", "env -S 'ls -l'"):
+            with self.subTest(command=command):
+                self.assertAllowed(command, self.claude_personal())
+
     def test_blocks_unresolvable_command_names_mentioning_agents(self):
         for command in ("c=claude; $c -p x", '"${CLAUDE_BIN:-claude}" -p x',
                         "$(command -v claude) -p x", "~/.local/bin/clau?e -p x"):

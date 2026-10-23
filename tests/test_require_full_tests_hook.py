@@ -171,6 +171,20 @@ class RequireFullTestsHookTests(unittest.TestCase):
         result = run_hook('cd "$HOME/somewhere" && gh pr create --fill', other)
         self.assertEqual(decision(result), "deny", result.stdout + result.stderr)
 
+    def test_pr_creation_without_cwd_is_denied(self):
+        # PR 作成と分かった後で cwd が無いのは、検査できなかったのであって問題なしではない（2026-10-23 の調査）
+        payload = {"tool_name": "Bash", "tool_input": {"command": "gh pr create --fill"}}
+        result = subprocess.run(["python3", str(HOOK)], input=json.dumps(payload), text=True,
+                                capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(decision(result), "deny", result.stdout + result.stderr)
+
+    def test_other_commands_without_cwd_pass(self):
+        payload = {"tool_name": "Bash", "tool_input": {"command": "git status"}}
+        result = subprocess.run(["python3", str(HOOK)], input=json.dumps(payload), text=True,
+                                capture_output=True, check=False)
+        self.assertIsNone(decision(result))
+
     def test_pr_creation_through_rtk_is_checked(self):
         # rtk hook claude はコマンドを rtk gh ... へ書き換える。書き換え後を受け取っても判定する
         repository = make_repository(self.base)
