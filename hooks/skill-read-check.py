@@ -74,8 +74,13 @@ def read_paths(entries: List[dict], whole_only: bool = False) -> Set[str]:
         real(tool_input["file_path"])
         for name, tool_input in tool_uses(entries)
         if name == "Read" and isinstance(tool_input.get("file_path"), str)
-        and not (whole_only and (tool_input.get("offset") is not None or tool_input.get("limit") is not None))
+        and not (whole_only and is_partial_read(tool_input))
     }
+
+
+def is_partial_read(tool_input: dict) -> bool:
+    """limit を付けたか、2行目以降から読み始めた Read。先頭から limit 無しなら全文になる。"""
+    return tool_input.get("limit") is not None or tool_input.get("offset") not in (None, 0, 1)
 
 
 def invoked_skills(manifest: Dict[str, dict], window: List[dict]) -> List[str]:

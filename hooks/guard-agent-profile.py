@@ -40,6 +40,7 @@ CLAUDE_SAFE_ARGS = (("--version",), ("-v",), ("--help",), ("-h",), ("doctor",),
 CODEX_SAFE_ARGS = (("--version",), ("-V",), ("--help",), ("-h",))
 # パスの一部（~/.claude/、~/.codex、claude.json、claude-headless）には反応しない
 AGENT_WORD_RE = re.compile(r"(?<![\w.])(claude|codex)(?![\w./-])", re.IGNORECASE)
+AGENTS = {"claude", "codex"}
 HEREDOC_START_RE = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([A-Za-z_][\w-]*)\2")
 UNRESOLVED_NAME_RE = re.compile(r"[$`*?\[{]")
 # 実際のコマンドの前に置かれ、後ろのコマンドを起動するもの。値を取るオプションも併記する
@@ -181,6 +182,17 @@ def drop_env_unsets(raw: list):
             # 値をコマンドとして分けて実行する（env -S 'claude -p x'）。分けたトークンに置き換える
             raw = raw[:index] + split_string(raw[index + 1]) + raw[index + 2:]
             continue
+        elif in_env and not token.startswith("--") and token.startswith("-") and "S" in token[1:]:
+            # 短いフラグのまとめ書き（-iS 'x'）と、値を続けた形（-S'x'）。S より後ろか次のトークンが値
+            flags, value = token[1:].split("S", 1)
+            cleared = cleared or "i" in flags
+            if value:
+                raw = raw[:index] + split_string(value) + raw[index + 1:]
+            elif index + 1 < len(raw):
+                raw = raw[:index] + split_string(raw[index + 1]) + raw[index + 2:]
+            else:
+                index += 1
+            continue
         elif in_env and token.startswith("--split-string="):
             raw = raw[:index] + split_string(token.split("=", 1)[1]) + raw[index + 1:]
             continue
@@ -200,7 +212,37 @@ def drop_env_unsets(raw: list):
 
 
 def unwrap(tokens: list):
-    """前置き（timeout、xargs、npx、find -exec など）を剥がし、(名前, 引数) を返す。起動でなければ None。"""
+    """前置き（timeout、xargs、npx、find -exec など）を剥がし、(名前, 引数) を返す。起動でなければ None。
+
+    前置きやパッケージの起動の後ろに claude / codex の語が残っていれば、名前を読み切れなくても起動とみなす。
+    値を取るオプション（npx -p foo、script -c 'claude'）や、1語にまとめたコマンド文字列（watch 'claude -p x'）を
+    すべて数え上げるのは無理なので、止める側に倒す。
+    """
+    result = unwrap_names(tokens)
+    if result is not None and result[0] in AGENTS:
+        return result
+    rest = launched_part(tokens)
+    if rest:
+        found = AGENT_WORD_RE.search(" ".join(rest))
+        if found:
+            return found.group(1).lower(), []
+    return result
+
+
+def launched_part(tokens: list) -> list:
+    """最初の前置き・パッケージの起動より後ろのトークン。無ければ空。"""
+    for index, token in enumerate(tokens):
+        name = os.path.basename(token).lower()
+        subcommands = PACKAGE_RUNNER_SUBCOMMANDS.get(name, ())
+        if name in WRAPPERS or name in PACKAGE_RUNNERS or any(t in subcommands for t in tokens[index + 1:]):
+            return tokens[index + 1:]
+        if not ("=" in token and not token.startswith("-")):
+            return []
+    return []
+
+
+def unwrap_names(tokens: list):
+    """前置きを剥がして、起動する名前と引数を読む。"""
     index = 0
     while index < len(tokens):
         name = os.path.basename(tokens[index]).lower()
@@ -229,11 +271,11 @@ def unwrap(tokens: list):
             if re.search(r"(^|/)codex(@|$)", package):
                 return "codex", tokens[index + 1:]
             # パッケージ名でなく、入っているコマンドの名前のこともある（pnpm exec claude、npm exec --package=X -- claude）
-            return unwrap(tokens[index:])
+            return unwrap_names(tokens[index:])
         if name == "find":
             for position in range(index + 1, len(tokens)):
                 if tokens[position] in FIND_EXEC:
-                    return unwrap(tokens[position + 1:])
+                    return unwrap_names(tokens[position + 1:])
             return None
         return name, tokens[index + 1:]
     return None
