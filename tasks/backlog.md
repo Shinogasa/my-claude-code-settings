@@ -35,31 +35,26 @@
 2026-10-23 に、サブエージェント2本が別々に原因を調べた（どちらも1回ずつの計測で、並列セッションの負荷で±10秒ほどぶれる）。
 既定の組は54秒、`--all` は100〜195秒だった。効果の大きい順に並べる。
 
-1. **git の ident をテストの fixture で与える**（変更は数行で、費用対効果が最大）
-   - `tests/git_fixture.py` は HOME を一時ディレクトリにし、`GIT_CONFIG_GLOBAL=/dev/null` で隔離している。そのため `user.email` がどこにも無い
-   - reflog を書く操作（`branch`・`worktree add`・`clone`）で、git がホスト名を mDNS で引きにいく。並列のときは5秒のタイムアウトを待つ。
-     `git worktree add` 1回が、逐次なら0.17秒、6〜9本の並列だと10〜15秒かかった。`EMAIL` を与えると0.03〜0.06秒になった
-   - 影響するのは `test_rtk_rewrite_hook`（setUp の `worktree add`）、`test_warn_branch_behind_main`（`user.email` を設定する前の `clone`）、
-     `test_setup_cli` の `make_worktree_repository`
-   - `EMAIL` を外から与えて代用した計測では、既定の組が54秒から32秒になった
-2. **`copy_repository` を APFS の clonefile（`cp -c -p -R -P`）にする**
+最大の原因（git の ident が無く、並列時に mDNS で5秒待つ）は、2026-10-23 に `tests/git_fixture.py` で直した。既定の組は66秒から43秒になった。
+
+1. **`copy_repository` を APFS の clonefile（`cp -c -p -R -P`）にする**
    - setup 系のテストは毎回、約460ファイルを `shutil.copytree` でコピーする。12並列だと、1回が全プロセスそろって8.6〜9.2秒になる
      （ADR 0029 は XProtect などのスキャン待ちと推定しているが、未確認）
-   - pytest プラグインで差し替えて計測すると、`--all` が100秒から74秒になり、1と合わせると67秒だった。別の計測では195秒から71秒だった
+   - pytest プラグインで差し替えて計測すると、`--all` が100秒から74秒になり、ident の修正と合わせると67秒だった。別の計測では195秒から71秒だった
    - clonefile は copy-on-write なので、ADR 0029 がハードリンク案を却下した理由（コピー先への書き込みが元を書き換える）は当たらない
    - `cp -c` は macOS 専用。一時ディレクトリが別のボリュームにある場合や Linux では、`shutil.copytree` に戻す処理が要る。
      上の「テストの一時リポジトリを、ignoreされたファイル抜きで作る」と同じ関数を直すので、まとめて扱うとよい
-3. **新しく作った実行ファイルの初回起動を減らす**: 1回110〜340msかかり、システム全体で一列に並ぶ。
+2. **新しく作った実行ファイルの初回起動を減らす**: 1回110〜340msかかり、システム全体で一列に並ぶ。
    スタブをワーカーごとに1回だけ作り、各テストには symlink を置くと、1の上に重ねて setup 系が48秒から44秒になった
-4. **`setup.sh` の外部コマンドを減らす**: 1回の実行で `python3` が62回（うち26回は `setup.sh:190` の normpath）、`dirname` が約260回起動する。
+3. **`setup.sh` の外部コマンドを減らす**: 1回の実行で `python3` が62回（うち26回は `setup.sh:190` の normpath）、`dirname` が約260回起動する。
    一括処理とパラメータ展開に替えると、1回あたり約20%短くなる見込み（未計測）。本番のコードを変える
-5. **フックのタイムアウトを待つテスト**（principle-review の10秒、guard-dangerous-bash の3秒×4件）。実時間への影響は約2秒で、割に合わない
+4. **フックのタイムアウトを待つテスト**（principle-review の10秒、guard-dangerous-bash の3秒×4件）。実時間への影響は約2秒で、割に合わない
 
 ついでに、次の小さなずれも見つかった。
 - README のテスト時間の目安（既定の組で約1分、`--all` で約4分）が、実測（54秒、100秒）とずれている
 - `tests/test_guard_dangerous_bash.py` の `'git commit -m x\; --no-verify'` で `SyntaxWarning: invalid escape sequence` が出る
 
-**決めること**: 1と2をやるか。1は数行なので、着手条件を待たずにやってもよい。3〜5は1と2の後に効果を測り直してから決める。
+**決めること**: 1をやるか。2〜4は1の後に効果を測り直してから決める。
 **着手条件**: 未定（2026-10-23に積んだ）。
 
 ### `tasks/lessons.md` の役割を決め直す
@@ -734,17 +729,29 @@ fetch 直後でも競合しうる）。フックの層では原理的に見切�
 
 **着手条件**: この経路での取りこぼしを観測したとき。
 
-### `warn-branch-behind-main` が、前置きの付いた `terraform apply` を止めない（2026-10-23 の調査）
+### `warn-branch-behind-main` が、https のリモートで fetch が止まると通る（2026-10-23 の調査）
 
-深刻度は中で、terraform を扱うリポジトリでは高。再現済み。
+深刻度は低。未再現。fetch の時間を制限しているのは `GIT_SSH_COMMAND` の ConnectTimeout だけなので、
+https のリモートで fetch が止まると、フック全体のタイムアウト（Claude 30秒、Codex 10秒）に達し、止めずに通る。
+同じ調査で見つかった前置き（`rtk` など）と `tofu` の件は、2026-10-23 に直した。
 
-- `rtk terraform apply`、`AWS_PROFILE=dev terraform apply`、`env terraform apply`、`time terraform apply` は、遅れたブランチでも何も出さずに通る。
-  判定（`tf_prefix`）が、行頭か `;&|(` の直後の `terraform` しか見ていないため
-- `codex/RTK.md` が Codex に「すべてのシェルコマンドに rtk を付ける」と指示している。そのため、**Codex では通常の書き方で apply の deny が効かない**
-- ほかに、`tofu apply` は対象外（再現済み）。https のリモートで fetch が止まるとフック全体のタイムアウトに達して通る（未再現）
+**決めること**: fetch 全体の時間を制限するか（`timeout(1)` が無い環境への備えが要る）、制約として受け入れるか。
+**着手条件**: https のリモートで terraform を扱うリポジトリが出たとき。
 
-**決めること**: 前置きの除去を guard-dangerous-bash と同じ処理（`strip_prefixes`）に寄せるか、このフックの中で足すか。`tofu` を対象に入れるか。
-**着手条件**: 未定（2026-10-23に積んだ）。Codex で terraform を扱う前には直したい。
+### `warn-branch-behind-main` の正規表現で読み飛ばせない書き方（2026-10-23 のセキュリティレビュー）
+
+前置き（`rtk`・`env`・代入など）は読み飛ばすようにしたが、正規表現1本の判定なので、次は遅れたブランチでも通る（再現済み）。
+guard-dangerous-bash にも、これらすべてと同じ穴がある（上の「入れ子のシェルと環境変数で判定対象を見失う」と同じ部類）。
+
+- 値を取る前置きのオプション: `env -u AWS_PROFILE terraform apply`、`time -f %e terraform apply`、`exec -a name terraform apply`
+- コマンド名の別表記: `/usr/local/bin/terraform apply`、`./terraform apply`、`\terraform apply`、`"terraform" apply`
+- リダイレクトの前置き: `2>&1 terraform apply`
+- 1行に収まらない形: 行継続（`terraform \` の次の行に `apply`）、バッククォートの中
+- 対象のサブコマンドに `taint` / `untaint` / `force-unlock` / `workspace` が無い
+- 誤検知（安全側）: 引用符の中の `; terraform apply` や、ヒアドキュメントの行頭の `then terraform apply` などでも止まる
+
+**決めること**: 前置きの解析を guard-dangerous-bash の Python の解析と共有するか（2026-10-23 には、このフックの正規表現を広げる案を採った）。
+**着手条件**: この経路での取りこぼしを観測したとき、または guard の解析を共通モジュールへ切り出すとき。
 
 ### Codex の `apply_patch` で、パッチの本文を Bash のコマンドとして検査してしまう（2026-10-23 の調査）
 

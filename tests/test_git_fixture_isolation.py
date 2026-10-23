@@ -78,6 +78,19 @@ class GitFixtureIsolationTests(unittest.TestCase):
                 )
                 self.assertEqual(subjects.stdout.split(), [expected])
 
+    def test_fixture_gives_committer_ident(self):
+        """ident を設定で与え、git にホスト名から作らせない。
+
+        reflog を書く操作（worktree add・clone）で、git がホスト名を mDNS で引き、
+        並列実行のときは5秒のタイムアウトを待っていた（2026-10-23 の調査）。
+        """
+        from tests.git_fixture import git
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            git(repo, "init", "-q")
+            ident = git(repo, "var", "GIT_COMMITTER_IDENT").stdout
+            self.assertIn("<fixture@example.invalid>", ident)
+
 
 if __name__ == "__main__":
     unittest.main()
