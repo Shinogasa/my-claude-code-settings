@@ -76,6 +76,7 @@ cd を信じすぎると、実際のコミット先ではない場所で判定�
 """
 import json
 import os
+import posixpath
 import re
 import shlex
 import subprocess
@@ -164,7 +165,8 @@ RM_RECURSIVE_SHORT = set("rR")
 RM_FORCE_SHORT = set("f")
 # rm の対象を / か ~ に寄せる正規化。$HOME/${HOME} は ~ と読み、末尾の / /. /* は落とす。
 HOME_VAR_RE = re.compile(r"^(\$HOME|\$\{HOME\})(?=/|$)")
-TRAILING_ROOT_PART_RE = re.compile(r"(/\.|/\*|/)$")
+TRAILING_ROOT_PART_RE = re.compile(r"(/\.?\*+|/\.|/)$")
+SHORT_FLAGS_RE = re.compile(r"[A-Za-z]+")
 DEV_TARGET_RE = re.compile(r"^/dev/sd[a-z]")
 # force push を表すフラグ。完全一致で "--force" と "-f" だけを見ていた頃は、
 # --force-with-lease / --force-with-lease=<ref>:<oid> / -uf が素通りしていた。
@@ -406,27 +408,40 @@ def short_cluster_has(token: str, flags: set, opts_with_value: set = frozenset()
     """まとめ書きした短いフラグ (-anm) に flags のどれかが含まれるか。
 
     値を取るフラグの後ろの文字は値なので、そこで読むのをやめる (-mn の n は値)。
+    値を取るフラグより前が ASCII の英字だけでなければ、フラグではなく値とみなす。
+    -m "- Add new feature" の値を -n を含むまとめ書きと読まないため。
     """
     if not token.startswith("-") or token.startswith("--") or len(token) < 2:
         return False
-    for char in token[1:]:
-        if char in flags:
-            return True
-        if char in opts_with_value:
-            return False
-    return False
+    body = token[1:]
+    end = next((i for i, char in enumerate(body) if char in opts_with_value), len(body))
+    head = body[:end]
+    return bool(SHORT_FLAGS_RE.fullmatch(head)) and any(char in flags for char in head)
 
 
-def is_root_or_home(target: str) -> bool:
-    """rm の対象が / か ~ そのもの（とその直下の全部）を指すか。"""
-    if not target:
-        return False
-    path = re.sub(r"/+", "/", HOME_VAR_RE.sub("~", target))
+def strip_trailing_root_parts(path: str) -> str:
     while True:
         shorter = TRAILING_ROOT_PART_RE.sub("", path)
         if shorter == path:
-            return path in ("", "~")
+            return path
         path = shorter
+
+
+def is_root_or_home(target: str) -> bool:
+    """rm の対象が / か ~ そのもの（とその直下の全部）か、.. でそれより上を指すか。"""
+    if not target:
+        return False
+    path = strip_trailing_root_parts(HOME_VAR_RE.sub("~", target))
+    if path in ("", "~"):
+        return True
+    if path.startswith("/"):
+        # normpath は先頭の // を残すので、末尾の部品を落とした後の空文字列で / を判定する
+        return strip_trailing_root_parts(posixpath.normpath(path)) == ""
+    if path.startswith("~/"):
+        # ~ を1つの部品として畳む。~/.. は "."、~/../.. は ".." になる
+        normalized = posixpath.normpath(path)
+        return normalized in ("~", ".") or normalized.startswith("..")
+    return False
 
 
 def is_rm_recursive_force(args: list) -> bool:
@@ -452,7 +467,7 @@ def is_dangerous(tokens: list) -> bool:
         # `git -C path reset --hard` のようにグローバルオプションを挟まれると
         # 直接比較では素通りするため。
         subcommand, args = extract_subcommand(tokens)
-        if subcommand == "reset" and "--hard" in args:
+        if subcommand == "reset" and any(is_long_option_prefix(a, "--hard") for a in args):
             return True
 
     for i, tok in enumerate(tokens[:-1]):
