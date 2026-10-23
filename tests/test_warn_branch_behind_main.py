@@ -8,6 +8,7 @@
 
 実行: python3 tests/test_warn_branch_behind_main.py
 """
+import importlib.util
 import json
 import subprocess
 import sys
@@ -22,6 +23,15 @@ else:
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOK = REPO_ROOT / "hooks" / "warn-branch-behind-main.sh"
+GUARD = REPO_ROOT / "hooks" / "guard-dangerous-bash.py"
+
+
+def guard_prefix_words():
+    """guard-dangerous-bash が判定の前に取り除く前置きの語。"""
+    spec = importlib.util.spec_from_file_location("guard_dangerous_bash", GUARD)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return set(module.PREFIX_WORDS)
 
 
 def run_hook(command, cwd):
@@ -136,6 +146,53 @@ class TestBehindBranch(unittest.TestCase):
 
     def test_unrelated_command_is_ignored(self):
         self.assertEqual(run_hook("ls -la", self.repo), "")
+
+    def test_prefixed_apply_is_denied(self):
+        # 行頭か ;&|( の直後の terraform しか見ていなかった頃は、どれも素通りしていた（2026-10-23）。
+        # Codex は codex/RTK.md の指示で全コマンドに rtk を付けるので、deny が効いていなかった
+        for command in ("rtk terraform apply", "AWS_PROFILE=dev terraform apply",
+                        "A=1 B=2 terraform apply", "env terraform apply",
+                        "env AWS_PROFILE=dev terraform apply", "time terraform apply",
+                        "time -p terraform apply", "cd . && rtk terraform destroy"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command, self.repo), "deny")
+
+    def test_guard_prefix_words_are_also_skipped(self):
+        # guard-dangerous-bash が取り除く前置きと、このフックが読み飛ばす前置きをそろえる。
+        # 片方にだけ足すと、もう片方が素通しになる（rtk で実際に起きた）
+        for word in sorted(guard_prefix_words() | {"rtk"}):
+            with self.subTest(word=word):
+                self.assertEqual(decision(f"{word} terraform apply", self.repo), "deny")
+
+    def test_rtk_proxy_is_skipped(self):
+        # guard-dangerous-bash の skip_rtk_wrapper と同じく `rtk [opts] proxy [opts]` を読み飛ばす
+        for command in ("rtk proxy terraform apply", "rtk -v proxy terraform destroy",
+                        "rtk proxy tofu apply"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command, self.repo), "deny")
+
+    def test_assignment_with_quoted_or_substituted_value_is_skipped(self):
+        # 値の途中の空白で代入が切れると、残りが前置きに当たらず素通りしていた（セキュリティレビュー）
+        for command in ('AWS_PROFILE="my dev" terraform apply', "X='a b' terraform apply",
+                        "TF_VAR_x=$(date +%s) terraform apply", "FOO=\"\" BAR='x y' tofu destroy",
+                        # バックスラッシュでエスケープした文字（コミット後の自動セキュリティレビュー）
+                        'X=a\\"b terraform apply', "X=a\\ b terraform apply"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command, self.repo), "deny")
+
+    def test_word_after_non_prefix_command_is_ignored(self):
+        for command in ("echo rtk terraform apply", "echo AWS_PROFILE=dev terraform apply",
+                        "echo proxy terraform apply"):
+            with self.subTest(command=command):
+                self.assertEqual(run_hook(command, self.repo), "")
+
+    def test_tofu_is_treated_like_terraform(self):
+        # OpenTofu は terraform と置き換えられる別実装で、遅れたブランチでの事故も同じ形で起きる
+        for command in ("tofu apply", "tofu destroy", "rtk tofu apply"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command, self.repo), "deny")
+        out = json.loads(run_hook("tofu plan", self.repo))
+        self.assertIsNone(out["hookSpecificOutput"].get("permissionDecision"))
 
 
 class TestUpToDateBranch(unittest.TestCase):

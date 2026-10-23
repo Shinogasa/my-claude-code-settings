@@ -12,7 +12,7 @@
 #   ブランチの位置関係という別の観点から気づけるようにする。
 #
 # 挙動:
-#   terraform の plan/apply/destroy/import/refresh/state のみ対象。
+#   terraform（と tofu）の plan/apply/destroy/import/refresh/state のみ対象。
 #   apply / destroy はブロックする (deny)。それ以外は警告を出すだけで実行を妨げない。
 #
 #   強度を apply / destroy に限っているのは、被害が不可逆な操作に合わせたため。
@@ -34,7 +34,19 @@ command=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null) 
 # terraform が「コマンドの位置」に現れる場合だけを対象にする。
 # 行頭か、; & | ( の直後（`cd dir && terraform apply` を含む）に限定することで、
 # `echo terraform apply is dangerous` のような文字列中の語に反応しない。
-tf_prefix='(^|[;&|(])[[:space:]]*terraform[[:space:]]+(-[^[:space:]]+[[:space:]]+)*'
+#
+# その間に置ける前置き（rtk、env、time などと NAME=value）は読み飛ばす。
+# Codex は codex/RTK.md の指示で全コマンドに rtk を付けるので、読み飛ばさないと deny が効かない。
+# 前置きの語は guard-dangerous-bash.py の PREFIX_WORDS とそろえる（テストで照合している）。
+# OpenTofu（tofu）は terraform と置き換えられる別実装なので、同じに扱う。
+prefix_word='(time|exec|nohup|command|builtin|env|!|if|then|elif|else|while|until|do|\{|\})'
+# rtk は `rtk [opts] proxy [opts]` まで読み飛ばす（guard-dangerous-bash.py の skip_rtk_wrapper と同じ）。
+# proxy を prefix_word に入れないのは、`echo proxy terraform apply` を誤って止めないため。
+options='(-[^[:space:]]+[[:space:]]+)*'
+rtk_wrapper="rtk[[:space:]]+${options}(proxy[[:space:]]+${options})?"
+# 代入の値は、引用符の中・$(...) の中・バックスラッシュでエスケープした空白で切らない
+assignment="[A-Za-z_][A-Za-z0-9_]*=(\\\\.|\"[^\"]*\"|'[^']*'|\\\$\\([^)]*\\)|[^[:space:]'\"\\\\]+)*"
+tf_prefix="(^|[;&|(])[[:space:]]*((${prefix_word}|${assignment})[[:space:]]+${options}|${rtk_wrapper})*(terraform|tofu)[[:space:]]+${options}"
 
 # 状態を変えうるサブコマンドだけを対象にする。fmt / validate / version は巻き込まない。
 if ! printf '%s' "$command" | grep -Eq "${tf_prefix}(plan|apply|destroy|import|refresh|state)\b"; then
