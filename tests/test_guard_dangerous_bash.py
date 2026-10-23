@@ -130,6 +130,12 @@ class TestDangerousCommands(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(run_guard(command), BLOCK)
 
+    def test_rm_recursive_without_force_on_root_or_home_is_blocked(self):
+        # エージェントの Bash には tty が無いので、-f が無くても確認なしで消える（2026-10-23 のセキュリティレビュー）
+        for command in ("rm -r ~", "rm -R $HOME/", "rm --recursive /", "rm -r /*", "rm --rec ~/.."):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command), BLOCK)
+
     def test_rm_rf_under_root_or_home_is_allowed(self):
         for command in ("rm -rf /tmp/build", "rm -rf ~/tmp", "rm -rf $HOME/tmp",
                         "rm -r /tmp/x", "rm -f /tmp/x", "rm --recursive ./build",
@@ -289,6 +295,11 @@ class TestForcePushTarget(unittest.TestCase):
             run_guard("git push --force --receive-pack main origin"), BLOCK
         )
 
+    def test_short_option_value_is_not_read_as_refspec(self):
+        # -fo x の x は push option の値。remote と読むと origin を refspec と取り違え、
+        # refspec 省略形（宛先が現在のブランチ依存）を見逃す
+        self.assertEqual(run_guard("git push -fo x origin"), BLOCK)
+
 
 class TestForcePushAmbiguousTarget(unittest.TestCase):
     """宛先の表記ゆれは正規化せず、確定できない形として止める。
@@ -373,6 +384,18 @@ class TestRefDeletion(unittest.TestCase):
 
     def test_abbreviated_delete_flag_on_feature_branch_is_allowed(self):
         self.assertEqual(run_guard("git push origin --del feature"), ALLOW)
+
+    def test_push_option_value_is_not_read_as_delete_or_force(self):
+        # -o は続く文字を値に取る。-od の d は push option の値で、--delete ではない
+        for command in ("git push -od origin main", "git push -of origin main"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command), ALLOW)
+
+    def test_delete_or_force_before_push_option_is_blocked(self):
+        # -o より前の d / f はフラグ
+        for command in ("git push -do x origin main", "git push -fo x origin main"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command), BLOCK)
 
     def test_normal_push_with_d_in_argument_is_allowed(self):
         # `-d` を含まないブランチ名や、d で始まる長いオプションを誤検知しない
@@ -753,6 +776,15 @@ class TestProtectedBranchMerge(unittest.TestCase):
         for command in ("git merge --abort", "git merge --quit"):
             with self.subTest(command=command):
                 self.assertEqual(run_guard(command, cwd=self.on_main), ALLOW)
+
+    def test_abbreviated_abort_on_main_is_allowed(self):
+        # git は長いオプションを一意な接頭辞まで縮められる（gitcli(7)）。--abo は --abort
+        for command in ("git merge --abo", "git merge --abor"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command, cwd=self.on_main), ALLOW)
+
+    def test_abbreviated_abort_as_option_value_is_blocked(self):
+        self.assertEqual(run_guard("git merge -m --abo feat/x", cwd=self.on_main), BLOCK)
 
     def test_abort_as_option_value_is_blocked(self):
         # -m の値として --abort を渡すと、マージは実行される
@@ -1205,6 +1237,25 @@ class TestDestructivePushTarget(TrackingFixture):
 
     def test_force_push_with_unresolved_directory_and_implicit_branch_is_blocked(self):
         self.assert_result('cd "$X" && git push --force', self.feature, BLOCK)
+
+    def test_push_option_value_ending_in_o_does_not_hide_the_remote(self):
+        # -oxo は値 "xo" の push option。次のトークンを値として読み飛ばすと origin を見失い、
+        # main を現在のブランチ（work）への push と読んで通す（2026-10-23 のセキュリティレビュー）
+        for command in ("git push -f -oxo origin main", "git push -d -oxo origin main"):
+            with self.subTest(command=command):
+                self.assert_result(command, self.feature, BLOCK)
+
+    def test_digit_flags_in_cluster_still_count_as_force_or_delete(self):
+        # git push は -4 / -6 もまとめ書きできる。-4f は force push（2026-10-23 に実機で確認）
+        for command in ("git push -4f origin main", "git push -f6 origin main", "git push -4d origin main"):
+            with self.subTest(command=command):
+                self.assert_result(command, self.feature, BLOCK)
+
+    def test_abbreviated_long_option_value_is_not_read_as_remote(self):
+        # --push-o は --push-option の略記で、次のトークンを値に取る（2026-10-23 に実機で確認）
+        for command in ("git push --force --push-o x origin", "git push --force --rece x origin"):
+            with self.subTest(command=command):
+                self.assert_result(command, self.main_repo, BLOCK)
 
     def test_explicit_refspec_does_not_need_the_directory(self):
         self.assert_result('cd "$X" && git push --force origin feature-x', self.feature, ALLOW)
