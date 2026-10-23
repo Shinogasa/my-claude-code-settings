@@ -41,6 +41,38 @@ PR #100 でコピー漏れは直したが、同じ型の事故は防げていな
 
 **着手条件**: 環境依存の事故がもう一度起きたとき（案）。
 
+### テストを速くする（2026-10-23 の調査）
+
+2026-10-23 に、サブエージェント2本が別々に原因を測った（どちらも1回ずつの計測で、並列セッションの負荷で±10秒ほどぶれる）。
+既定の組は54秒、`--all` は100〜195秒だった。効果の大きい順に並べる。
+
+1. **git の ident をテストの fixture で与える**（変更は数行で、費用対効果が最大）
+   - `tests/git_fixture.py` は HOME を一時ディレクトリにし、`GIT_CONFIG_GLOBAL=/dev/null` で隔離している。そのため `user.email` がどこにも無い
+   - reflog を書く操作（`branch`・`worktree add`・`clone`）で、git がホスト名を mDNS で引きにいく。並列のときは5秒のタイムアウトを待つ。
+     `git worktree add` 1回が、逐次なら0.17秒、6〜9本の並列だと10〜15秒かかった。`EMAIL` を与えると0.03〜0.06秒になった
+   - 影響するのは `test_rtk_rewrite_hook`（setUp の `worktree add`）、`test_warn_branch_behind_main`（`user.email` を設定する前の `clone`）、
+     `test_setup_cli` の `make_worktree_repository`
+   - `EMAIL` を外から与えて代用した計測では、既定の組が54秒から32秒になった
+2. **`copy_repository` を APFS の clonefile（`cp -c -p -R -P`）にする**
+   - setup 系のテストは毎回、約460ファイルを `shutil.copytree` でコピーする。12並列だと、1回が全プロセスそろって8.6〜9.2秒になる
+     （ADR 0029 は XProtect などのスキャン待ちと推定しているが、未確認）
+   - pytest プラグインで差し替えて計測すると、`--all` が100秒から74秒になり、1と合わせると67秒だった。別の計測では195秒から71秒だった
+   - clonefile は copy-on-write なので、ADR 0029 がハードリンク案を却下した理由（コピー先への書き込みが元を書き換える）は当たらない
+   - `cp -c` は macOS 専用。一時ディレクトリが別のボリュームにある場合や Linux では、`shutil.copytree` に戻す処理が要る。
+     上の「テストの一時リポジトリを、ignoreされたファイル抜きで作る」と同じ関数を直すので、まとめて扱うとよい
+3. **新しく作った実行ファイルの初回起動を減らす**: 1回110〜340msかかり、システム全体で一列に並ぶ。
+   スタブをワーカーごとに1回だけ作り、各テストには symlink を置くと、1の上に重ねて setup 系が48秒から44秒になった
+4. **`setup.sh` の外部コマンドを減らす**: 1回の実行で `python3` が62回（うち26回は `setup.sh:190` の normpath）、`dirname` が約260回起動する。
+   一括処理とパラメータ展開に替えると、1回あたり約20%短くなる見込み（未計測）。本番のコードを変える
+5. **フックのタイムアウトを待つテスト**（principle-review の10秒、guard-dangerous-bash の3秒×4件）。実時間への影響は約2秒で、割に合わない
+
+ついでに見つかった小さなずれ:
+- README のテスト時間の目安（既定の組で約1分、`--all` で約4分）が、実測（54秒、100秒）とずれている
+- `tests/test_guard_dangerous_bash.py` の `'git commit -m x\; --no-verify'` で `SyntaxWarning: invalid escape sequence` が出る
+
+**決めること**: 1と2をやるか。1は数行なので、着手条件を待たずにやってもよい。3〜5は1と2の後に効果を測り直してから決める。
+**着手条件**: 未定（2026-10-23に積んだ）。
+
 ### `tasks/lessons.md` の役割を決め直す
 
 `lessons.md` に触れる指示は、`CLAUDE.md` と `rules/task-management.md` の「修正を受けたら記録する」だけで、読み込む指示が無い。
@@ -488,6 +520,10 @@ Codex は**プラグイン同梱の `hooks/hooks.json` を読む**（実測: `[h
 `using-superpowers` を読ませる、(b) Claude 版を再導入して同梱フックに任せる、
 のどちらか。(b) は重複が復活するため `setup.sh` の重複削除と衝突する。
 
+2026-10-23 の hooks 調査で、(a) がすでに配線されていると分かった（`codex/hooks.json` の `SessionStart` が `inject-superpowers.sh` を呼ぶ）。
+冒頭の「今は散文で発火させている」は古い可能性がある。ただし、Codex が `SessionStart` の標準出力を文脈に入れるかは未確認で、
+入れないなら注入は効いていない。着手するときは、まずこの項目の現状を確かめ直す。
+
 **着手条件**: 散文指示が守られなかった事例を観測したとき、または
 Codex を主ホストとして使う頻度が上がったとき。
 
@@ -680,6 +716,8 @@ fetch 直後でも競合しうる）。フックの層では原理的に見切�
 **決めること**: push の位置引数解析を allowlist 側へ寄せるか、現状維持か。
 **着手条件**: git が新しい一括 push フラグを追加したとき、または誤判定を観測したとき。
 
+2026-10-23（PR #104）に、略記（`--al`・`--b`・`--mi`）は接頭辞で拾うようにした。名指しの denylist であることは変わっていない。
+
 ---
 
 ### 入れ子のシェルと環境変数で判定対象を見失う
@@ -706,6 +744,58 @@ fetch 直後でも競合しうる）。フックの層では原理的に見切�
 追わない範囲は「確定できない」として止めるか、制約として受け入れるか。
 
 **着手条件**: この経路での取りこぼしを観測したとき。
+
+### `warn-branch-behind-main` が、前置きの付いた `terraform apply` を止めない（2026-10-23 の調査）
+
+深刻度は中で、terraform を扱うリポジトリでは高。再現済み。
+
+- `rtk terraform apply`、`AWS_PROFILE=dev terraform apply`、`env terraform apply`、`time terraform apply` は、遅れたブランチでも何も出さずに通る。
+  判定（`tf_prefix`）が、行頭か `;&|(` の直後の `terraform` しか見ていないため
+- `codex/RTK.md` が Codex に「すべてのシェルコマンドに rtk を付ける」と指示している。そのため、**Codex では通常の書き方で apply の deny が効かない**
+- ほかに、`tofu apply` は対象外（再現済み）。https のリモートで fetch が止まるとフック全体のタイムアウトに達して通る（未再現）
+
+**決めること**: 前置きの除去を guard-dangerous-bash と同じ処理（`strip_prefixes`）に寄せるか、このフックの中で足すか。`tofu` を対象に入れるか。
+**着手条件**: 未定（2026-10-23に積んだ）。Codex で terraform を扱う前には直したい。
+
+### Codex の `apply_patch` で、パッチの本文を Bash のコマンドとして検査してしまう（2026-10-23 の調査）
+
+深刻度は中。合成した payload では再現した。実機の Codex で `apply_patch` がこの形で届くかは未確認。
+
+- `codex/hooks.json` は guard-dangerous-bash を matcher 無しで登録している。そのため、全ツールの `tool_input.command` が検査に入り、
+  `apply_patch` ではパッチの本文が入る（`codex-model-switch-hook.py` がその前提で書かれている）
+- 本文に引用符が1つだけあり、`git`・`rm` などの語を含むと、解析できないとして止める（例: `+Don't git push here.`）。
+  個人用のセッションでは、guard-agent-profile も「codex's」のような語で止める
+
+**決めること**: matcher で Bash（shell）に絞るか、各フックで `apply_patch` を除くか。
+**着手条件**: Codex で実際に誤検知を観測したとき、または Codex のフック対応を進めるとき。
+
+### `guard-dangerous-bash` の、略記の修正（PR #104）の後に残ったもの
+
+2026-10-23 のセキュリティレビューで見つかった。どれも PR #104 より前からある挙動。
+
+- `-f` 無しの `rm -r ~`・`rm -R $HOME/` は通る。判定が `-r` と `-f` の両方を求めているため。
+  エージェントの Bash には tty が無いので、書き込み保護されたファイル以外は確認なしで消える
+- `git merge --abo`（`--abort` の略記）は、保護ブランチ上ではマージとして止まる（安全側の誤検知）
+- `git push -od origin main` は、`-o` の値の `d` を削除フラグと読んで止める（安全側の誤検知）
+
+**決めること**: `rm -r` を `-f` 無しでも止めるか。誤検知の2つは、気になってから直すか。
+**着手条件**: 未定（2026-10-23に積んだ）。
+
+### ほかのフックの小さな穴（2026-10-23 の調査、どれも深刻度は低）
+
+- guard-agent-profile: `npm exec -- @anthropic-ai/claude-code`、`pnpm dlx …`、`script -q /dev/null claude`、`watch claude`、`env -S 'claude -p hi'` を見逃す
+  （`PACKAGE_RUNNERS` と `WRAPPERS` に無い）。再現済み
+- block-commit-on-merged-pr: `COMMAND_PREFIXES` に `rtk` が無いので、`rtk git commit` を照会しない。
+  Claude Code では rtk の書き換え前のコマンドが渡るので、影響はエージェントが自分で rtk を付けた場合に限られる。再現済み
+- require-full-tests-before-pr: PR 作成と判定した後でも、cwd が無ければ黙って通す（docstring の「検査できなかったことを問題なしに畳まない」と食い違う）。
+  matcher が Bash だけなので、Bash 以外（MCP など）で PR を作る経路は見ない（jp-doc-review も同じ）。前者は再現済み、後者は未確認
+- skill-read-check: offset / limit 付きの一部だけの Read も「読んだ」と数える。再現済み
+- detect-parallel-sessions: 列挙が `pgrep -x claude` だけなので、Codex のセッション同士の並列は検出しない。未再現
+- check-codex-base-provider: `profile` で provider を選ぶ構成や、`-c model_provider=` による上書きを考慮しない。未再現
+- codex-model-switch-hook: 切り替えが無いときでも、例外（cwd のディレクトリが消えたなど）で exit 2 になり、Codex の全ツールが止まりうる。未再現
+
+**決めること**: 個別に直すか、まとめて1回で直すか。
+**着手条件**: 該当するフックを触るとき、またはその経路で問題を観測したとき。
 
 ---
 
