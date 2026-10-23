@@ -1303,7 +1303,7 @@ submoduleとプラグインの更新を洗い出したとき、次は版を比�
 
 ### `permissions.deny` に kubeconfig を足すか
 
-2026-10-23 に、秘密鍵・認証情報・`.env`・terraform の state の Read を `settings.json.template` で拒否した。
+2026-10-23 に、秘密鍵・認証情報・トークン・シェルの履歴・`.env` の類・terraform の state の Read を `settings.json.template` で拒否した。
 `~/.kube/config` は kubernetes を使っていないので見送った（ユーザーが決めた）。
 
 **着手条件**: kubernetes を使い始めたとき。`Read(~/.kube/config)` を足す。
