@@ -43,7 +43,7 @@ PR #100 でコピー漏れは直したが、同じ型の事故は防げていな
 
 ### テストを速くする（2026-10-23 の調査）
 
-2026-10-23 に、サブエージェント2本が別々に原因を測った（どちらも1回ずつの計測で、並列セッションの負荷で±10秒ほどぶれる）。
+2026-10-23 に、サブエージェント2本が別々に原因を調べた（どちらも1回ずつの計測で、並列セッションの負荷で±10秒ほどぶれる）。
 既定の組は54秒、`--all` は100〜195秒だった。効果の大きい順に並べる。
 
 1. **git の ident をテストの fixture で与える**（変更は数行で、費用対効果が最大）
@@ -66,7 +66,7 @@ PR #100 でコピー漏れは直したが、同じ型の事故は防げていな
    一括処理とパラメータ展開に替えると、1回あたり約20%短くなる見込み（未計測）。本番のコードを変える
 5. **フックのタイムアウトを待つテスト**（principle-review の10秒、guard-dangerous-bash の3秒×4件）。実時間への影響は約2秒で、割に合わない
 
-ついでに見つかった小さなずれ:
+ついでに、次の小さなずれも見つかった。
 - README のテスト時間の目安（既定の組で約1分、`--all` で約4分）が、実測（54秒、100秒）とずれている
 - `tests/test_guard_dangerous_bash.py` の `'git commit -m x\; --no-verify'` で `SyntaxWarning: invalid escape sequence` が出る
 
@@ -787,7 +787,7 @@ fetch 直後でも競合しうる）。フックの層では原理的に見切�
   （`PACKAGE_RUNNERS` と `WRAPPERS` に無い）。再現済み
 - block-commit-on-merged-pr: `COMMAND_PREFIXES` に `rtk` が無いので、`rtk git commit` を照会しない。
   Claude Code では rtk の書き換え前のコマンドが渡るので、影響はエージェントが自分で rtk を付けた場合に限られる。再現済み
-- require-full-tests-before-pr: PR 作成と判定した後でも、cwd が無ければ黙って通す（docstring の「検査できなかったことを問題なしに畳まない」と食い違う）。
+- require-full-tests-before-pr: PR 作成と判定した後でも、cwd が無ければ何も出さずに通す（docstring の「検査できなかったことを問題なしに畳まない」と食い違う）。
   matcher が Bash だけなので、Bash 以外（MCP など）で PR を作る経路は見ない（jp-doc-review も同じ）。前者は再現済み、後者は未確認
 - skill-read-check: offset / limit 付きの一部だけの Read も「読んだ」と数える。再現済み
 - detect-parallel-sessions: 列挙が `pgrep -x claude` だけなので、Codex のセッション同士の並列は検出しない。未再現
