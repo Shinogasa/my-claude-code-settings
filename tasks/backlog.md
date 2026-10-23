@@ -894,6 +894,22 @@ macOS の `pgrep` は呼び出し元の祖先プロセスを返さない（実�
 
 ## フックの実行環境
 
+### P3: 保護ブランチ上のローカルマージを止めていない経路
+
+2026-10-23に、main / master 上の `git merge` を止めた。そのときの自動セキュリティレビューの指摘のうち、次を残した。
+
+- main 上の `git pull origin feat/x` のように、取り込む ref を指定した `git pull` で、作業ブランチを取り込める。
+  main の更新に使う `git pull` は通すと決めたので、引数の無い形と区別するかどうかは決めていない
+- `git -c alias.m=merge m feat/x` のような alias、`git cherry-pick` / `git rebase` / `git am` でも main を進められる
+  （`bash -c` と同じく、既知の限界として扱っている）。`git symbolic-ref` などでブランチを変えた後の merge も追わない
+- `git switch main && git commit` のように、同じコマンドの中で main へ切り替えた後のコミットは通る（以前からある穴）。
+  merge と同じく切り替え後を一律に止めると、`git switch -c <branch> && git commit`（CLAUDE.mdの復帰の手順）まで止まる
+- `git --git-dir=... merge` / `--work-tree`（`-C` しか追わない）、`/usr/bin/git merge` や `\git merge`（先頭が `git` でない）、
+  `git fetch . feat:main` のような ref の直接更新も通る。commit 側と同じく以前からある穴
+
+**決めること**: ref を指定した `git pull` を止めるか。止めるなら、通す形（引数なし、`--ff-only` だけなど）をどこまでにするか。
+エージェントがこの形でローカルマージした事例が出たら着手する。
+
 ### P2: guard-dangerous-bash が「検査できなかった」を通す経路の残り
 
 2026-10-12に、gitの照会のタイムアウトと起動失敗では止めるように直した（`GitQueryFailed`）。そのときのsecurity-reviewerの指摘のうち、
@@ -903,6 +919,7 @@ macOS の `pgrep` は呼び出し元の祖先プロセスを返さない（実�
   PreToolUseのフックはexit 1では止めない
 - gitが0以外で終わったときは、すべて正当な「無い」として扱う。所有者が違うリポジトリ（safe.directory）、読めない `.git`、壊れた設定も、
   「リポジトリではない」「detached HEAD」「まだコミットが無い」と同じ扱いになる。そうした状態では、git自身もコミットを拒むことが多い
+  （2026-10-23に足した保護ブランチ上の `git merge` の判定も、同じ `protected_branch` を使うので、この穴を引き継ぐ）
 - タイムアウトしても、孫プロセスがパイプを開いたままにしていると、`subprocess.run` は3秒より長く待つ。フック全体のtimeoutに達すると、止めずに通る
 - `core.hooksPath` を `--type=path` なしで読むので、`~/hooks` のような値を展開しない。フックを見つけられず、`--no-verify` を通す
 

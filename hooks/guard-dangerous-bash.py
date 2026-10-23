@@ -35,6 +35,13 @@ allowlist なら新しい読み取り操作が誤ってブロックされる。�
 初回コミット (unborn branch) と detached HEAD は、切るべき作業ブランチが
 存在しない・既に名前付きブランチ上にないため対象外。
 
+保護ブランチ上の `git merge` も同じ理由で止める。取り込みは必ずPRで行う運用にした
+(2026-10-22、ユーザーの判断)。git merge は git commit を通らずにコミットを作るため、
+直接コミットの判定では止まらなかった。`--ff-only` でも、手元の作業ブランチを取り込めば
+PRを通らずに main が進むので止める。進行中のマージをやめる `--abort` / `--quit` と、
+main の更新に使う `git pull` は通す。フックは実行前のブランチしか見られないので、
+同じコマンドの中で `git switch` / `git checkout` の後に来る merge は、ブランチを問わず止める。
+
 判定対象のリポジトリは、PreToolUse が渡す cwd を起点に、同じコマンド内の `cd` と
 `git -C` を順に適用して決める。cwd は前回までの cd に追従するが、同じコマンド内の
 cd は反映されないため、ここで追う。相対パスは hook プロセスの cwd ではなく、この起点から解決する。
@@ -98,6 +105,10 @@ ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 # --no-verify を受け付ける git サブコマンド
 NO_VERIFY_SUBCOMMANDS = {"commit", "merge", "push"}
+# 進行中のマージをやめるだけで、ブランチを進めないオプション。
+MERGE_STOP_OPTIONS = {"--abort", "--quit"}
+# HEAD のブランチを変えうるサブコマンド。checkout はファイルの復元にも使うが、区別しない。
+BRANCH_SWITCH_SUBCOMMANDS = {"switch", "checkout"}
 # 値を伴う git のグローバルオプション (サブコマンド探索時に2トークン読み飛ばす)
 GIT_GLOBAL_OPTS_WITH_VALUE = {
     "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
@@ -614,6 +625,23 @@ def is_git_commit(tokens: list) -> bool:
     return subcommand == "commit"
 
 
+def is_git_merge(tokens: list) -> bool:
+    """保護ブランチを進めうる git merge か判定する。--abort / --quit はマージをやめるだけなので除く。"""
+    if not tokens or tokens[0] != "git":
+        return False
+    subcommand, args = extract_subcommand(tokens)
+    # --abort / --quit はほかの引数と併用できない。併用に見えるのは -m の値などなので、マージとして扱う
+    return subcommand == "merge" and not (len(args) == 1 and args[0] in MERGE_STOP_OPTIONS)
+
+
+def is_git_branch_switch(tokens: list) -> bool:
+    """HEAD のブランチを変えうる git switch / checkout か判定する。"""
+    if not tokens or tokens[0] != "git":
+        return False
+    subcommand, _ = extract_subcommand(tokens)
+    return subcommand in BRANCH_SWITCH_SUBCOMMANDS
+
+
 class GitQueryFailed(Exception):
     """git の照会が時間内に終わらなかった、または git を起動できなかった。"""
 
@@ -882,6 +910,10 @@ def run_checks() -> int:
 
     bypass_dirs = set()
     commit_dirs = set()
+    merge_dirs = set()
+    # 同じコマンドの中でブランチを切り替えると、実行前のブランチでは判定できない。
+    branch_switched = False
+    merge_after_switch = False
     candidates = {os.path.abspath(cwd)}
     # これまでに通りうるディレクトリすべて。&& の連鎖が切れたら、どこにいてもおかしくない。
     seen = set(candidates)
@@ -956,9 +988,22 @@ def run_checks() -> int:
             bypass_dirs |= git_target_dirs(simple_command, candidates)
         if is_git_commit(simple_command):
             commit_dirs |= git_target_dirs(simple_command, candidates)
+        if is_git_merge(simple_command):
+            merge_dirs |= git_target_dirs(simple_command, candidates)
+            merge_after_switch = merge_after_switch or branch_switched
+        if is_git_branch_switch(simple_command):
+            branch_switched = True
 
-    if UNRESOLVED in bypass_dirs or UNRESOLVED in commit_dirs:
-        print("ブロック: git commit の対象リポジトリを特定できません。", file=sys.stderr)
+    if merge_after_switch:
+        print("ブロック: ブランチを切り替えた後の git merge は、マージ先のブランチを判定できません。",
+              file=sys.stderr)
+        print("  保護ブランチ (main / master) への取り込みはPRで行います。", file=sys.stderr)
+        print("  作業ブランチへの取り込みなら、切り替えとマージを別のコマンドに分けてください。",
+              file=sys.stderr)
+        return 2
+
+    if UNRESOLVED in bypass_dirs | commit_dirs | merge_dirs:
+        print("ブロック: git commit / merge の対象リポジトリを特定できません。", file=sys.stderr)
         print("  同じコマンド内の cd の移動先（変数、cd -、コマンド置換、pushd / popd）を",
               file=sys.stderr)
         print("  文字列から確定できないため、保護ブランチと検証フックを判定できません。",
@@ -989,6 +1034,18 @@ def run_checks() -> int:
             print("  未コミットの変更はブランチ作成後もそのまま引き継がれるため、", file=sys.stderr)
             print("  作業をやり直す必要はありません。", file=sys.stderr)
             print(f"  {branch} へ直接コミットする必要がある場合は、"
+                  "あなた自身が端末で実行してください。", file=sys.stderr)
+            return 2
+
+    for target in sorted(merge_dirs):
+        branch = protected_branch(target)
+        if branch:
+            print(f"ブロック: 保護ブランチ ({branch}) 上でのローカルマージです。", file=sys.stderr)
+            print("  取り込みはPRで行います。作業ブランチを push して PR を作ってください。",
+                  file=sys.stderr)
+            print(f"  {branch} をリモートに合わせるだけなら、次で更新できます:", file=sys.stderr)
+            print("      git pull --ff-only", file=sys.stderr)
+            print(f"  {branch} 上でマージする必要がある場合は、"
                   "あなた自身が端末で実行してください。", file=sys.stderr)
             return 2
 
