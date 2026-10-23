@@ -26,6 +26,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -49,9 +50,13 @@ WRAPPERS = {
     "xargs": {"-n", "-I", "-L", "-P", "-s", "-d", "-E", "-a", "--max-args", "--max-procs", "--delimiter"},
     "env": {"-C", "--chdir", "-S", "--split-string", "-u", "--unset"},
     "exec": {"-a"}, "time": set(), "command": set(), "builtin": set(),
+    "watch": {"-n", "--interval"}, "script": {"-t"},
 }
-TAKES_DURATION = {"timeout", "gtimeout"}
+# オプションの後ろに、コマンドの前の位置引数を1つ取るもの（timeout の時間、script の記録先のファイル）
+TAKES_ONE_ARGUMENT = {"timeout", "gtimeout", "script"}
 PACKAGE_RUNNERS = {"npx", "bunx", "pnpx"}
+# サブコマンドでパッケージを起動するもの（npm exec、pnpm dlx など）
+PACKAGE_RUNNER_SUBCOMMANDS = {"npm": {"exec", "x"}, "pnpm": {"dlx", "exec"}, "yarn": {"dlx", "exec"}, "bun": {"x"}}
 FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
 
 
@@ -148,6 +153,14 @@ def matching_paren(command: str, open_index: int) -> int:
     return len(command)
 
 
+def split_string(value: str) -> list:
+    """env -S の値を、env と同じように空白で分ける。分けられなければ1語のまま残す（後段が名前で判定する）。"""
+    try:
+        return shlex.split(value)
+    except ValueError:
+        return [value]
+
+
 def drop_env_unsets(raw: list):
     """`env -u NAME` と `env -i` を見て、CODEX_HOME を消すかどうかと、`-u NAME` を除いたトークン列を返す。"""
     cleared = False
@@ -164,7 +177,14 @@ def drop_env_unsets(raw: list):
             cleared = cleared or raw[index + 1] == "CODEX_HOME"
             index += 2
             continue
-        elif in_env and token in ("-C", "--chdir", "-S", "--split-string") and index + 1 < len(raw):
+        elif in_env and token in ("-S", "--split-string") and index + 1 < len(raw):
+            # 値をコマンドとして分けて実行する（env -S 'claude -p x'）。分けたトークンに置き換える
+            raw = raw[:index] + split_string(raw[index + 1]) + raw[index + 2:]
+            continue
+        elif in_env and token.startswith("--split-string="):
+            raw = raw[:index] + split_string(token.split("=", 1)[1]) + raw[index + 1:]
+            continue
+        elif in_env and token in ("-C", "--chdir") and index + 1 < len(raw):
             # 値を取るオプション。guard の前置き除去は値を読み飛ばさないので、ここで落とす
             index += 2
             continue
@@ -193,11 +213,12 @@ def unwrap(tokens: list):
                 index += 1
                 if option in WRAPPERS[name] and index < len(tokens):
                     index += 1
-            if name in TAKES_DURATION and index < len(tokens):
+            if name in TAKES_ONE_ARGUMENT and index < len(tokens):
                 index += 1
             continue
-        if name in PACKAGE_RUNNERS:
-            index += 1
+        if name in PACKAGE_RUNNERS or (index + 1 < len(tokens)
+                                       and tokens[index + 1] in PACKAGE_RUNNER_SUBCOMMANDS.get(name, ())):
+            index += 1 if name in PACKAGE_RUNNERS else 2
             while index < len(tokens) and tokens[index].startswith("-"):
                 index += 1
             if index >= len(tokens):
@@ -207,7 +228,8 @@ def unwrap(tokens: list):
                 return "claude", tokens[index + 1:]
             if re.search(r"(^|/)codex(@|$)", package):
                 return "codex", tokens[index + 1:]
-            return None
+            # パッケージ名でなく、入っているコマンドの名前のこともある（pnpm exec claude、npm exec --package=X -- claude）
+            return unwrap(tokens[index:])
         if name == "find":
             for position in range(index + 1, len(tokens)):
                 if tokens[position] in FIND_EXEC:

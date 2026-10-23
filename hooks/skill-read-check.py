@@ -68,11 +68,13 @@ def base_directories(entries: List[dict]) -> Set[str]:
     return found
 
 
-def read_paths(entries: List[dict]) -> Set[str]:
+def read_paths(entries: List[dict], whole_only: bool = False) -> Set[str]:
+    """Readしたファイル。whole_only なら、offset / limit で一部だけ読んだものを除く。"""
     return {
         real(tool_input["file_path"])
         for name, tool_input in tool_uses(entries)
         if name == "Read" and isinstance(tool_input.get("file_path"), str)
+        and not (whole_only and (tool_input.get("offset") is not None or tool_input.get("limit") is not None))
     }
 
 
@@ -156,7 +158,7 @@ def check(event: str, payload: dict) -> None:
         emit({"systemMessage": f"スキルの読み込み確認: 会話記録を読めなかったので確認していない（{error}）"})
         return
     window = entries if event == "subagent-stop" else since_last_prompt(entries)
-    reads = read_paths(entries)
+    reads = read_paths(entries, whole_only=True)  # 必読資料は全文を読んだものだけ数える。呼び出しの判定は一部でもよい
     commands = bash_commands(entries)
     problems: Dict[str, List[Tuple[str, str]]] = {}
     messages: List[str] = []

@@ -44,6 +44,23 @@ def _words(command: str) -> List[str]:
     return words
 
 
+def _skip_rtk(words: List[str]) -> List[str]:
+    """`rtk [opts] (proxy [opts])` を読み飛ばす（guard-dangerous-bash.py の skip_rtk_wrapper と同じ形）。
+
+    Claude Code では rtk の書き換え前のコマンドが渡るが、エージェントが自分で rtk を付けることがある。
+    """
+    if not words or words[0] != "rtk":
+        return words
+    index = 1
+    while index < len(words) and words[index].startswith("-"):
+        index += 1
+    if index < len(words) and words[index] == "proxy":
+        index += 1
+        while index < len(words) and words[index].startswith("-"):
+            index += 1
+    return words[index:]
+
+
 def commit_directories(command: str) -> Optional[List[str]]:
     """コマンドの位置に git commit があれば、その -C の値の一覧を返す。無ければ None。
 
@@ -57,6 +74,7 @@ def commit_directories(command: str) -> Optional[List[str]]:
         words, segment = segment, []
         while words and ("=" in words[0] and not words[0].startswith("-") or words[0] in COMMAND_PREFIXES):
             words = words[1:]
+        words = _skip_rtk(words)
         if not words or words[0] != "git":
             continue
         index, dash_c = 1, []

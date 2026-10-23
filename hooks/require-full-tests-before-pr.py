@@ -152,7 +152,7 @@ def main() -> int:
             raise CheckError("入力を読めず、PRを作るリポジトリを決められない")
         cwd = payload.get("cwd")
         if not isinstance(cwd, str) or not cwd:
-            return 0
+            raise CheckError("入力に cwd が無く、PRを作るリポジトリを決められない")
         reason = _check_targets(payload["tool_input"]["command"], cwd)
     except Exception as error:  # PR作成と分かった後の失敗は、すべて止める側に倒す
         reason = (f"全件テストの通過記録を確かめられなかった（{error}）。`{RUN_ALL}` を流してから、もう一度試して。"
