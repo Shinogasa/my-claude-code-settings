@@ -210,6 +210,14 @@ class AgentProfileGuardTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertBlocked(command, self.claude_personal())
 
+    def test_wrapper_options_with_values_are_skipped(self):
+        # 値を取るのに表に無かったオプション（自動のセキュリティレビューの指摘）
+        for command in ("xargs -J % claude -p %", "xargs -R 2 claude -p", "xargs -S 512 claude -p",
+                        "sudo -T 60 claude -p x", "sudo -R /x claude -p x",
+                        "script -c claude /dev/null", "script -qc 'claude -p x' /dev/null"):
+            with self.subTest(command=command):
+                self.assertBlocked(command, self.claude_personal())
+
     def test_env_unset_with_capital_s_is_not_read_as_split_string(self):
         # -uSHELL は -u SHELL。S より前がフラグでなければ -S の形ではない
         self.assertBlocked("env -uSHELL claude -p x", self.claude_personal())
