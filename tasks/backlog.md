@@ -1301,10 +1301,12 @@ submoduleとプラグインの更新を洗い出したとき、次は版を比�
 
 **着手条件**: もう一度落ちたとき。そのときは失敗の出力を残す。
 
-### `permissions.deny` で Read・Grep の機密パスを拒否するか
+### `permissions.deny` に kubeconfig を足すか
 
-**決めること**: 拒否するパス（`~/.ssh`・`~/.aws`・`.env` など、どこまで含めるか）と、`settings.json.template` に書くと全セッションの Read・Grep に効くことを受け入れるか。
-`principle-reviewer` は Read だけを使うが、成果物に読み先を指示されても従わないことは指示文で頼んでいるだけで、仕組みでは止めていない（2026-10-08 のセキュリティレビュー）。
+2026-10-23 に、秘密鍵・認証情報・`.env`・terraform の state の Read を `settings.json.template` で拒否した。
+`~/.kube/config` は kubernetes を使っていないので見送った（ユーザーが決めた）。
+
+**着手条件**: kubernetes を使い始めたとき。`Read(~/.kube/config)` を足す。
 
 ### guard-dangerous-bash.py と jp-doc-review.py の git 呼び出しも、承認前に相手の設定で動く経路（lazy fetch・filter など）を塞ぐか
 
