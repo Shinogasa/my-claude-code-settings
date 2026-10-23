@@ -3,7 +3,7 @@
 
 対象は3種類。
 
-  1. 状況に依存せず常にNG (rm -rf / , git reset --hard)
+  1. 状況に依存せず常にNG (rm -r / , git reset --hard)
   2. 実行環境を見れば確定的に有害と判定できるもの
      (git の --no-verify, 保護ブランチへの直接コミット,
       保護ブランチへの force push と削除)
@@ -160,9 +160,8 @@ UNRESOLVED = None
 # hook がシェルと同じ展開をできない文字。含む cd の移動先は確定できないとみなす。
 UNEXPANDABLE_CHARS = set("$`*?[{")
 
-# rm の再帰と強制のフラグ。-r -f と分けても、長い形 (--recursive --force) でも同じ意味になる。
+# rm の再帰のフラグ。-f は見ない。エージェントの Bash には tty が無く、-f が無くても確認なしで消えるため。
 RM_RECURSIVE_SHORT = set("rR")
-RM_FORCE_SHORT = set("f")
 # rm の対象を / か ~ に寄せる正規化。$HOME/${HOME} は ~ と読み、末尾の / /. /* は落とす。
 HOME_VAR_RE = re.compile(r"^(\$HOME|\$\{HOME\})(?=/|$)")
 TRAILING_ROOT_PART_RE = re.compile(r"(/\.?\*+|/\.|/)$")
@@ -175,16 +174,19 @@ DEV_TARGET_RE = re.compile(r"^/dev/sd[a-z]")
 #
 # フラグを見るだけでは足りない。refspec の先頭 "+" (git push origin +main) も
 # force update であり、フラグを一切使わずに保護ブランチを上書きできる。
-FORCE_PUSH_FLAG_RE = re.compile(r"^--force|^-[a-zA-Z]*f[a-zA-Z]*$")
+FORCE_PUSH_LONG_PREFIX = "--force"
+FORCE_PUSH_SHORT = set("f")
 # push のフラグのうち値を次のトークンに取るもの。読み飛ばさないと
 # 値 (`-o main`) を refspec と取り違えて判定対象を誤る。
 GIT_PUSH_OPTS_WITH_VALUE = {"-o", "--push-option", "--receive-pack", "--exec", "--repo"}
+# push の短いフラグのうち、続く文字を値にするもの。-od の d は push option の値で、--delete ではない。
+PUSH_SHORT_OPTS_WITH_VALUE = set("o")
 # 対象 ref を1つに絞れないフラグ。保護ブランチを含みうるため特定不能として扱う。
 GIT_PUSH_BROADCAST_FLAGS = {"--all", "--branches", "--mirror"}
 # ref の削除を表すフラグ。短縮形は他のフラグと束ねられる (-du) ため綴りで拾う。
 # 長い形は略記 (--del) も拾う。削除も refspec 側に別経路がある (`git push origin :main`)。
 REF_DELETE_LONG_FLAG = "--delete"
-REF_DELETE_SHORT_FLAG_RE = re.compile(r"^-[a-zA-Z]*d[a-zA-Z]*$")
+REF_DELETE_SHORT = set("d")
 # commit の短いフラグのうち、続く文字を値にするもの。-mn の n は値で、--no-verify ではない。
 # S と u は値を省略できるが、付けるときは続けて書くので同じ扱いになる。
 COMMIT_SHORT_OPTS_WITH_VALUE = set("FmcCtUSu")
@@ -444,14 +446,9 @@ def is_root_or_home(target: str) -> bool:
     return False
 
 
-def is_rm_recursive_force(args: list) -> bool:
-    recursive = force = False
-    for arg in args:
-        recursive = recursive or is_long_option_prefix(arg, "--recursive") \
-            or short_cluster_has(arg, RM_RECURSIVE_SHORT)
-        force = force or is_long_option_prefix(arg, "--force") \
-            or short_cluster_has(arg, RM_FORCE_SHORT)
-    return recursive and force
+def is_rm_recursive(args: list) -> bool:
+    return any(is_long_option_prefix(arg, "--recursive") or short_cluster_has(arg, RM_RECURSIVE_SHORT)
+               for arg in args)
 
 
 def is_dangerous(tokens: list) -> bool:
@@ -459,7 +456,7 @@ def is_dangerous(tokens: list) -> bool:
         return False
 
     if tokens[0] == "rm":
-        if is_rm_recursive_force(tokens[1:]) and any(is_root_or_home(t) for t in tokens[1:]):
+        if is_rm_recursive(tokens[1:]) and any(is_root_or_home(t) for t in tokens[1:]):
             return True
 
     if tokens[0] == "git":
@@ -703,7 +700,9 @@ def is_git_merge(tokens: list) -> bool:
         return False
     subcommand, args = extract_subcommand(tokens)
     # --abort / --quit はほかの引数と併用できない。併用に見えるのは -m の値などなので、マージとして扱う
-    return subcommand == "merge" and not (len(args) == 1 and args[0] in MERGE_STOP_OPTIONS)
+    # 略記（--abo）も --abort になる。曖昧な略記（--qu）は git がエラーで止めるので、通しても進まない
+    stops = len(args) == 1 and any(is_long_option_prefix(args[0], option) for option in MERGE_STOP_OPTIONS)
+    return subcommand == "merge" and not stops
 
 
 def is_git_branch_switch(tokens: list) -> bool:
@@ -756,7 +755,9 @@ def push_positional_args(args: list) -> list:
     i = 0
     while i < len(args):
         token = args[i]
-        if token in GIT_PUSH_OPTS_WITH_VALUE:
+        # -fo x のように、値を取るフラグでまとめ書きが終わると、値は次のトークンになる
+        if token in GIT_PUSH_OPTS_WITH_VALUE or (
+                short_cluster_has(token, PUSH_SHORT_OPTS_WITH_VALUE) and token[-1] in PUSH_SHORT_OPTS_WITH_VALUE):
             i += 2
             continue
         if token.startswith("-"):
@@ -769,7 +770,8 @@ def push_positional_args(args: list) -> list:
 
 def is_force_push(args: list) -> bool:
     """push の引数が force update を含むか。フラグと refspec の "+" の両方を見る。"""
-    if any(FORCE_PUSH_FLAG_RE.match(a) for a in args):
+    if any(a.startswith(FORCE_PUSH_LONG_PREFIX)
+           or short_cluster_has(a, FORCE_PUSH_SHORT, PUSH_SHORT_OPTS_WITH_VALUE) for a in args):
         return True
     # 位置引数の先頭は remote。refspec はその後ろ。
     return any(spec.startswith("+") for spec in push_positional_args(args)[1:])
@@ -865,7 +867,8 @@ def implicit_push_targets_current_branch(cwd: str, remote: list) -> bool:
 
 def is_ref_deletion(args: list) -> bool:
     """push の引数がリモート ref の削除を含むか。フラグと `:dst` 形式の両方を見る。"""
-    if any(is_long_option_prefix(a, REF_DELETE_LONG_FLAG) or REF_DELETE_SHORT_FLAG_RE.match(a)
+    if any(is_long_option_prefix(a, REF_DELETE_LONG_FLAG)
+           or short_cluster_has(a, REF_DELETE_SHORT, PUSH_SHORT_OPTS_WITH_VALUE)
            for a in args):
         return True
     # 位置引数の先頭は remote。refspec はその後ろ。
