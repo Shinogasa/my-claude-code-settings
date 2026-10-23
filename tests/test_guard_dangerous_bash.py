@@ -98,6 +98,26 @@ class TestDangerousCommands(unittest.TestCase):
     def test_rm_rf_home_is_blocked(self):
         self.assertEqual(run_guard("rm -rf ~"), BLOCK)
 
+    def test_rm_split_and_long_flags_on_root_are_blocked(self):
+        # -rf を1語にまとめた形だけを見ていた頃は、どれも素通りしていた
+        for command in ("rm -r -f /", "rm -f -r /", "rm -R -f /", "rm -Rf /",
+                        "rm --recursive --force /", "rm -r --force /", "rm --rec --forc /"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command), BLOCK)
+
+    def test_rm_rf_root_and_home_spellings_are_blocked(self):
+        # / と ~ との完全一致だけを見ていた頃は、別の綴りが素通りしていた
+        for command in ("rm -rf ~/", "rm -rf $HOME", "rm -rf ${HOME}", "rm -rf $HOME/",
+                        "rm -rf /.", "rm -rf //", "rm -rf /./", "rm -rf ~/*"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command), BLOCK)
+
+    def test_rm_rf_under_root_or_home_is_allowed(self):
+        for command in ("rm -rf /tmp/build", "rm -rf ~/tmp", "rm -rf $HOME/tmp",
+                        "rm -r /tmp/x", "rm -f /tmp/x", "rm --recursive ./build"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command), ALLOW)
+
     def test_git_push_force_is_blocked(self):
         self.assertEqual(run_guard("git push --force origin main"), BLOCK)
 
@@ -234,6 +254,15 @@ class TestForcePushTarget(unittest.TestCase):
         self.assertEqual(run_guard("git push --mirror origin"), ALLOW)
         self.assertEqual(run_guard("git push --force --mirror origin"), BLOCK)
 
+    def test_abbreviated_broadcast_flag_is_blocked(self):
+        # git は --al を --all、--b を --branches、--mi を --mirror として受け付ける（2026-10-23 に実機で確認）。
+        # refspec を省くと宛先を特定できない理由で止まるので、保護ブランチ以外の refspec を付けて
+        # 略記の判定だけで止まることを確かめる。--force origin feature だけなら通る
+        self.assertEqual(run_guard("git push --force origin feature"), ALLOW)
+        for flag in ("--al", "--b", "--bra", "--mi", "--mirr"):
+            with self.subTest(flag=flag):
+                self.assertEqual(run_guard(f"git push --force {flag} origin feature"), BLOCK)
+
     def test_option_value_is_not_read_as_refspec(self):
         # `--receive-pack main` の値を refspec と誤読すると、対象が特定できたことに
         # なってしまう。正しく読み飛ばせば refspec 省略形として止まる。
@@ -316,6 +345,15 @@ class TestRefDeletion(unittest.TestCase):
     def test_delete_without_target_is_blocked(self):
         # 対象を特定できない形は「安全」ではなく「検査できなかった」として止める
         self.assertEqual(run_guard("git push origin --delete"), BLOCK)
+
+    def test_abbreviated_delete_flag_on_protected_branch_is_blocked(self):
+        # git は長いオプションを一意な接頭辞まで縮められる（gitcli(7)）。--de 以上で --delete になる
+        for flag in ("--de", "--del", "--dele", "--delet"):
+            with self.subTest(flag=flag):
+                self.assertEqual(run_guard(f"git push origin {flag} main"), BLOCK)
+
+    def test_abbreviated_delete_flag_on_feature_branch_is_allowed(self):
+        self.assertEqual(run_guard("git push origin --del feature"), ALLOW)
 
     def test_normal_push_with_d_in_argument_is_allowed(self):
         # `-d` を含まないブランチ名や、d で始まる長いオプションを誤検知しない
@@ -619,6 +657,33 @@ class TestVerificationBypass(unittest.TestCase):
     def test_normal_commit_is_allowed(self):
         self.assertEqual(
             run_guard('git commit -m "normal"', cwd=self.repo_with_hooks), ALLOW)
+
+    def test_abbreviated_no_verify_is_blocked_when_hooks_exist(self):
+        # git は --no-verif を --no-verify として受け付け、検証を飛ばす（2026-10-23 に実機で確認）。
+        # 接頭辞は --no-verify になるか、曖昧でエラーになるかのどちらかなので、接頭辞ごと止める
+        for command in ('git commit --no-verif -m "x"', 'git commit --no-veri -m "x"',
+                        "git merge --no-verif work", "git push --no-verif origin work"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command, cwd=self.repo_with_hooks), BLOCK)
+
+    def test_bundled_short_n_on_commit_is_blocked_when_hooks_exist(self):
+        # 短いフラグはまとめて書ける。-nm x は -n と -m x
+        for command in ("git commit -nm x", "git commit -anm x", 'git commit -an -m "x"'):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command, cwd=self.repo_with_hooks), BLOCK)
+
+    def test_n_inside_value_of_bundled_short_flag_is_allowed(self):
+        # 値を取るフラグの後ろの文字は値になる。-minit は「init」というメッセージで、検証は動く
+        for command in ("git commit -minit", "git commit -mn", 'git commit -aminit'):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command, cwd=self.repo_with_hooks), ALLOW)
+
+    def test_other_no_options_are_allowed(self):
+        # --no- で始まっても --no-verify の接頭辞でなければ止めない。merge の -n は --no-stat
+        for command in ('git commit --no-edit --amend', 'git commit --no-status -m "x"',
+                        "git merge -n work", "git merge --no-ff work"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command, cwd=self.repo_with_hooks), ALLOW)
 
 
 class TestProtectedBranchMerge(unittest.TestCase):
