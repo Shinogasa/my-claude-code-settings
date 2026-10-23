@@ -41,6 +41,8 @@ CODEX_SAFE_ARGS = (("--version",), ("-V",), ("--help",), ("-h",))
 # パスの一部（~/.claude/、~/.codex、claude.json、claude-headless）には反応しない
 AGENT_WORD_RE = re.compile(r"(?<![\w.])(claude|codex)(?![\w./-])", re.IGNORECASE)
 AGENTS = {"claude", "codex"}
+# env の短いフラグのうち、-S の前にまとめて書けるもの（値を取らない -i、-0、-v）
+ENV_SPLIT_SHORT_RE = re.compile(r"-[i0v]*S.*", re.DOTALL)
 HEREDOC_START_RE = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([A-Za-z_][\w-]*)\2")
 UNRESOLVED_NAME_RE = re.compile(r"[$`*?\[{]")
 # 実際のコマンドの前に置かれ、後ろのコマンドを起動するもの。値を取るオプションも併記する
@@ -182,8 +184,9 @@ def drop_env_unsets(raw: list):
             # 値をコマンドとして分けて実行する（env -S 'claude -p x'）。分けたトークンに置き換える
             raw = raw[:index] + split_string(raw[index + 1]) + raw[index + 2:]
             continue
-        elif in_env and not token.startswith("--") and token.startswith("-") and "S" in token[1:]:
-            # 短いフラグのまとめ書き（-iS 'x'）と、値を続けた形（-S'x'）。S より後ろか次のトークンが値
+        elif in_env and ENV_SPLIT_SHORT_RE.fullmatch(token):
+            # 短いフラグのまとめ書き（-iS 'x'）と、値を続けた形（-S'x'）。S より後ろか次のトークンが値。
+            # S より前は値を取らないフラグに限る。-uSHELL は -u SHELL で、-S の形ではない
             flags, value = token[1:].split("S", 1)
             cleared = cleared or "i" in flags
             if value:
@@ -214,31 +217,37 @@ def drop_env_unsets(raw: list):
 def unwrap(tokens: list):
     """前置き（timeout、xargs、npx、find -exec など）を剥がし、(名前, 引数) を返す。起動でなければ None。
 
-    前置きやパッケージの起動の後ろに claude / codex の語が残っていれば、名前を読み切れなくても起動とみなす。
-    値を取るオプション（npx -p foo、script -c 'claude'）や、1語にまとめたコマンド文字列（watch 'claude -p x'）を
-    すべて数え上げるのは無理なので、止める側に倒す。
+    名前を読み切れなくても、前置きやパッケージの起動の後ろに次のものがあれば起動とみなす。
+    値を取るオプション（npx -p foo、script -c 'claude'）をすべて数え上げるのは無理なので、止める側に倒す。
+    - 先頭の語が claude / codex の、1語にまとめたコマンド文字列（watch 'claude -p x'、script -c 'claude'）
+    - パッケージの起動なら、claude / codex という単独の語（npx -p foo -- claude、npm --prefix x exec claude）
+    ただの引数（xargs grep claude、git log --grep=claude）では止めない。
     """
     result = unwrap_names(tokens)
     if result is not None and result[0] in AGENTS:
         return result
-    rest = launched_part(tokens)
-    if rest:
-        found = AGENT_WORD_RE.search(" ".join(rest))
-        if found:
-            return found.group(1).lower(), []
+    rest, is_package = launched_part(tokens)
+    for token in rest:
+        words = split_string(token) if any(char.isspace() for char in token) else []
+        if words and os.path.basename(words[0]).lower() in AGENTS:
+            return os.path.basename(words[0]).lower(), words[1:]
+        if is_package and os.path.basename(token).lower() in AGENTS:
+            return os.path.basename(token).lower(), []
     return result
 
 
-def launched_part(tokens: list) -> list:
-    """最初の前置き・パッケージの起動より後ろのトークン。無ければ空。"""
+def launched_part(tokens: list):
+    """最初の前置き・パッケージの起動より後ろのトークンと、パッケージの起動かどうか。無ければ ([], False)。"""
     for index, token in enumerate(tokens):
         name = os.path.basename(token).lower()
         subcommands = PACKAGE_RUNNER_SUBCOMMANDS.get(name, ())
-        if name in WRAPPERS or name in PACKAGE_RUNNERS or any(t in subcommands for t in tokens[index + 1:]):
-            return tokens[index + 1:]
+        if name in PACKAGE_RUNNERS or any(t in subcommands for t in tokens[index + 1:]):
+            return tokens[index + 1:], True
+        if name in WRAPPERS:
+            return tokens[index + 1:], False
         if not ("=" in token and not token.startswith("-")):
-            return []
-    return []
+            return [], False
+    return [], False
 
 
 def unwrap_names(tokens: list):
