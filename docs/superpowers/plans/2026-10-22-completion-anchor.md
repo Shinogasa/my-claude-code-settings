@@ -1,4 +1,4 @@
-# 完了条件の錨（completion-anchor）実装計画
+# 完了条件の固定（completion-anchor）実装計画
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -9,7 +9,7 @@
 
 **Tech Stack:** Markdown（rule）、Python 3 標準ライブラリの `unittest`（テスト）、`bash tests/run.sh`（実行）
 
-**Spec:** `docs/superpowers/specs/2026-10-22-completion-anchor-design.md`、ADR 0038
+**Spec:** `docs/superpowers/specs/2026-10-22-completion-anchor-design.md`、ADR 0039
 
 ## Global Constraints
 
@@ -142,7 +142,7 @@ Expected: ファイルが無いことを示してFAIL
 設計書§4.1〜§4.7と§7の事例欄の指示を、60行前後を目標にまとめる（参考値。超えてもよい）。節立ては作る人に任せる。
 入れること: 対象と対象外（§4.1）、急ぎでも外さないこと、3欄と確認（§4.2）、仕分けの表（§4.3）、
 サブエージェントへの絶対パスと②の中継（§4.4）、パスを渡されていないサブエージェントは作らないこと（§4.5）、
-置き場所と `git check-ignore`（§4.6）、brainstormingの設計書を錨にすること（§4.6）、
+置き場所と `git check-ignore`（§4.6）、brainstormingの設計書を完了条件の基準にすること（§4.6）、
 並列にできた事例を `tasks/backlog.md` の該当項目へ1行追記すること（§7）。
 
 - [ ] **Step 5: GREENを確かめる**
@@ -230,7 +230,7 @@ Expected: `~/.config/git/ignore` の該当行が表示され、終了コード0
 材料として、引継書（本体の未追跡ファイル `.superpowers/handoffs/parallel-task-orchestration.md`）の§2の事例の表、
 §3.4の「賄える部分と賄えない部分」の表、§7の反証条件の未確認項目、§9の未解決事項を写す。業務固有の名前は抽象化する。コミットする
 
-この作業は完了条件の錨そのものには要らない。並列化の判定と統合を、今回の範囲から外す（設計書の非ゴール）ための後始末である。
+この作業は完了条件の固定そのものには要らない。並列化の判定と統合を、今回の範囲から外す（設計書の非ゴール）ための後始末である。
 backlogへ積むことと材料を写すことは、ユーザーが2026-10-22に決めた。引継書は本体の未追跡ファイルなので、写さないと消えたときに調査結果が失われる。
 
 - [ ] **Step 2: PRを作る前に、ユーザーへ代表検証を依頼する**（設計書§6、手動）

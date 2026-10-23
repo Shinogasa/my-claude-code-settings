@@ -1,4 +1,4 @@
-# 完了条件の錨を実装する（クラウドセッションへの引継書）
+# 完了条件の固定を実装する（クラウドセッションへの引継書）
 
 作成: 2026-10-22。ローカルのセッション（worktree `docs/parallel-task-orchestration-design`）から引き継ぐ。
 受け取る側: クラウドで動く Claude Code のセッション。
@@ -11,7 +11,7 @@
 設計と決定の経緯は、次の2つを全文読んでから始めること。
 
 - `docs/superpowers/specs/2026-10-22-completion-anchor-design.md`
-- `docs/adr/0038-completion-anchor-rule.md`
+- `docs/adr/0039-completion-anchor-rule.md`
 
 ## 2. 作業の置き場所
 

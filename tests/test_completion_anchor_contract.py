@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""完了条件の錨（rules/completion-anchor.md）の契約を検証する。
+"""完了条件の固定（rules/completion-anchor.md）の契約を検証する。
 
 文字列の契約なので、書いてあることしか確かめない。振る舞いは計画の代表検証で確かめる。
 """
