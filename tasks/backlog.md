@@ -773,13 +773,10 @@ guard-dangerous-bash にも、これらすべてと同じ穴がある（上の�
 
 ### ほかのフックの小さな穴（2026-10-23 の調査、どれも深刻度は低）
 
-- guard-agent-profile: `npm exec -- @anthropic-ai/claude-code`、`pnpm dlx …`、`script -q /dev/null claude`、`watch claude`、`env -S 'claude -p hi'` を見逃す
-  （`PACKAGE_RUNNERS` と `WRAPPERS` に無い）。再現済み
-- block-commit-on-merged-pr: `COMMAND_PREFIXES` に `rtk` が無いので、`rtk git commit` を照会しない。
-  Claude Code では rtk の書き換え前のコマンドが渡るので、影響はエージェントが自分で rtk を付けた場合に限られる。再現済み
-- require-full-tests-before-pr: PR 作成と判定した後でも、cwd が無ければ何も出さずに通す（docstring の「検査できなかったことを問題なしに畳まない」と食い違う）。
-  matcher が Bash だけなので、Bash 以外（MCP など）で PR を作る経路は見ない（jp-doc-review も同じ）。前者は再現済み、後者は未確認
-- skill-read-check: offset / limit 付きの一部だけの Read も「読んだ」と数える。再現済み
+guard-agent-profile・block-commit-on-merged-pr・require-full-tests-before-pr の cwd・skill-read-check の一部だけの Read は、2026-10-23 に直した。残りは Codex に関係するものと、未確認のもの。
+
+- require-full-tests-before-pr: matcher が Bash だけなので、Bash 以外（MCP など）で PR を作る経路は見ない（jp-doc-review も同じ）。未確認
+- skill-read-check: Bash の `head` / `sed -n` で一部だけ読んだ場合も、パスがあれば読んだと数える（2026-10-23 に Read の offset / limit だけ直した）
 - detect-parallel-sessions: 列挙が `pgrep -x claude` だけなので、Codex のセッション同士の並列は検出しない。未再現
 - check-codex-base-provider: `profile` で provider を選ぶ構成や、`-c model_provider=` による上書きを考慮しない。未再現
 - codex-model-switch-hook: 切り替えが無いときでも、例外（cwd のディレクトリが消えたなど）で exit 2 になり、Codex の全ツールが止まりうる。未再現
