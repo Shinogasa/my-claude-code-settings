@@ -1162,7 +1162,7 @@ class TestFinalReviewFindings(TrackingFixture):
                         'git commit -m "<" --no-verify',
                         "git commit -m ';' --no-verify",
                         'git commit -m "a && b" --no-verify',
-                        'git commit -m x\; --no-verify'):
+                        r'git commit -m x\; --no-verify'):
             with self.subTest(command=command):
                 result = run_guard_in(command, hooked_work, hooked_work)
                 self.assertEqual(result.returncode, BLOCK, f"{command}: {result.stderr}")

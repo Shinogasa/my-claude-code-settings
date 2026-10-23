@@ -741,8 +741,8 @@ python3 -W error::ResourceWarning -m unittest tests.test_codex_model_switch_runt
 PRの前は `--all` で全件を流す。依存はuvの一時環境に入るだけで、システムやdotfilesには何も入れない。
 
 ```bash
-bash tests/run.sh          # 既定の組（約1分）
-bash tests/run.sh --all    # 全件（約4分）
+bash tests/run.sh          # 既定の組（約35秒）
+bash tests/run.sh --all    # 全件（約1分）
 bash tests/run.sh --dry-run --all  # 実行するコマンドを表示するだけ
 ```
 
