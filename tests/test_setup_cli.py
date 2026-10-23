@@ -307,7 +307,8 @@ class SetupCliTests(unittest.TestCase):
         self.assertEqual(permissions["defaultMode"], "auto")
         self.assertEqual(permissions["allow"], ["Bash(ls)"])
         for rule in ("Bash(curl *)", "Read(~/.ssh/**)", "Read(~/.aws/credentials)", "Read(//**/.env)",
-                     "Read(//**/*.tfstate)"):
+                     "Read(//**/*.tfstate)", "Read(//**/.env.local)", "Read(//**/.envrc)",
+                     "Read(~/.git-credentials)", "Read(~/.zsh_history)", "Read(~/.claude.json)"):
             with self.subTest(rule=rule):
                 self.assertEqual(permissions["deny"].count(rule), 1)
 
