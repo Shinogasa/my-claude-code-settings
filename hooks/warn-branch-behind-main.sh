@@ -44,8 +44,8 @@ prefix_word='(time|exec|nohup|command|builtin|env|!|if|then|elif|else|while|unti
 # proxy を prefix_word に入れないのは、`echo proxy terraform apply` を誤って止めないため。
 options='(-[^[:space:]]+[[:space:]]+)*'
 rtk_wrapper="rtk[[:space:]]+${options}(proxy[[:space:]]+${options})?"
-# 代入の値は、引用符の中と $(...) の中の空白で切らない
-assignment="[A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|'[^']*'|\\\$\\([^)]*\\)|[^[:space:]'\"]+)*"
+# 代入の値は、引用符の中・$(...) の中・バックスラッシュでエスケープした空白で切らない
+assignment="[A-Za-z_][A-Za-z0-9_]*=(\\\\.|\"[^\"]*\"|'[^']*'|\\\$\\([^)]*\\)|[^[:space:]'\"\\\\]+)*"
 tf_prefix="(^|[;&|(])[[:space:]]*((${prefix_word}|${assignment})[[:space:]]+${options}|${rtk_wrapper})*(terraform|tofu)[[:space:]]+${options}"
 
 # 状態を変えうるサブコマンドだけを対象にする。fmt / validate / version は巻き込まない。
