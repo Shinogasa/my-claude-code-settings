@@ -24,7 +24,8 @@
 # 制約:
 #   timeout(1) が無い環境があるため、fetch は SSH の ConnectTimeout で縛る。
 #   fetch に失敗しても取得済みの ref で判定を続ける（fail-open）。
-#   判定できない場合は黙って通す。フック自身が作業を止めないことを優先する。
+#   git の状態を判定できない場合は黙って通す。フック自身が作業を止めないことを優先する。
+#   ただし、terraform かどうかの判定（grep）に失敗したときは、黙らずに systemMessage で知らせる。
 
 set -uo pipefail
 
@@ -62,7 +63,13 @@ name="\\\\?[\"']?([^[:space:];&|()\`'\"]*/)?(terraform|tofu)[\"']?"
 tf_prefix="(^|[;&|(\`])[[:space:]]*${prefix}${name}[[:space:]]+${options}"
 
 # 状態を変えうるサブコマンドだけを対象にする。fmt / validate / version は巻き込まない。
-if ! printf '%s' "$command" | grep -Eq "${tf_prefix}(plan|apply|destroy|import|refresh|state|taint|untaint|force-unlock|workspace)\b"; then
+printf '%s' "$command" | grep -Eq "${tf_prefix}(plan|apply|destroy|import|refresh|state|taint|untaint|force-unlock|workspace)\b"
+match_status=$?
+[ "$match_status" -eq 1 ] && exit 0
+if [ "$match_status" -ne 0 ]; then
+  # grep が正規表現を受け付けないなど、検査できなかった。一致なしと同じに扱うと、どの terraform も黙って通る
+  jq -n --arg msg "warn-branch-behind-main: terraform の判定に失敗した（grep の終了コード ${match_status}）。ブランチの遅れを確かめていない。" \
+    '{systemMessage: $msg}'
   exit 0
 fi
 
@@ -107,7 +114,9 @@ ${default_ref} に入っている変更がこのブランチには無いため�
 #
 # それ以外（plan 等）は読み取りのみなので警告に留める。plan はむしろ
 # 偽陽性に気づくための経路なので、止めると発見が遅れる。
-if printf '%s' "$command" | grep -Eq "${tf_prefix}(apply|destroy)\b"; then
+printf '%s' "$command" | grep -Eq "${tf_prefix}(apply|destroy)\b"
+# 判定に失敗したときは、apply / destroy かもしれないので止める側に倒す
+if [ $? -ne 1 ]; then
   jq -n --arg reason "${detail}
 
 このブランチのまま apply することはできません。次のいずれかで解消してください:
