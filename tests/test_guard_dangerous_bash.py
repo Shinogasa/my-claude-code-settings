@@ -130,6 +130,12 @@ class TestDangerousCommands(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(run_guard(command), BLOCK)
 
+    def test_rm_recursive_without_force_on_root_or_home_is_blocked(self):
+        # エージェントの Bash には tty が無いので、-f が無くても確認なしで消える（2026-10-23 のセキュリティレビュー）
+        for command in ("rm -r ~", "rm -R $HOME/", "rm --recursive /", "rm -r /*", "rm --rec ~/.."):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command), BLOCK)
+
     def test_rm_rf_under_root_or_home_is_allowed(self):
         for command in ("rm -rf /tmp/build", "rm -rf ~/tmp", "rm -rf $HOME/tmp",
                         "rm -r /tmp/x", "rm -f /tmp/x", "rm --recursive ./build",
@@ -373,6 +379,18 @@ class TestRefDeletion(unittest.TestCase):
 
     def test_abbreviated_delete_flag_on_feature_branch_is_allowed(self):
         self.assertEqual(run_guard("git push origin --del feature"), ALLOW)
+
+    def test_push_option_value_is_not_read_as_delete_or_force(self):
+        # -o は続く文字を値に取る。-od の d は push option の値で、--delete ではない
+        for command in ("git push -od origin main", "git push -of origin main"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command), ALLOW)
+
+    def test_delete_or_force_before_push_option_is_blocked(self):
+        # -o より前の d / f はフラグ
+        for command in ("git push -do x origin main", "git push -fo x origin main"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command), BLOCK)
 
     def test_normal_push_with_d_in_argument_is_allowed(self):
         # `-d` を含まないブランチ名や、d で始まる長いオプションを誤検知しない
@@ -753,6 +771,15 @@ class TestProtectedBranchMerge(unittest.TestCase):
         for command in ("git merge --abort", "git merge --quit"):
             with self.subTest(command=command):
                 self.assertEqual(run_guard(command, cwd=self.on_main), ALLOW)
+
+    def test_abbreviated_abort_on_main_is_allowed(self):
+        # git は長いオプションを一意な接頭辞まで縮められる（gitcli(7)）。--abo は --abort
+        for command in ("git merge --abo", "git merge --abor"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command, cwd=self.on_main), ALLOW)
+
+    def test_abbreviated_abort_as_option_value_is_blocked(self):
+        self.assertEqual(run_guard("git merge -m --abo feat/x", cwd=self.on_main), BLOCK)
 
     def test_abort_as_option_value_is_blocked(self):
         # -m の値として --abort を渡すと、マージは実行される
