@@ -210,6 +210,18 @@ class AgentProfileGuardTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertBlocked(command, self.claude_personal())
 
+    def test_env_unset_with_capital_s_is_not_read_as_split_string(self):
+        # -uSHELL は -u SHELL。S より前がフラグでなければ -S の形ではない
+        self.assertBlocked("env -uSHELL claude -p x", self.claude_personal())
+
+    def test_agent_words_as_arguments_of_wrapped_commands_are_allowed(self):
+        # 前置きの後ろに語があるだけでは起動ではない（セキュリティレビューの指摘した誤検知）
+        for command in ("xargs grep claude", "time grep -ri codex .", "timeout 30 git log --grep=claude",
+                        'time git commit -m "update codex docs"', "watch -n 5 'pgrep claude'",
+                        'nohup gh pr create --title "fix claude hook"'):
+            with self.subTest(command=command):
+                self.assertAllowed(command, self.claude_personal())
+
     def test_package_manager_subcommands_without_agents_are_allowed(self):
         for command in ("npm exec -- prettier --check .", "pnpm dlx create-vite x", "watch ls", "env -S 'ls -l'"):
             with self.subTest(command=command):
