@@ -164,8 +164,23 @@ class TestBehindBranch(unittest.TestCase):
             with self.subTest(word=word):
                 self.assertEqual(decision(f"{word} terraform apply", self.repo), "deny")
 
+    def test_rtk_proxy_is_skipped(self):
+        # guard-dangerous-bash の skip_rtk_wrapper と同じく `rtk [opts] proxy [opts]` を読み飛ばす
+        for command in ("rtk proxy terraform apply", "rtk -v proxy terraform destroy",
+                        "rtk proxy tofu apply"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command, self.repo), "deny")
+
+    def test_assignment_with_quoted_or_substituted_value_is_skipped(self):
+        # 値の途中の空白で代入が切れると、残りが前置きに当たらず素通りしていた（セキュリティレビュー）
+        for command in ('AWS_PROFILE="my dev" terraform apply', "X='a b' terraform apply",
+                        "TF_VAR_x=$(date +%s) terraform apply", "FOO=\"\" BAR='x y' tofu destroy"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command, self.repo), "deny")
+
     def test_word_after_non_prefix_command_is_ignored(self):
-        for command in ("echo rtk terraform apply", "echo AWS_PROFILE=dev terraform apply"):
+        for command in ("echo rtk terraform apply", "echo AWS_PROFILE=dev terraform apply",
+                        "echo proxy terraform apply"):
             with self.subTest(command=command):
                 self.assertEqual(run_hook(command, self.repo), "")
 
