@@ -95,6 +95,17 @@ class TestDangerousCommands(unittest.TestCase):
     def test_rm_rf_root_is_blocked(self):
         self.assertEqual(run_guard("rm -rf /"), BLOCK)
 
+    def test_abbreviated_reset_hard_is_blocked(self):
+        # git は --har を --hard として受け付ける（2026-10-23 のセキュリティレビュー F4）
+        for command in ("git reset --har", "git reset --ha HEAD~3", "git -C . reset --har"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command), BLOCK)
+
+    def test_other_reset_modes_are_allowed(self):
+        for command in ("git reset --soft HEAD~1", "git reset --mixed", "git reset --keep HEAD"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command), ALLOW)
+
     def test_rm_rf_home_is_blocked(self):
         self.assertEqual(run_guard("rm -rf ~"), BLOCK)
 
@@ -112,9 +123,17 @@ class TestDangerousCommands(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(run_guard(command), BLOCK)
 
+    def test_rm_rf_parent_and_glob_of_root_or_home_is_blocked(self):
+        # .. で / か ~ の上に戻る形と、/* 以外の glob（2026-10-23 のセキュリティレビュー F2）
+        for command in ("rm -rf /..", "rm -rf /../*", "rm -rf /tmp/..", "rm -rf ~/..",
+                        "rm -rf $HOME/..", "rm -rf ~/x/..", "rm -rf /**", "rm -rf ~/.*"):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command), BLOCK)
+
     def test_rm_rf_under_root_or_home_is_allowed(self):
         for command in ("rm -rf /tmp/build", "rm -rf ~/tmp", "rm -rf $HOME/tmp",
-                        "rm -r /tmp/x", "rm -f /tmp/x", "rm --recursive ./build"):
+                        "rm -r /tmp/x", "rm -f /tmp/x", "rm --recursive ./build",
+                        "rm -rf /tmp/a/..", "rm -rf ~/x/../y", "rm -rf ~/tmp/*"):
             with self.subTest(command=command):
                 self.assertEqual(run_guard(command), ALLOW)
 
@@ -675,6 +694,14 @@ class TestVerificationBypass(unittest.TestCase):
     def test_n_inside_value_of_bundled_short_flag_is_allowed(self):
         # 値を取るフラグの後ろの文字は値になる。-minit は「init」というメッセージで、検証は動く
         for command in ("git commit -minit", "git commit -mn", 'git commit -aminit'):
+            with self.subTest(command=command):
+                self.assertEqual(run_guard(command, cwd=self.repo_with_hooks), ALLOW)
+
+    def test_message_starting_with_hyphen_is_allowed(self):
+        # ハイフンで始まる値を短いフラグのまとめ書きと読まない（2026-10-23 のセキュリティレビュー F1。
+        # まとめ書きの判定を足したときに生じた退行）
+        for command in ('git commit -m "- Add new feature"', 'git commit -m "-n を足した"',
+                        'git commit -m "-nを足した"', "git commit -m '- fix: typo'"):
             with self.subTest(command=command):
                 self.assertEqual(run_guard(command, cwd=self.repo_with_hooks), ALLOW)
 
