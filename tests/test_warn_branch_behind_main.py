@@ -174,7 +174,9 @@ class TestBehindBranch(unittest.TestCase):
     def test_assignment_with_quoted_or_substituted_value_is_skipped(self):
         # 値の途中の空白で代入が切れると、残りが前置きに当たらず素通りしていた（セキュリティレビュー）
         for command in ('AWS_PROFILE="my dev" terraform apply', "X='a b' terraform apply",
-                        "TF_VAR_x=$(date +%s) terraform apply", "FOO=\"\" BAR='x y' tofu destroy"):
+                        "TF_VAR_x=$(date +%s) terraform apply", "FOO=\"\" BAR='x y' tofu destroy",
+                        # バックスラッシュでエスケープした文字（コミット後の自動セキュリティレビュー）
+                        'X=a\\"b terraform apply', "X=a\\ b terraform apply"):
             with self.subTest(command=command):
                 self.assertEqual(decision(command, self.repo), "deny")
 
