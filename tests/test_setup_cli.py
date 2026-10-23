@@ -709,6 +709,18 @@ class SetupCliTests(unittest.TestCase):
         self.assertEqual(list((self.home / ".claude").iterdir()), [])
         self.assertFalse((self.home.parent / "commands.log").exists())
 
+    def test_invalid_settings_permissions_stops_before_home_apply(self):
+        (self.home / ".claude").mkdir()
+        template = self.repository / "settings.json.template"
+        document = json.loads(template.read_text(encoding="utf-8"))
+        document["permissions"] = {"deny": "Read(~/.ssh/**)"}  # リストでない
+        template.write_text(json.dumps(document), encoding="utf-8")
+
+        result = run_setup(self.repository, self.home, "--claude")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(list((self.home / ".claude").iterdir()), [])
+
     def test_submodule_and_git_hooks_run_after_preflight_before_home_apply(self):
         (self.home / ".claude").mkdir()
         (self.repository / ".githooks" / "patterns-local.txt").unlink(missing_ok=True)

@@ -4,6 +4,18 @@
     "type": "command",
     "command": "~/.claude/statusline.js"
   },
+  "permissions": {
+    "deny": [
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/credentials)",
+      "Read(~/.config/gh/hosts.yml)",
+      "Read(~/.netrc)",
+      "Read(~/.docker/config.json)",
+      "Read(//**/.env)",
+      "Read(//**/*.tfstate)",
+      "Read(//**/*.tfstate.backup)"
+    ]
+  },
   "enabledPlugins": {
     "code-review@claude-plugins-official": true,
     "learning-output-style@claude-plugins-official": false,

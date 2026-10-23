@@ -45,7 +45,9 @@ bash setup.sh --claude
 1. git submodule の初期化・更新
 2. 選択したホストの設定ディレクトリへシンボリックリンクを作成
 3. Claudeを選択した場合、`settings.json.template` から `~/.claude/settings.json` を生成し、
-   `.env` が存在すれば `env` ブロック（APIキー等）を追加マージ
+   `.env` が存在すれば `env` ブロック（APIキー等）を追加マージ。
+   `permissions` は既存の値（`defaultMode` など）を残し、テンプレートの規則を足すだけにする。
+   テンプレートは、秘密鍵・認証情報・`.env`・terraform の state をエージェントが Read することを拒否している
 4. Claudeを選択した場合、`~/.claude/settings.personal.json` を生成する
 5. Codexを選択した場合、`~/.codex-personal` があれば、そこにも同じリンクを張る（[認証プロファイルの切り替え](#認証プロファイルの切り替え)用）
 
