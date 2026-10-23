@@ -36,10 +36,10 @@
 既定の組は54秒、`--all` は100〜195秒だった。効果の大きい順に並べる。
 
 最大の原因（git の ident が無く、並列時に mDNS で5秒待つ）は、2026-10-23 に `tests/git_fixture.py` で直した。既定の組は66秒から43秒になった。
-2番目の原因（`copy_repository` が約460ファイルを `shutil.copytree` で写す）は、2026-10-23 に `tests/repository_copy.py` で APFS の clonefile に替えた。`--all` は115〜125秒から84秒になり、ident の修正と合わせると62秒になった。
+2番目の原因は、`copy_repository` が約460ファイルを `shutil.copytree` で写すことだった。2026-10-23 に `tests/repository_copy.py` で写し方を APFS の clonefile に替えた。`--all` は115〜125秒から84秒になり、ident の修正と合わせると62秒になった。
 
 1. **新しく作った実行ファイルの初回起動を減らす**: 1回110〜340msかかり、システム全体で一列に並ぶ。
-   スタブをワーカーごとに1回だけ作り、各テストには symlink を置くと、clonefile の上に重ねて setup 系が48秒から44秒になった
+   clonefile に重ねて、スタブをワーカーごとに1回だけ作り、各テストには symlink を置くと、setup 系が48秒から44秒になった
 2. **`setup.sh` の外部コマンドを減らす**: 1回の実行で `python3` が62回（うち26回は `setup.sh:190` の normpath）、`dirname` が約260回起動する。
    一括処理とパラメータ展開に替えると、1回あたり約20%短くなる見込み（未計測）。本番のコードを変える
 3. **フックのタイムアウトを待つテスト**（principle-review の10秒、guard-dangerous-bash の3秒×4件）。実時間への影響は約2秒で、割に合わない
@@ -48,7 +48,7 @@
 - README のテスト時間の目安（既定の組で約1分、`--all` で約4分）が、実測（54秒、100秒）とずれている
 - `tests/test_guard_dangerous_bash.py` の `'git commit -m x\; --no-verify'` で `SyntaxWarning: invalid escape sequence` が出る
 
-**決めること**: 1〜3のどれをやるか。clonefile 化の後の時間で測り直してから決める。
+**決めること**: 1〜3のどれをやるか。clonefile 化の後に時間を測り直してから決める。
 **着手条件**: 未定（2026-10-23に積んだ）。
 
 ### `tasks/lessons.md` の役割を決め直す
