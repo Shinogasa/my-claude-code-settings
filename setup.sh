@@ -287,6 +287,12 @@ if not isinstance(plugins, dict) or not all(
     raise ValueError("settings.json.template enabledPlugins must be a boolean object")
 if not isinstance(settings.get("env", {}), dict):
     raise ValueError("settings.json.template env must be an object")
+permissions = settings.get("permissions", {})
+if not isinstance(permissions, dict) or not all(
+    isinstance(rules, list) and all(isinstance(rule, str) for rule in rules)
+    for key, rules in permissions.items() if key in ("allow", "ask", "deny")
+):
+    raise ValueError("settings.json.template permissions must hold lists of strings")
 if not isinstance(env.get("env"), dict):
     raise ValueError("env.json.template env must be an object")
 PY
@@ -727,7 +733,19 @@ try:
 except (OSError, UnicodeError, json.JSONDecodeError):
     pass
 template = json.loads(Path(settings_template).read_text(encoding="utf-8"))
+existing_permissions = settings.get("permissions")
 settings.update(template)
+# permissions は丸ごと上書きしない。利用者や Claude Code が書いた defaultMode・allow などを残し、
+# テンプレートの規則（機密ファイルの Read の拒否など）は足すだけにする
+if isinstance(existing_permissions, dict) and "permissions" in template:
+    permissions = dict(existing_permissions)
+    for key, value in template["permissions"].items():
+        current = permissions.get(key)
+        if isinstance(value, list) and isinstance(current, list):
+            permissions[key] = current + [rule for rule in value if rule not in current]
+        else:
+            permissions[key] = value
+    settings["permissions"] = permissions
 env_template_values = json.loads(Path(env_template).read_text(encoding="utf-8"))["env"]
 if merge_env == "true":
     configured_env = json.loads(os.environ["SETUP_ENV_JSON"])
