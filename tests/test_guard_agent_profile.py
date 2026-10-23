@@ -194,7 +194,8 @@ class AgentProfileGuardTests(unittest.TestCase):
         for command in ("npm exec -- @anthropic-ai/claude-code -p x", "npm x @anthropic-ai/claude-code -p x",
                         "pnpm dlx @anthropic-ai/claude-code -p x", "yarn dlx @anthropic-ai/claude-code -p x",
                         "script -q /dev/null claude -p x", "watch claude -p x", "watch -n 5 claude -p x",
-                        "env -S 'claude -p hi'", "env --split-string='claude -p hi'"):
+                        "env -S 'claude -p hi'", "env --split-string='claude -p hi'",
+                        "pnpm exec claude -p x", "npm exec --package=@anthropic-ai/claude-code -- claude -p x"):
             with self.subTest(command=command):
                 self.assertBlocked(command, self.claude_personal())
 
