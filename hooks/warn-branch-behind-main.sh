@@ -64,6 +64,7 @@ tf_prefix="(^|[;&|(\`])[[:space:]]*${prefix}${name}[[:space:]]+${options}"
 
 # 状態を変えうるサブコマンドだけを対象にする。fmt / validate / version は巻き込まない。
 # パイプにしない。grep -q が先に終わると printf が SIGPIPE で失敗し、pipefail の下で判定の失敗と区別できなくなる
+# ヒアストリングの一時ファイルを作れない環境（TMPDIR に書けないなど）では一致なしと同じになるが、jq が無い場合と同じく受け入れる
 grep -Eq "${tf_prefix}(plan|apply|destroy|import|refresh|state|taint|untaint|force-unlock|workspace)\b" <<<"$command"
 match_status=$?
 [ "$match_status" -eq 1 ] && exit 0
