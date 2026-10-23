@@ -295,6 +295,11 @@ class TestForcePushTarget(unittest.TestCase):
             run_guard("git push --force --receive-pack main origin"), BLOCK
         )
 
+    def test_short_option_value_is_not_read_as_refspec(self):
+        # -fo x の x は push option の値。remote と読むと origin を refspec と取り違え、
+        # refspec 省略形（宛先が現在のブランチ依存）を見逃す
+        self.assertEqual(run_guard("git push -fo x origin"), BLOCK)
+
 
 class TestForcePushAmbiguousTarget(unittest.TestCase):
     """宛先の表記ゆれは正規化せず、確定できない形として止める。
