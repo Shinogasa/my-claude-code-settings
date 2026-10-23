@@ -10,6 +10,7 @@
 """
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -179,6 +180,50 @@ class TestBehindBranch(unittest.TestCase):
                         'X=a\\"b terraform apply', "X=a\\ b terraform apply"):
             with self.subTest(command=command):
                 self.assertEqual(decision(command, self.repo), "deny")
+
+    def test_more_spellings_of_apply_are_denied(self):
+        # 2026-10-23 のセキュリティレビューで、遅れたブランチでも通ると分かった書き方
+        for command in (
+                # 値を取る前置きのオプション
+                "env -u AWS_PROFILE terraform apply", "env -C . terraform apply",
+                "time -f %e terraform apply", "exec -a name terraform apply",
+                # コマンド名の別表記
+                "/usr/local/bin/terraform apply", "./terraform apply", "\\terraform apply",
+                '"terraform" apply', "'tofu' destroy",
+                # リダイレクトの前置き
+                "2>&1 terraform apply", ">/dev/null terraform apply",
+                # 1行に収まらない形
+                "terraform \\\napply", "echo `terraform apply`"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command, self.repo), "deny")
+
+    def test_state_changing_subcommands_warn(self):
+        # state を書き換える・ロックを外すサブコマンド。apply ではないので警告にとどめる
+        for command in ("terraform taint aws_instance.x", "terraform untaint aws_instance.x",
+                        "terraform force-unlock 1234", "terraform workspace select dev"):
+            with self.subTest(command=command):
+                out = run_hook(command, self.repo)
+                self.assertNotEqual(out, "")
+                self.assertIsNone(json.loads(out)["hookSpecificOutput"].get("permissionDecision"))
+
+    def test_grep_failure_is_reported_instead_of_passing_silently(self):
+        # 正規表現を grep が受け付けないと終了コード2になる。一致なし（1）と同じに扱うと、
+        # どの terraform も黙って通る（2026-10-23 のセキュリティレビュー）
+        with tempfile.TemporaryDirectory() as stub_dir:
+            stub = Path(stub_dir) / "grep"
+            stub.write_text("#!/bin/sh\nexit 2\n")
+            stub.chmod(0o755)
+            payload = {"tool_name": "Bash", "tool_input": {"command": "terraform apply"}}
+            result = subprocess.run(
+                ["bash", str(HOOK)], input=json.dumps(payload), capture_output=True, text=True,
+                cwd=str(self.repo), env={**os.environ, "PATH": f"{stub_dir}:{os.environ['PATH']}"})
+        self.assertIn("systemMessage", json.loads(result.stdout))
+
+    def test_long_command_after_apply_is_still_denied(self):
+        # grep -q は一致した時点で終わるので、パイプの残りを書いていた printf が SIGPIPE で 141 になる。
+        # pipefail の下ではそれがパイプ全体の終了コードになり、判定の失敗と取り違える
+        command = "terraform apply\n: <<'EOF'\n" + "x" * 200_000 + "\nEOF"
+        self.assertEqual(decision(command, self.repo), "deny")
 
     def test_word_after_non_prefix_command_is_ignored(self):
         for command in ("echo rtk terraform apply", "echo AWS_PROFILE=dev terraform apply",
