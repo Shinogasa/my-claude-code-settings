@@ -15,23 +15,13 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from repository_copy import copy_repository  # noqa: E402
+
 STATE_MODULE = ROOT / "bin" / "setup-state.py"
 REAL_GIT = shutil.which("git")
 # setup.sh の refuse_worktree が git -C <repository> の後ろに渡す引数列
 GUARD_REV_PARSE = "rev-parse --path-format=absolute --git-dir --git-common-dir"
-
-
-def copy_repository(base: Path) -> Path:
-    repository = base / "repository"
-    repository.mkdir()
-    for relative in (
-        ".gitmodules", "CLAUDE.md", "README.md", "settings.json.template",
-        "env.json.template", "setup.sh", "statusline.js",
-    ):
-        shutil.copy2(ROOT / relative, repository / relative)
-    for relative in (".githooks", "agents", "bin", "codex", "commands", "hooks", "manifests", "output-styles", "personas", "rules", "skills"):
-        shutil.copytree(ROOT / relative, repository / relative, symlinks=True)
-    return repository
 
 
 def tracked_git(repository: Path, home: Path, *arguments: str):
