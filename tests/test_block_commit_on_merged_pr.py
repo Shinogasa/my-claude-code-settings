@@ -108,6 +108,13 @@ class MergedPrHookTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.decision(self.run_hook(command, prs=merged)[1]), "deny")
 
+    def test_commit_through_rtk_is_checked(self):
+        # エージェントが自分で rtk を付けると、照会せずに通していた（2026-10-23 の調査）
+        merged = [{"number": 3, "state": "MERGED", "url": "u"}]
+        for command in ("rtk git commit -m x", "rtk proxy git commit -m x", "rtk -v git commit -m x"):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(self.run_hook(command, prs=merged)[1]), "deny")
+
     def test_default_branch_and_detached_head_are_not_queried(self):
         self.git("switch", "-q", "main")
         self.assertEqual(self.run_hook("git commit -m x", prs=[{"number": 1, "state": "MERGED", "url": "u"}]), (0, {}))

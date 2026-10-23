@@ -96,6 +96,16 @@ class SkillReadCheckTests(unittest.TestCase):
         self.assertIn(str(self.root / "references" / "b.md"), output["reason"])
         self.assertNotIn("a.md", output["reason"].replace("b.md", ""))
 
+    def test_partial_read_does_not_count(self):
+        # offset / limit 付きの Read は一部しか読んでいない（2026-10-23 の調査）
+        partial = [call("Read", file_path=str(self.root / "references" / "b.md"), offset=1, limit=10),
+                   call("Read", file_path=str(self.root / "references" / "b.md"), limit=5)]
+        self.transcript(prompt(), call("Skill", skill="demo"),
+                        *self.reads("references/a.md", "references/domains/y.md"), *partial)
+        output = self.run_hook()
+        self.assertEqual(output["decision"], "block")
+        self.assertIn(str(self.root / "references" / "b.md"), output["reason"])
+
     def test_missing_any_of_group_is_reported_once(self):
         self.transcript(prompt(), call("Skill", skill="demo"), *self.reads("references/a.md", "references/b.md"))
         reason = self.run_hook()["reason"]

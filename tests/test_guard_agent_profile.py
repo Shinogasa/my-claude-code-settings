@@ -189,6 +189,20 @@ class AgentProfileGuardTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertBlocked(command, self.env(CLAUDE_PROFILE="personal"))
 
+    def test_blocks_more_wrapped_launches(self):
+        # 2026-10-23 の調査で見逃していた起動の形
+        for command in ("npm exec -- @anthropic-ai/claude-code -p x", "npm x @anthropic-ai/claude-code -p x",
+                        "pnpm dlx @anthropic-ai/claude-code -p x", "yarn dlx @anthropic-ai/claude-code -p x",
+                        "script -q /dev/null claude -p x", "watch claude -p x", "watch -n 5 claude -p x",
+                        "env -S 'claude -p hi'", "env --split-string='claude -p hi'"):
+            with self.subTest(command=command):
+                self.assertBlocked(command, self.claude_personal())
+
+    def test_package_manager_subcommands_without_agents_are_allowed(self):
+        for command in ("npm exec -- prettier --check .", "pnpm dlx create-vite x", "watch ls", "env -S 'ls -l'"):
+            with self.subTest(command=command):
+                self.assertAllowed(command, self.claude_personal())
+
     def test_blocks_unresolvable_command_names_mentioning_agents(self):
         for command in ("c=claude; $c -p x", '"${CLAUDE_BIN:-claude}" -p x',
                         "$(command -v claude) -p x", "~/.local/bin/clau?e -p x"):
