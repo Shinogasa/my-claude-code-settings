@@ -754,6 +754,20 @@ https のリモートで fetch が止まると、フック全体のタイムア�
 **決めること**: fetch 全体の時間を縛るか（`timeout(1)` が無い環境への備えが要る）、制約として受け入れるか。
 **着手条件**: https のリモートで terraform を扱うリポジトリが出たとき。
 
+### `warn-branch-behind-main` の正規表現で読み飛ばせない書き方（2026-10-23 のセキュリティレビュー）
+
+前置き（`rtk`・`env`・代入など）は読み飛ばすようにしたが、正規表現1本の判定なので、次は遅れたブランチでも通る（再現済み）。
+どれも guard-dangerous-bash にも同じ穴がある（上の「入れ子のシェルと環境変数で判定対象を見失う」と同じ部類）。
+
+- 値を取る前置きのオプション: `env -u AWS_PROFILE terraform apply`、`time -f %e terraform apply`、`exec -a name terraform apply`
+- コマンド名の別表記: `/usr/local/bin/terraform apply`、`./terraform apply`、`\terraform apply`、`"terraform" apply`
+- リダイレクトの前置き: `2>&1 terraform apply`。行継続（`terraform \` の次の行に `apply`）、バッククォートの中
+- 対象のサブコマンドに `taint` / `untaint` / `force-unlock` / `workspace` が無い
+- 誤検知（安全側）: 引用符の中の `; terraform apply` や、ヒアドキュメントの行頭の `then terraform apply` などでも止まる
+
+**決めること**: 前置きの解析を guard-dangerous-bash の Python の解析と共有するか（2026-10-23 には、このフックの正規表現を広げる案を採った）。
+**着手条件**: この経路での取りこぼしを観測したとき、または guard の解析を共通モジュールへ切り出すとき。
+
 ### Codex の `apply_patch` で、パッチの本文を Bash のコマンドとして検査してしまう（2026-10-23 の調査）
 
 深刻度は中。合成した payload では再現した。実機の Codex で `apply_patch` がこの形で届くかは未確認。
