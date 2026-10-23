@@ -43,14 +43,17 @@ AGENT_WORD_RE = re.compile(r"(?<![\w.])(claude|codex)(?![\w./-])", re.IGNORECASE
 AGENTS = {"claude", "codex"}
 # env の短いフラグのうち、-S の前にまとめて書けるもの（値を取らない -i、-0、-v）
 ENV_SPLIT_SHORT_RE = re.compile(r"-[i0v]*S.*", re.DOTALL)
+# script の -c / --command と、-qc のようなまとめ書き
+SCRIPT_COMMAND_RE = re.compile(r"--command|-[a-zA-Z]*c")
 HEREDOC_START_RE = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([A-Za-z_][\w-]*)\2")
 UNRESOLVED_NAME_RE = re.compile(r"[$`*?\[{]")
 # 実際のコマンドの前に置かれ、後ろのコマンドを起動するもの。値を取るオプションも併記する
 WRAPPERS = {
     "timeout": {"-s", "--signal", "-k", "--kill-after"}, "gtimeout": {"-s", "--signal", "-k", "--kill-after"},
     "nice": {"-n", "--adjustment"}, "nohup": set(), "caffeinate": {"-t", "-w"}, "setsid": set(),
-    "stdbuf": {"-i", "-o", "-e"}, "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U"},
-    "xargs": {"-n", "-I", "-L", "-P", "-s", "-d", "-E", "-a", "--max-args", "--max-procs", "--delimiter"},
+    "stdbuf": {"-i", "-o", "-e"}, "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-R", "-U"},
+    "xargs": {"-n", "-I", "-J", "-L", "-P", "-R", "-S", "-s", "-d", "-E", "-a",
+              "--max-args", "--max-procs", "--delimiter"},
     "env": {"-C", "--chdir", "-S", "--split-string", "-u", "--unset"},
     "exec": {"-a"}, "time": set(), "command": set(), "builtin": set(),
     "watch": {"-n", "--interval"}, "script": {"-t"},
@@ -262,6 +265,9 @@ def unwrap_names(tokens: list):
             while index < len(tokens) and (tokens[index].startswith("-") or (name == "env" and "=" in tokens[index])):
                 option = tokens[index]
                 index += 1
+                if name == "script" and SCRIPT_COMMAND_RE.fullmatch(option) and index < len(tokens):
+                    # util-linux の script -c CMD は、値をコマンドとして実行する
+                    return unwrap_names(split_string(tokens[index]))
                 if option in WRAPPERS[name] and index < len(tokens):
                     index += 1
             if name in TAKES_ONE_ARGUMENT and index < len(tokens):
