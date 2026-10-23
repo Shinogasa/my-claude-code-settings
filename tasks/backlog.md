@@ -740,7 +740,7 @@ https のリモートで fetch が止まると、フック全体のタイムア�
 - 引用符の中の `; terraform apply`、ヒアドキュメントの行頭の `then terraform apply`、閉じるバッククォートの後
   （``echo `date` terraform apply``）でも止まる
 
-guard-dangerous-bash にも、値を取る前置きのオプションなど同じ部類の穴がある（上の「入れ子のシェルと環境変数で判定対象を見失う」）。
+guard-dangerous-bash にも値を取る前置きのオプションなど同じ部類の穴がある（上の「入れ子のシェルと環境変数で判定対象を見失う」）。
 
 同じレビューで、次の書き方はまだ通ると分かった（未再現。コードを読んで判断した）。guard-dangerous-bash も `sudo` や入れ子のシェルは追っていない。
 - 入れ子のシェル: `bash -c "terraform apply"`、`eval "terraform apply"`。引用符を区切りに足すと拾えるが、
