@@ -106,6 +106,16 @@ class SkillReadCheckTests(unittest.TestCase):
         self.assertEqual(output["decision"], "block")
         self.assertIn(str(self.root / "references" / "b.md"), output["reason"])
 
+    def test_read_from_first_line_without_limit_counts(self):
+        # 先頭から limit 無しで読めば全文になる
+        whole = [call("Read", file_path=str(self.root / "references" / "b.md"), offset=offset) for offset in (0, 1)]
+        for read in whole:
+            with self.subTest(offset=read["message"]["content"][0]["input"]["offset"]):
+                self.transcript_path.write_text("", encoding="utf-8")
+                self.transcript(prompt(), call("Skill", skill="demo"),
+                                *self.reads("references/a.md", "references/domains/y.md"), read)
+                self.assertEqual(self.run_hook(), {})
+
     def test_missing_any_of_group_is_reported_once(self):
         self.transcript(prompt(), call("Skill", skill="demo"), *self.reads("references/a.md", "references/b.md"))
         reason = self.run_hook()["reason"]
