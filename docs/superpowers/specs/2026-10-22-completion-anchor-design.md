@@ -155,7 +155,7 @@ brainstormingの結果、作るものを変えた（§1）。
 
 ### 5.1 新しいrule
 
-- パス: `rules/completion-anchor.md`（`paths:` frontmatterを付けない）
+- パス: `rules/fix-completion-criteria.md`（`paths:` frontmatterを付けない）
 - 中身: §4の振る舞いを、短く書く。常時ruleは毎セッション全文がコンテキストに入る
 - 大きさ（ユーザーが決めた、2026-10-22）
   - 上限は**200行未満**。公式ドキュメント（`https://code.claude.com/docs/en/memory`）は、CLAUDE.md 1ファイルあたり200行未満を目標とし、
@@ -169,7 +169,7 @@ brainstormingの結果、作るものを変えた（§1）。
 | ファイル | 変更 |
 |---|---|
 | `rules/task-management.md` | 置き場所を `tasks/todo/<タスク名>.md` に変える。「1ファイルで足りる」の一文を書き換える。新しいruleへの参照を足す |
-| `CLAUDE.md` | 「セッション開始時の必須読み込み」の一覧に `rules/completion-anchor.md` を足す（Codexは一覧を見て自分で読むため） |
+| `CLAUDE.md` | 「セッション開始時の必須読み込み」の一覧に `rules/fix-completion-criteria.md` を足す（Codexは一覧を見て自分で読むため） |
 | `.gitignore` | `tasks/todo/` を足す |
 | `tests/test_instruction_graph.py` | `SESSION_RULES` に新しいruleを足す |
 | `tasks/backlog.md` | 並列化の判定と統合の項目を足す（§7） |

@@ -11,7 +11,7 @@
 設計と決定の経緯は、次の2つを全文読んでから始めること。
 
 - `docs/superpowers/specs/2026-10-22-completion-anchor-design.md`
-- `docs/adr/0039-completion-anchor-rule.md`
+- `docs/adr/0039-fix-completion-criteria-rule.md`
 
 ## 2. 作業の置き場所
 

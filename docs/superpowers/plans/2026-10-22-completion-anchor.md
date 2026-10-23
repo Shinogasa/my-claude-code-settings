@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 作業の始めに完了条件をタスク用ファイルへ固定し、作業中の論点を仕分ける常時rule `rules/completion-anchor.md` を導入する。
+**Goal:** 作業の始めに完了条件をタスク用ファイルへ固定し、作業中の論点を仕分ける常時rule `rules/fix-completion-criteria.md` を導入する。
 
 **Architecture:** 振る舞いは常時rule 1本に書き、`rules/task-management.md` から参照する。タスク用ファイルは `tasks/todo/<タスク名>.md` に分け、
 日本語レビューのフックとignoreを、その置き場所に合わせる。振る舞いは文字列の契約テストで固定し、効き目は手動の代表検証で確かめる。
@@ -13,7 +13,7 @@
 
 ## Global Constraints
 
-- 新しいruleは `rules/completion-anchor.md`。`paths:` frontmatterを付けない
+- 新しいruleは `rules/fix-completion-criteria.md`。`paths:` frontmatterを付けない
 - ruleは200行未満（公式のCLAUDE.mdの目標値。テストで縛る）。目標は60行前後だが参考にとどめ、効き目を削ってまで縮めない（テストしない）
 - タスク用ファイルは `tasks/todo/<タスク名>.md`。タスク名は短いkebab-case
 - 3欄の名前は「依頼された結果」「暫定の完了条件」「今回は扱わない論点」
@@ -35,7 +35,7 @@
 4. brainstormingが動くタスクで、最初の質問より前にファイルを書き始める → 代表検証3
 5. ③の論点まで作業を止めて承認を求める → 代表検証1で範囲外の論点を投げる
 
-**回帰の確認**: 代表検証は1回で終わりにしない。`rules/completion-anchor.md` を直したら、PRを作る前に、Task 5の3本を同じ依頼文で回し直す。
+**回帰の確認**: 代表検証は1回で終わりにしない。`rules/fix-completion-criteria.md` を直したら、PRを作る前に、Task 5の3本を同じ依頼文で回し直す。
 依頼文はTask 5に固定してあるので、回し直す人が作り直さなくて済む（原則レビューの問いP07aを受けて追記）。
 
 ---
@@ -81,15 +81,15 @@ Expected: 全件PASS
 
 - [ ] **Step 6: GREENをコミットする**
 
-### Task 2: 常時rule `rules/completion-anchor.md` を作る
+### Task 2: 常時rule `rules/fix-completion-criteria.md` を作る
 
 **Files:**
-- Create: `rules/completion-anchor.md`
-- Create: `tests/test_completion_anchor_contract.py`
+- Create: `rules/fix-completion-criteria.md`
+- Create: `tests/test_fix_completion_criteria_contract.py`
 
 **Interfaces:**
 - Consumes: なし
-- Produces: `rules/completion-anchor.md`（Task 3が参照する）
+- Produces: `rules/fix-completion-criteria.md`（Task 3が参照する）
 
 - [ ] **Step 1: 失敗する契約テストを書く**
 
@@ -132,7 +132,7 @@ def test_rule_asks_to_log_parallel_cases(self):
 
 - [ ] **Step 2: REDを確かめる**
 
-Run: `python3 -m unittest tests.test_completion_anchor_contract -v`
+Run: `python3 -m unittest tests.test_fix_completion_criteria_contract -v`
 Expected: ファイルが無いことを示してFAIL
 
 - [ ] **Step 3: REDをコミットする**
@@ -147,7 +147,7 @@ Expected: ファイルが無いことを示してFAIL
 
 - [ ] **Step 5: GREENを確かめる**
 
-Run: `python3 -m unittest tests.test_completion_anchor_contract -v`
+Run: `python3 -m unittest tests.test_fix_completion_criteria_contract -v`
 Expected: 全件PASS
 
 - [ ] **Step 6: GREENをコミットする**
@@ -159,21 +159,21 @@ Expected: 全件PASS
 - Modify: `CLAUDE.md:34-41`（セッション開始時の必須読み込み）
 - Modify: `.gitignore:23`
 - Modify: `tests/test_instruction_graph.py`（`SESSION_RULES`）
-- Test: `tests/test_completion_anchor_contract.py`
+- Test: `tests/test_fix_completion_criteria_contract.py`
 
 **Interfaces:**
-- Consumes: Task 2の `rules/completion-anchor.md`
+- Consumes: Task 2の `rules/fix-completion-criteria.md`
 - Produces: なし
 
 - [ ] **Step 1: 失敗するテストを書く**
 
-`tests/test_instruction_graph.py` の `SESSION_RULES` に `"rules/completion-anchor.md"` を足す。
-`tests/test_completion_anchor_contract.py` に次を足す。
+`tests/test_instruction_graph.py` の `SESSION_RULES` に `"rules/fix-completion-criteria.md"` を足す。
+`tests/test_fix_completion_criteria_contract.py` に次を足す。
 
 ```python
 def test_task_management_drops_single_file_premise(self):
     self.assertNotIn("常に1ファイルで足りる", task_management)
-    self.assertIn("rules/completion-anchor.md", task_management)
+    self.assertIn("rules/fix-completion-criteria.md", task_management)
     self.assertIn("tasks/todo/", task_management)
 
 def test_gitignore_covers_task_files(self):
@@ -182,7 +182,7 @@ def test_gitignore_covers_task_files(self):
 
 - [ ] **Step 2: REDを確かめる**
 
-Run: `python3 -m unittest tests.test_instruction_graph tests.test_completion_anchor_contract -v`
+Run: `python3 -m unittest tests.test_instruction_graph tests.test_fix_completion_criteria_contract -v`
 Expected: 上の3件（`test_routes_to_every_session_rule` を含む）がFAIL
 
 - [ ] **Step 3: REDをコミットする**
@@ -190,8 +190,8 @@ Expected: 上の3件（`test_routes_to_every_session_rule` を含む）がFAIL
 - [ ] **Step 4: 3ファイルを直す**
 
 - `rules/task-management.md`: `todo.md` を `tasks/todo/<タスク名>.md` に変える。「複数のタスクを並行しない前提なので、常に1ファイルで足りる」を、
-  タスクごとに1ファイル作る運用に書き換える。完了条件と仕分けは `rules/completion-anchor.md` に従う、と参照を足す。既存の `tasks/todo.md` は終わるまで使ってよい、と書く
-- `CLAUDE.md`: 必読一覧の末尾に `- \`rules/completion-anchor.md\`` を足す
+  タスクごとに1ファイル作る運用に書き換える。完了条件と仕分けは `rules/fix-completion-criteria.md` に従う、と参照を足す。既存の `tasks/todo.md` は終わるまで使ってよい、と書く
+- `CLAUDE.md`: 必読一覧の末尾に `- \`rules/fix-completion-criteria.md\`` を足す
 - `.gitignore`: `tasks/todo.md` の次の行に `tasks/todo/` を足す
 
 - [ ] **Step 5: GREENを確かめる**
