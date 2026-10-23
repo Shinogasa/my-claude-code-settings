@@ -165,7 +165,8 @@ RM_RECURSIVE_SHORT = set("rR")
 # rm の対象を / か ~ に寄せる正規化。$HOME/${HOME} は ~ と読み、末尾の / /. /* は落とす。
 HOME_VAR_RE = re.compile(r"^(\$HOME|\$\{HOME\})(?=/|$)")
 TRAILING_ROOT_PART_RE = re.compile(r"(/\.?\*+|/\.|/)$")
-SHORT_FLAGS_RE = re.compile(r"[A-Za-z]+")
+# 数字もフラグになりうる（git push の -4 / -6）。-4f を force と読まないと見逃す
+SHORT_FLAGS_RE = re.compile(r"[A-Za-z0-9]+")
 DEV_TARGET_RE = re.compile(r"^/dev/sd[a-z]")
 # force push を表すフラグ。完全一致で "--force" と "-f" だけを見ていた頃は、
 # --force-with-lease / --force-with-lease=<ref>:<oid> / -uf が素通りしていた。
@@ -181,6 +182,7 @@ FORCE_PUSH_SHORT = set("f")
 GIT_PUSH_OPTS_WITH_VALUE = {"-o", "--push-option", "--receive-pack", "--exec", "--repo"}
 # push の短いフラグのうち、続く文字を値にするもの。-od の d は push option の値で、--delete ではない。
 PUSH_SHORT_OPTS_WITH_VALUE = set("o")
+GIT_PUSH_LONG_OPTS_WITH_VALUE = {option for option in GIT_PUSH_OPTS_WITH_VALUE if option.startswith("--")}
 # 対象 ref を1つに絞れないフラグ。保護ブランチを含みうるため特定不能として扱う。
 GIT_PUSH_BROADCAST_FLAGS = {"--all", "--branches", "--mirror"}
 # ref の削除を表すフラグ。短縮形は他のフラグと束ねられる (-du) ため綴りで拾う。
@@ -749,15 +751,29 @@ def protected_branch(cwd: str) -> str:
     return branch
 
 
+def push_option_takes_next_token(token: str) -> bool:
+    """push のオプション token が、次のトークンを値に取るか。
+
+    長い形は略記（--push-o）も含む。= で値を続けた形は取らない。
+    短い形は、最初に現れる値を取るフラグがまとめ書きの末尾のときだけ取る（-fo x）。
+    -oxo は値 "xo" を続けて書いた形なので、次のトークンは値ではない。
+    """
+    if "=" in token or not token.startswith("-"):
+        return False
+    if token.startswith("--"):
+        return any(is_long_option_prefix(token, option) for option in GIT_PUSH_LONG_OPTS_WITH_VALUE)
+    body = token[1:]
+    end = next((i for i, char in enumerate(body) if char in PUSH_SHORT_OPTS_WITH_VALUE), None)
+    return end == len(body) - 1 and bool(SHORT_FLAGS_RE.fullmatch(body))
+
+
 def push_positional_args(args: list) -> list:
     """push のフラグを読み飛ばして位置引数 (remote, refspec...) を返す。"""
     positional = []
     i = 0
     while i < len(args):
         token = args[i]
-        # -fo x のように、値を取るフラグでまとめ書きが終わると、値は次のトークンになる
-        if token in GIT_PUSH_OPTS_WITH_VALUE or (
-                short_cluster_has(token, PUSH_SHORT_OPTS_WITH_VALUE) and token[-1] in PUSH_SHORT_OPTS_WITH_VALUE):
+        if push_option_takes_next_token(token):
             i += 2
             continue
         if token.startswith("-"):
