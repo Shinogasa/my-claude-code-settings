@@ -46,31 +46,26 @@ PR #100 でコピー漏れは直したが、同じ型の事故は防げていな
 2026-10-23 に、サブエージェント2本が別々に原因を調べた（どちらも1回ずつの計測で、並列セッションの負荷で±10秒ほどぶれる）。
 既定の組は54秒、`--all` は100〜195秒だった。効果の大きい順に並べる。
 
-1. **git の ident をテストの fixture で与える**（変更は数行で、費用対効果が最大）
-   - `tests/git_fixture.py` は HOME を一時ディレクトリにし、`GIT_CONFIG_GLOBAL=/dev/null` で隔離している。そのため `user.email` がどこにも無い
-   - reflog を書く操作（`branch`・`worktree add`・`clone`）で、git がホスト名を mDNS で引きにいく。並列のときは5秒のタイムアウトを待つ。
-     `git worktree add` 1回が、逐次なら0.17秒、6〜9本の並列だと10〜15秒かかった。`EMAIL` を与えると0.03〜0.06秒になった
-   - 影響するのは `test_rtk_rewrite_hook`（setUp の `worktree add`）、`test_warn_branch_behind_main`（`user.email` を設定する前の `clone`）、
-     `test_setup_cli` の `make_worktree_repository`
-   - `EMAIL` を外から与えて代用した計測では、既定の組が54秒から32秒になった
-2. **`copy_repository` を APFS の clonefile（`cp -c -p -R -P`）にする**
+最大の原因（git の ident が無く、並列時に mDNS で5秒待つ）は、2026-10-23 に `tests/git_fixture.py` で直した。既定の組は66秒から43秒になった。
+
+1. **`copy_repository` を APFS の clonefile（`cp -c -p -R -P`）にする**
    - setup 系のテストは毎回、約460ファイルを `shutil.copytree` でコピーする。12並列だと、1回が全プロセスそろって8.6〜9.2秒になる
      （ADR 0029 は XProtect などのスキャン待ちと推定しているが、未確認）
-   - pytest プラグインで差し替えて計測すると、`--all` が100秒から74秒になり、1と合わせると67秒だった。別の計測では195秒から71秒だった
+   - pytest プラグインで差し替えて計測すると、`--all` が100秒から74秒になり、ident の修正と合わせると67秒だった。別の計測では195秒から71秒だった
    - clonefile は copy-on-write なので、ADR 0029 がハードリンク案を却下した理由（コピー先への書き込みが元を書き換える）は当たらない
    - `cp -c` は macOS 専用。一時ディレクトリが別のボリュームにある場合や Linux では、`shutil.copytree` に戻す処理が要る。
      上の「テストの一時リポジトリを、ignoreされたファイル抜きで作る」と同じ関数を直すので、まとめて扱うとよい
-3. **新しく作った実行ファイルの初回起動を減らす**: 1回110〜340msかかり、システム全体で一列に並ぶ。
+2. **新しく作った実行ファイルの初回起動を減らす**: 1回110〜340msかかり、システム全体で一列に並ぶ。
    スタブをワーカーごとに1回だけ作り、各テストには symlink を置くと、1の上に重ねて setup 系が48秒から44秒になった
-4. **`setup.sh` の外部コマンドを減らす**: 1回の実行で `python3` が62回（うち26回は `setup.sh:190` の normpath）、`dirname` が約260回起動する。
+3. **`setup.sh` の外部コマンドを減らす**: 1回の実行で `python3` が62回（うち26回は `setup.sh:190` の normpath）、`dirname` が約260回起動する。
    一括処理とパラメータ展開に替えると、1回あたり約20%短くなる見込み（未計測）。本番のコードを変える
-5. **フックのタイムアウトを待つテスト**（principle-review の10秒、guard-dangerous-bash の3秒×4件）。実時間への影響は約2秒で、割に合わない
+4. **フックのタイムアウトを待つテスト**（principle-review の10秒、guard-dangerous-bash の3秒×4件）。実時間への影響は約2秒で、割に合わない
 
 ついでに、次の小さなずれも見つかった。
 - README のテスト時間の目安（既定の組で約1分、`--all` で約4分）が、実測（54秒、100秒）とずれている
 - `tests/test_guard_dangerous_bash.py` の `'git commit -m x\; --no-verify'` で `SyntaxWarning: invalid escape sequence` が出る
 
-**決めること**: 1と2をやるか。1は数行なので、着手条件を待たずにやってもよい。3〜5は1と2の後に効果を測り直してから決める。
+**決めること**: 1をやるか。2〜4は1の後に効果を測り直してから決める。
 **着手条件**: 未定（2026-10-23に積んだ）。
 
 ### `tasks/lessons.md` の役割を決め直す
