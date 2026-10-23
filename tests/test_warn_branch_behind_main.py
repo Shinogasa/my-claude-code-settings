@@ -180,6 +180,31 @@ class TestBehindBranch(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(decision(command, self.repo), "deny")
 
+    def test_more_spellings_of_apply_are_denied(self):
+        # 2026-10-23 のセキュリティレビューで、遅れたブランチでも通ると分かった書き方
+        for command in (
+                # 値を取る前置きのオプション
+                "env -u AWS_PROFILE terraform apply", "env -C . terraform apply",
+                "time -f %e terraform apply", "exec -a name terraform apply",
+                # コマンド名の別表記
+                "/usr/local/bin/terraform apply", "./terraform apply", "\\terraform apply",
+                '"terraform" apply', "'tofu' destroy",
+                # リダイレクトの前置き
+                "2>&1 terraform apply", ">/dev/null terraform apply",
+                # 1行に収まらない形
+                "terraform \\\napply", "echo `terraform apply`"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command, self.repo), "deny")
+
+    def test_state_changing_subcommands_warn(self):
+        # state を書き換える・ロックを外すサブコマンド。apply ではないので警告にとどめる
+        for command in ("terraform taint aws_instance.x", "terraform untaint aws_instance.x",
+                        "terraform force-unlock 1234", "terraform workspace select dev"):
+            with self.subTest(command=command):
+                out = run_hook(command, self.repo)
+                self.assertNotEqual(out, "")
+                self.assertIsNone(json.loads(out)["hookSpecificOutput"].get("permissionDecision"))
+
     def test_word_after_non_prefix_command_is_ignored(self):
         for command in ("echo rtk terraform apply", "echo AWS_PROFILE=dev terraform apply",
                         "echo proxy terraform apply"):
