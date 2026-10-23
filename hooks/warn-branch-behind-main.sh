@@ -31,25 +31,38 @@ set -uo pipefail
 input=$(cat)
 command=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
 
+# 行継続（\ と改行）はシェルが取り除いてからコマンドを読むので、先に同じように取り除く
+command=${command//$'\\\n'/}
+
 # terraform が「コマンドの位置」に現れる場合だけを対象にする。
-# 行頭か、; & | ( の直後（`cd dir && terraform apply` を含む）に限定することで、
+# 行頭か、; & | ( ` の直後（`cd dir && terraform apply` を含む）に限定することで、
 # `echo terraform apply is dangerous` のような文字列中の語に反応しない。
+# 引用符やヒアドキュメントの中の `; terraform apply`、閉じるバッククォートの後（echo `date` terraform apply）でも
+# 止まるが、安全側の誤検知として受け入れる。
 #
-# その間に置ける前置き（rtk、env、time などと NAME=value）は読み飛ばす。
+# その間に置ける前置き（rtk、env、time などと NAME=value、リダイレクト）は読み飛ばす。
 # Codex は codex/RTK.md の指示で全コマンドに rtk を付けるので、読み飛ばさないと deny が効かない。
 # 前置きの語は guard-dangerous-bash.py の PREFIX_WORDS とそろえる（テストで照合している）。
 # OpenTofu（tofu）は terraform と置き換えられる別実装なので、同じに扱う。
 prefix_word='(time|exec|nohup|command|builtin|env|!|if|then|elif|else|while|until|do|\{|\})'
+options='(-[^[:space:]]+[[:space:]]+)*'
+# 前置きの語のオプションは値を取ることがある（env -u NAME、time -f FMT、exec -a NAME）。
+# 値が terraform 自身だった場合も一致するが、止める側の誤検知なので受け入れる
+prefix_options='(-[^[:space:]]+[[:space:]]+([^-[:space:]][^[:space:]]*[[:space:]]+)?)*'
 # rtk は `rtk [opts] proxy [opts]` まで読み飛ばす（guard-dangerous-bash.py の skip_rtk_wrapper と同じ）。
 # proxy を prefix_word に入れないのは、`echo proxy terraform apply` を誤って止めないため。
-options='(-[^[:space:]]+[[:space:]]+)*'
 rtk_wrapper="rtk[[:space:]]+${options}(proxy[[:space:]]+${options})?"
 # 代入の値は、引用符の中・$(...) の中・バックスラッシュでエスケープした空白で切らない
 assignment="[A-Za-z_][A-Za-z0-9_]*=(\\\\.|\"[^\"]*\"|'[^']*'|\\\$\\([^)]*\\)|[^[:space:]'\"\\\\]+)*"
-tf_prefix="(^|[;&|(])[[:space:]]*((${prefix_word}|${assignment})[[:space:]]+${options}|${rtk_wrapper})*(terraform|tofu)[[:space:]]+${options}"
+# 2>&1、>/dev/null などのリダイレクトは、コマンド名の前にも置ける
+redirect='[0-9]*[<>][<>&]*[[:space:]]*[^[:space:]]+'
+prefix="(${prefix_word}[[:space:]]+${prefix_options}|(${assignment}|${redirect})[[:space:]]+|${rtk_wrapper})*"
+# コマンド名は、パス付き（/usr/local/bin/terraform、./terraform）、\terraform、引用符で囲んだ形でもよい
+name="\\\\?[\"']?([^[:space:];&|()\`'\"]*/)?(terraform|tofu)[\"']?"
+tf_prefix="(^|[;&|(\`])[[:space:]]*${prefix}${name}[[:space:]]+${options}"
 
 # 状態を変えうるサブコマンドだけを対象にする。fmt / validate / version は巻き込まない。
-if ! printf '%s' "$command" | grep -Eq "${tf_prefix}(plan|apply|destroy|import|refresh|state)\b"; then
+if ! printf '%s' "$command" | grep -Eq "${tf_prefix}(plan|apply|destroy|import|refresh|state|taint|untaint|force-unlock|workspace)\b"; then
   exit 0
 fi
 
