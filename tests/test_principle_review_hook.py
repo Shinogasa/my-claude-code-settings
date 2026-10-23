@@ -140,7 +140,9 @@ class BlockOnceTests(HookCase):
         self.assertIn("principle-reviewer", reason)
         self.assertIn(f"spec: {path}", reason)
         self.assertIn("要約せず", reason)
-        self.assertIn("返ってきた問いをユーザーへ出してから、同じコミットをやり直してよい", reason)
+        # 「同じコミットを」だと commit だけをやり直し、&& でつないだ git add を落とす（2026-10-23 に起きた）
+        self.assertIn("返ってきた問いをユーザーへ出してから、止めたコマンドを丸ごと実行し直してよい", reason)
+        self.assertIn("&& や ; でつないだ前の段（git add など）も実行されていない", reason)
         self.assertIn("Agent ツールが使えないときは、コミットせずに止まり、この文面を呼び出し元へ報告する", reason)
         self.assertIsNone(decision_of(self.run_hook("git commit -m x")[1]))
 
