@@ -773,11 +773,11 @@ guard-dangerous-bash にも、これらすべてと同じ穴がある（上の�
 
 ### ほかのフックの小さな穴（2026-10-23 の調査、どれも深刻度は低）
 
-guard-agent-profile・block-commit-on-merged-pr・require-full-tests-before-pr の cwd・skill-read-check の一部だけの Read は、2026-10-23 に直した。残りは Codex に関係するものと、未確認のもの。
+2026-10-23 に、guard-agent-profile の起動の見逃し、block-commit-on-merged-pr の rtk、require-full-tests-before-pr の cwd が無いときの素通し、skill-read-check の一部だけの Read を直した。残りは、そのレビューで出た Low、Codex に関係するもの、未確認のもの。
 
 - guard-agent-profile（2026-10-23 のセキュリティレビューで残った Low。コードを読んで判断した）:
-  - 誤検知: 前置きの後ろの引用符付きの引数が claude / codex で始まると止まる（``time git commit -m "Claude の設定を直す"``、`xargs grep "claude code" .`）
-  - 見逃し: 前置きの後ろのパッケージの起動（`timeout 5 npx -p foo -- claude`）、`env -uCODEX_HOME codex`（-u に値を続けた形）
+  - 誤検知: 前置きより後ろにある引用符付きの引数が claude / codex で始まると止まる（``time git commit -m "Claude の設定を直す"``、`xargs grep "claude code" .`）
+  - 見逃し: 前置きより後ろでパッケージを起動する形（`timeout 5 npx -p foo -- claude`）、`env -uCODEX_HOME codex`（-u に値を続けた形）
   - オプションの値を数え上げる方式の限界なので、直すなら guard の前置きの解析と合わせて考える
 - require-full-tests-before-pr: matcher が Bash だけなので、Bash 以外（MCP など）で PR を作る経路は見ない（jp-doc-review も同じ）。未確認
 - skill-read-check: Bash の `head` / `sed -n` で一部だけ読んだ場合も、パスがあれば読んだと数える（2026-10-23 に Read の offset / limit だけ直した）
