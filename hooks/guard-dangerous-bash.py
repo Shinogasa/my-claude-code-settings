@@ -159,8 +159,12 @@ UNRESOLVED = None
 # hook がシェルと同じ展開をできない文字。含む cd の移動先は確定できないとみなす。
 UNEXPANDABLE_CHARS = set("$`*?[{")
 
-RM_FLAG_RE = re.compile(r"^-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*$|^-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*$")
-RM_TARGET_RE = re.compile(r"^(/|~)$|^/\*$")
+# rm の再帰と強制のフラグ。-r -f と分けても、長い形 (--recursive --force) でも同じ意味になる。
+RM_RECURSIVE_SHORT = set("rR")
+RM_FORCE_SHORT = set("f")
+# rm の対象を / か ~ に寄せる正規化。$HOME/${HOME} は ~ と読み、末尾の / /. /* は落とす。
+HOME_VAR_RE = re.compile(r"^(\$HOME|\$\{HOME\})(?=/|$)")
+TRAILING_ROOT_PART_RE = re.compile(r"(/\.|/\*|/)$")
 DEV_TARGET_RE = re.compile(r"^/dev/sd[a-z]")
 # force push を表すフラグ。完全一致で "--force" と "-f" だけを見ていた頃は、
 # --force-with-lease / --force-with-lease=<ref>:<oid> / -uf が素通りしていた。
@@ -176,8 +180,12 @@ GIT_PUSH_OPTS_WITH_VALUE = {"-o", "--push-option", "--receive-pack", "--exec", "
 # 対象 ref を1つに絞れないフラグ。保護ブランチを含みうるため特定不能として扱う。
 GIT_PUSH_BROADCAST_FLAGS = {"--all", "--branches", "--mirror"}
 # ref の削除を表すフラグ。短縮形は他のフラグと束ねられる (-du) ため綴りで拾う。
-# 削除も refspec 側に別経路がある (`git push origin :main`)。
-REF_DELETE_FLAG_RE = re.compile(r"^--delete$|^-[a-zA-Z]*d[a-zA-Z]*$")
+# 長い形は略記 (--del) も拾う。削除も refspec 側に別経路がある (`git push origin :main`)。
+REF_DELETE_LONG_FLAG = "--delete"
+REF_DELETE_SHORT_FLAG_RE = re.compile(r"^-[a-zA-Z]*d[a-zA-Z]*$")
+# commit の短いフラグのうち、続く文字を値にするもの。-mn の n は値で、--no-verify ではない。
+# S と u は値を省略できるが、付けるときは続けて書くので同じ扱いになる。
+COMMIT_SHORT_OPTS_WITH_VALUE = set("FmcCtUSu")
 
 
 def strip_heredocs(command: str) -> str:
@@ -382,14 +390,61 @@ def split_simple_commands(tokens: list) -> list:
     return [command for _, command, _, _ in split_with_operators(tokens) if command]
 
 
+def is_long_option_prefix(token: str, option: str) -> bool:
+    """token が長いオプション option の略記（接頭辞）か。完全な綴りも含む。
+
+    git などは長いオプションを一意な接頭辞まで縮められる (gitcli(7): --amen は --amend)。
+    何が一意かはサブコマンドと版で変わるので、オプションの表を持って真似ない。
+    表と実物の版がずれると、実物は一意に読むのにフックは曖昧と見て通す側に壊れるため。
+    接頭辞は option として読まれるか、曖昧でエラーになるかのどちらかなので、拾っても困る形は無い。
+    """
+    name = token.split("=", 1)[0]
+    return len(name) > 2 and name.startswith("--") and option.startswith(name)
+
+
+def short_cluster_has(token: str, flags: set, opts_with_value: set = frozenset()) -> bool:
+    """まとめ書きした短いフラグ (-anm) に flags のどれかが含まれるか。
+
+    値を取るフラグの後ろの文字は値なので、そこで読むのをやめる (-mn の n は値)。
+    """
+    if not token.startswith("-") or token.startswith("--") or len(token) < 2:
+        return False
+    for char in token[1:]:
+        if char in flags:
+            return True
+        if char in opts_with_value:
+            return False
+    return False
+
+
+def is_root_or_home(target: str) -> bool:
+    """rm の対象が / か ~ そのもの（とその直下の全部）を指すか。"""
+    if not target:
+        return False
+    path = re.sub(r"/+", "/", HOME_VAR_RE.sub("~", target))
+    while True:
+        shorter = TRAILING_ROOT_PART_RE.sub("", path)
+        if shorter == path:
+            return path in ("", "~")
+        path = shorter
+
+
+def is_rm_recursive_force(args: list) -> bool:
+    recursive = force = False
+    for arg in args:
+        recursive = recursive or is_long_option_prefix(arg, "--recursive") \
+            or short_cluster_has(arg, RM_RECURSIVE_SHORT)
+        force = force or is_long_option_prefix(arg, "--force") \
+            or short_cluster_has(arg, RM_FORCE_SHORT)
+    return recursive and force
+
+
 def is_dangerous(tokens: list) -> bool:
     if not tokens:
         return False
 
     if tokens[0] == "rm":
-        has_rf_flag = any(RM_FLAG_RE.match(t) for t in tokens[1:])
-        has_danger_target = any(RM_TARGET_RE.match(t) for t in tokens[1:])
-        if has_rf_flag and has_danger_target:
+        if is_rm_recursive_force(tokens[1:]) and any(is_root_or_home(t) for t in tokens[1:]):
             return True
 
     if tokens[0] == "git":
@@ -490,12 +545,14 @@ def is_verification_bypass(tokens: list) -> bool:
     if subcommand not in NO_VERIFY_SUBCOMMANDS:
         return False
 
-    if "--no-verify" in args:
+    # --no-verif のような略記も git は受け付ける
+    if any(is_long_option_prefix(a, "--no-verify") for a in args):
         return True
 
-    # -n は commit でのみ --no-verify の別名。push では --dry-run を意味するため
-    # 一律に扱うと安全側のつもりで誤検知になる。
-    return subcommand == "commit" and "-n" in args
+    # -n は commit でのみ --no-verify の別名。push では --dry-run、merge では --no-stat を意味するため
+    # 一律に扱うと安全側のつもりで誤検知になる。-anm のようにまとめて書いても同じ。
+    return subcommand == "commit" and any(
+        short_cluster_has(a, {"n"}, COMMIT_SHORT_OPTS_WITH_VALUE) for a in args)
 
 
 def resolve_path(base, path: str, cdpath_possible: bool = False):
@@ -709,7 +766,7 @@ def push_target_branches(args: list, cwd: str, has_command_line_config: bool = F
     None は「安全」ではなく「検査できなかった」を表す。呼び出し側でブロックへ倒す。
     cwd が UNRESOLVED でも、宛先を明示した refspec だけなら判定できる。
     """
-    if any(a in GIT_PUSH_BROADCAST_FLAGS for a in args):
+    if any(is_long_option_prefix(a, flag) for a in args for flag in GIT_PUSH_BROADCAST_FLAGS):
         return None
 
     positional = push_positional_args(args)
@@ -793,7 +850,8 @@ def implicit_push_targets_current_branch(cwd: str, remote: list) -> bool:
 
 def is_ref_deletion(args: list) -> bool:
     """push の引数がリモート ref の削除を含むか。フラグと `:dst` 形式の両方を見る。"""
-    if any(REF_DELETE_FLAG_RE.match(a) for a in args):
+    if any(is_long_option_prefix(a, REF_DELETE_LONG_FLAG) or REF_DELETE_SHORT_FLAG_RE.match(a)
+           for a in args):
         return True
     # 位置引数の先頭は remote。refspec はその後ろ。
     return any(spec.startswith(":") for spec in push_positional_args(args)[1:])
