@@ -759,18 +759,6 @@ guard-dangerous-bash にも、これらすべてと同じ穴がある（上の�
 **決めること**: matcher で Bash（shell）に絞るか、各フックで `apply_patch` を除くか。
 **着手条件**: Codex で実際に誤検知を観測したとき、または Codex のフック対応を進めるとき。
 
-### `guard-dangerous-bash` の、略記の修正（PR #104）の後に残ったもの
-
-2026-10-23 のセキュリティレビューで見つかった。どれも PR #104 より前からある挙動。
-
-- `-f` 無しの `rm -r ~`・`rm -R $HOME/` は通る。判定が `-r` と `-f` の両方を求めているため。
-  エージェントの Bash には tty が無いので、書き込み保護されたファイル以外は確認なしで消える
-- `git merge --abo`（`--abort` の略記）は、保護ブランチ上ではマージとして止まる（安全側の誤検知）
-- `git push -od origin main` は、`-o` の値の `d` を削除フラグと読んで止める（安全側の誤検知）
-
-**決めること**: `rm -r` を `-f` 無しでも止めるか。誤検知の2つは、気になってから直すか。
-**着手条件**: 未定（2026-10-23に積んだ）。
-
 ### ほかのフックの小さな穴（2026-10-23 の調査、どれも深刻度は低）
 
 - guard-agent-profile: `npm exec -- @anthropic-ai/claude-code`、`pnpm dlx …`、`script -q /dev/null claude`、`watch claude`、`env -S 'claude -p hi'` を見逃す
