@@ -99,11 +99,14 @@ Stopの `decision: block` で作業を続けさせられる。ただし0.159.2�
 **決めること**: Claude Code用の `hooks/jp-doc-review.py` を共有するか、Codex用の入口を分けるか。
 `/hooks` で信頼されていないフックが通知なくスキップされる問題を、どう利用者に知らせるか。
 
-### P3: スキル一覧に `yomiyasu:yomiyasu` が重複して出る
+### P3: 日本語レビューの報告に出す「元 → 後」の対の上限を決め直す
 
-yomiyasuのリポジトリには、同じスキルの複製が `skills/yomiyasu/` に入っている。
+yomiyasu v2対応（`docs/superpowers/specs/2026-10-22-yomiyasu-v2-design.md`）では、重要な直しだけを選び、件数の上限は設けなかった。
+今後どれだけ直しが出るかは予想できないためである。
 
-**決めること**: 上流に報告するか、こちらで重複を読み込まない設定にするか。
+**着手条件**: 1回の報告で対が10組を超えたとき。
+
+**決めること**: 上限の数と、超えた分の見せ方（件数だけ出す、など）。
 
 ### P3: レビュワーがリンターを実際に呼んだかを確かめる
 
@@ -971,6 +974,22 @@ macOS の `pgrep` は呼び出し元の祖先プロセスを返さない（実�
 
 ## フックの実行環境
 
+### P3: 保護ブランチ上のローカルマージを止めていない経路
+
+2026-10-23に、main / master 上の `git merge` を止めた。そのときの自動セキュリティレビューの指摘のうち、次を残した。
+
+- main 上の `git pull origin feat/x` のように、取り込む ref を指定した `git pull` で、作業ブランチを取り込める。
+  main の更新に使う `git pull` は通すと決めたので、引数の無い形と区別するかどうかは決めていない
+- `git -c alias.m=merge m feat/x` のような alias、`git cherry-pick` / `git rebase` / `git am` でも main を進められる
+  （`bash -c` と同じく、既知の限界として扱っている）。`git symbolic-ref` などでブランチを変えた後の merge も追わない
+- `git switch main && git commit` のように、同じコマンドの中で main へ切り替えた後のコミットは通る（以前からある穴）。
+  merge と同じく切り替え後を一律に止めると、`git switch -c <branch> && git commit`（CLAUDE.mdの復帰の手順）まで止まる
+- `git --git-dir=... merge` / `--work-tree`（`-C` しか追わない）、`/usr/bin/git merge` や `\git merge`（先頭が `git` でない）、
+  `git fetch . feat:main` のような ref の直接更新も通る。commit 側と同じく以前からある穴
+
+**決めること**: ref を指定した `git pull` を止めるか。止めるなら、通す形（引数なし、`--ff-only` だけなど）をどこまでにするか。
+エージェントがこの形でローカルマージした事例が出たら着手する。
+
 ### P2: guard-dangerous-bash が「検査できなかった」を通す経路の残り
 
 2026-10-12に、gitの照会のタイムアウトと起動失敗では止めるように直した（`GitQueryFailed`）。そのときのsecurity-reviewerの指摘のうち、
@@ -980,6 +999,7 @@ macOS の `pgrep` は呼び出し元の祖先プロセスを返さない（実�
   PreToolUseのフックはexit 1では止めない
 - gitが0以外で終わったときは、すべて正当な「無い」として扱う。所有者が違うリポジトリ（safe.directory）、読めない `.git`、壊れた設定も、
   「リポジトリではない」「detached HEAD」「まだコミットが無い」と同じ扱いになる。そうした状態では、git自身もコミットを拒むことが多い
+  （2026-10-23に足した保護ブランチ上の `git merge` の判定も、同じ `protected_branch` を使うので、この穴を引き継ぐ）
 - タイムアウトしても、孫プロセスがパイプを開いたままにしていると、`subprocess.run` は3秒より長く待つ。フック全体のtimeoutに達すると、止めずに通る
 - `core.hooksPath` を `--type=path` なしで読むので、`~/hooks` のような値を展開しない。フックを見つけられず、`--no-verify` を通す
 
@@ -1117,6 +1137,40 @@ Python や Markdown だけを触る作業中も常に効いている。
 2026-10-01 時点で先方の作業ツリーに未コミットの変更があったため、追記は保留している。
 追記したらこの項目を参照だけに縮める。
 
+### P2: 公式の best-practices ページと、このリポジトリの運用方針を比べる
+
+2026-10-22に調べたところ、submodule `claude-code-best-practice` は https://code.claude.com/docs/en/best-practices を
+ベースにしていない。ドリフト検出のworkflow（`.claude/commands/workflows/best-practice/` などの10ファイル）が比べるのは、
+settings・skills・slash-commands・sub-agents・overview・cli-reference の各リファレンスと、Claude Code の CHANGELOG だけ。
+best-practices ページは README のリンク集に1行出てくるだけだった。
+submoduleがカバーするのは仕様（キー名、frontmatter、hookイベント）までで、運用の考え方
+（CLAUDE.mdに書くこと、コンテキストの管理、検証のさせ方、計画から実装への流れ、サブエージェントの使い方）はカバーしていない。
+このリポジトリの `CLAUDE.md` と `rules/` が扱っているのは、その運用の考え方のほうである。
+参照表の `claude-memory.md`・`claude-mcp.md`・`claude-power-ups.md` は手で更新されていて、自動では追随しない。
+
+**やること**: 公式ページの項目ごとに、このリポジトリのどのファイルで実現しているか、食い違っているか、抜けているかを表にする。
+
+**決めること**: 比較の結果を受けて、`skills/claude-code-best-practice/SKILL.md` の参照表に公式ページを足すか。
+食い違いが出た項目について、公式に合わせるか、このリポジトリの方針を残すか（残すならADRに理由を書く）。
+
+### P3: superpowersプラグインを v7.0.1 へ上げる（marketplace待ち）
+
+2026-10-22の時点で、インストール済みは v7.0.0（`bb92a77`）、上流の最新は v7.0.1（`2ce8aa1`）。
+公式marketplace（`anthropics/claude-plugins-official` の `marketplace.json`）が `bb92a77` を固定しているので、`/plugin update` では上がらない。
+
+**着手条件**: marketplaceの固定が v7.0.1 以降に進んだとき。そのときは `/plugin update` で上げ、v7.0.0からの変更が
+このリポジトリの学習モードやworkflowの前提（`rules/`、`output-styles/`）と食い違わないかを確かめる。
+
+### P3: 更新の洗い出し（2026-10-22）で確かめられなかったもの
+
+submoduleとプラグインの更新を洗い出したとき、次は版を比べられなかった。「更新なし」ではなく「未確認」である。
+
+- `skills/backend-patterns`・`skills/coding-standards`（everything-claude-code 由来）、`skills/grill-me`: 上流から写したときのcommitを記録していない
+- Codexの `superpowers@openai-api-curated`（`codex/plugin-policy.json`）: 版を見ていない
+- `claude-md-management`・`learning-output-style`・`gopls-lsp`・`swift-lsp`: 1.0.0でSHAが無く、marketplaceの版と突き合わせられない
+
+**決めること**: 写したスキルを上流と比べるか、比べるなら写したcommitを記録する仕組み（READMEか、スキルの先頭のコメント）を作るか。
+
 ---
 
 ## リンク先のディレクトリへの混入
@@ -1138,6 +1192,14 @@ Python や Markdown だけを触る作業中も常に効いている。
 ## 仕事の原則集
 
 `jp-doc-review` の課題は、上の「日本語文書レビュー（yomiyasu）の続き」にある（P1）。ここには重ねて書かない。
+
+### 原則レビューで、何に引っかかったのかが一目で分からない
+
+2026-10-22にユーザーから聞いた。原則レビュー（`principle-reviewer`）の結果を見ても、成果物のどの箇所が、どの原則に
+引っかかったのかがぱっと分からない。日本語レビューで同じ不満があり、yomiyasu v2対応（`docs/superpowers/specs/2026-10-22-yomiyasu-v2-design.md`）で
+「元 → 後」の対を見せる形にした。こちらはまだ手を付けていない。
+
+**決めること**: 引っかかった箇所の示し方（成果物の引用と原則名の対にするか、など）と、問いの数の上限。
 
 ### 原則集の basis を照合して公開する
 

@@ -579,6 +579,56 @@ class LearningStoreCliTests(unittest.TestCase):
         duplicate = self.record_payload(event_id=first["event_id"])
         self.assertEqual(self.error_code(self.cli_with_json(duplicate)), "INVALID_SUPERSEDES")
 
+    def assert_generated_uuid4(self, value):
+        parsed = uuid.UUID(value)
+        self.assertEqual(str(parsed), value)
+        self.assertEqual(parsed.version, 4)
+
+    def test_record_generates_ids_when_omitted(self):
+        self.make_active_store()
+        value = self.record_payload()
+        del value["id"], value["event_id"]
+
+        result = self.cli_with_json(value)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        response = json.loads(result.stdout)
+        self.assertTrue(response["created"])
+        self.assert_generated_uuid4(response["id"])
+        self.assert_generated_uuid4(response["event_id"])
+        self.assertTrue(response["path"].endswith(f"-{response['id']}.md"))
+        saved = (self.store / response["path"]).read_text(encoding="utf-8")
+        self.assertIn(f'event_id: "{response["event_id"]}"', saved)
+
+    def test_record_keeps_supplied_event_id_when_only_id_is_omitted(self):
+        self.make_active_store()
+        first = json.loads(self.cli_with_json(self.record_payload()).stdout)
+        corrected = self.record_payload(event_id=first["event_id"], supersedes=[first["id"]])
+        del corrected["id"]
+
+        result = self.cli_with_json(corrected)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        response = json.loads(result.stdout)
+        self.assertEqual(response["event_id"], first["event_id"])
+        self.assertNotEqual(response["id"], first["id"])
+        self.assertEqual([item["id"] for item in self.list_event(first["event_id"])], [response["id"]])
+
+    def test_operation_generates_ids_when_omitted(self):
+        self.make_active_store()
+        operation = self.operation_payload()
+        del operation["id"], operation["event_id"]
+
+        result = self.cli_with_json(operation)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        response = json.loads(result.stdout)
+        self.assertTrue(response["created"])
+        self.assert_generated_uuid4(response["id"])
+        self.assert_generated_uuid4(response["event_id"])
+        saved = json.loads((self.store / response["path"]).read_text(encoding="utf-8"))
+        self.assertEqual((saved["id"], saved["event_id"]), (response["id"], response["event_id"]))
+
     def test_record_allows_idempotent_resend_of_non_head_revision(self):
         self.make_active_store()
         first = self.record_payload(body="初版")

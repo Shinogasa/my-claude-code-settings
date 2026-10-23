@@ -8,6 +8,7 @@ docs/research/2026-10-02-claude-code-hook-payloads.md に記録している。
 """
 import json
 import os
+import hashlib
 import re
 import shutil
 import stat
@@ -190,6 +191,13 @@ class PrReviewTests(HookCase):
         self.assertNotIn(str(path), ask)
         self.assertIn("jp-doc-reviewer", reason)
         self.assertIn("main", reason)
+
+    def test_reason_asks_to_show_pairs_without_summary(self):
+        # 直した内容を、ユーザーが元と後の対で確かめられるようにする（ADR 0038）
+        self.commit_file("docs/a.md", JP_LONG)
+        reason = self.reason(self.pr())
+        self.assertIn("元 → 後", reason)
+        self.assertIn("要約せず", reason)
 
     def test_document_written_only_by_the_user_needs_confirmation(self):
         path = self.commit_file("docs/mine.md", JP_LONG, claude=False)
@@ -472,7 +480,12 @@ class ReviewerBashTests(HookCase):
         return self.run_hook("pre-tool-use-reviewer-bash", payload)
 
     def assertAllowed(self, command):
-        self.assertEqual(self.bash(command), (0, {}, ""), command)
+        # 通す形には、フックがセッションを足して書き換える（ラッパーが自分のセッションの写しを選ぶため）
+        code, output, stderr = self.bash(command)
+        self.assertEqual((code, stderr), (0, ""), command)
+        specific = output.get("hookSpecificOutput", {})
+        self.assertEqual(specific.get("permissionDecision"), "allow", command)
+        self.assertEqual(specific.get("updatedInput"), {"command": f"{command} --session s1"}, command)
 
     def assertDenied(self, command):
         result = self.bash(command)
@@ -487,6 +500,11 @@ class ReviewerBashTests(HookCase):
         # HTMLを0文字と数えて PASS にするので、ラッパーを通さずには呼ばせない
         self.assertDenied(f"python3 {self.yomiyasu_lint()} 'docs/a.md'")
         self.assertDenied(f"python3 {self.yomiyasu_lint(nested=True)} 'docs/a.md'")
+
+    def test_self_supplied_session_is_denied(self):
+        # --session はフックだけが足す。レビュワーが別のセッションの写しを選べないようにする
+        self.assertDenied(f"python3 {self.lint_path()} 'docs/a.md' --session s2")
+        self.assertDenied(f"python3 {self.lint_path()} --session s2 'docs/a.md'")
 
     def test_tilde_is_expanded(self):
         self.link_claude_hooks()
@@ -620,6 +638,69 @@ class ReviewerAllowTests(HookCase):
         self.assertEqual(self.agent("docs/a.md", agent_type="jp-doc-reviewer"), (0, {}, ""))
         self.assertIsNone(self.allowed())
 
+    def snapshot(self, path, session="s1"):
+        digest = hashlib.sha256(os.path.realpath(path).encode("utf-8")).hexdigest()[:16]
+        return self.state / "sources" / session / digest
+
+    def test_agent_dispatch_snapshots_requested_files(self):
+        first, second = self.write_file("docs/a.md", "原文A"), self.write_file("docs/b.md", "原文B")
+        self.agent(f"{first} と {second}")
+        for path, text in ((first, "原文A"), (second, "原文B")):
+            with self.subTest(path=str(path)):
+                snapshot = self.snapshot(path)
+                self.assertEqual(snapshot.read_text(encoding="utf-8"), text)
+                self.assertEqual(stat.S_IMODE(snapshot.stat().st_mode), 0o600)
+
+    def test_snapshot_is_outside_work_repo(self):
+        doc = self.write_file("docs/a.md", "原文")
+        self.agent(str(doc))
+        self.assertFalse(any(self.repo.rglob("*")) and any(p.read_bytes() == "原文".encode() for p in self.repo.rglob("*")
+                                                         if p.is_file() and p != doc))
+        self.assertFalse((self.repo / ".yomiyasu").exists())
+
+    def test_reviewer_stop_removes_session_snapshots(self):
+        doc = self.write_file("docs/a.md", "原文")
+        self.agent(str(doc), session="s1")
+        self.agent(str(doc), session="s2")
+        result = self.run_hook("reviewer-stop", {"session_id": "s1", "agent_type": "jp-doc-reviewer"})
+        self.assertEqual(result, (0, {}, ""))
+        self.assertFalse((self.state / "sources" / "s1").exists())
+        self.assertTrue(self.snapshot(doc, "s2").is_file())
+
+    def test_parallel_reviewers_in_one_session_keep_snapshots_until_last_stop(self):
+        # 同じセッションで2つのレビュワーが並行すると、先に終わった側が後の側の写しを消していた（コードレビューの指摘）
+        first, second = self.write_file("docs/a.md", "原文A"), self.write_file("docs/b.md", "原文B")
+        self.agent(str(first))
+        self.agent(str(second))
+        stop = {"session_id": "s1", "agent_type": "jp-doc-reviewer"}
+        self.run_hook("reviewer-stop", stop)
+        self.assertTrue(self.snapshot(second).is_file())
+        self.run_hook("reviewer-stop", stop)
+        self.assertFalse((self.state / "sources" / "s1").exists())
+
+    def test_cleanup_removes_old_snapshots(self):
+        old, new = self.write_file("docs/old.md", "古い"), self.write_file("docs/new.md", "新しい")
+        self.agent(str(old), session="s0")
+        eight_days_ago = time.time() - 8 * 86400
+        for entry in (self.state / "sources" / "s0").iterdir():  # 落ちたレビュワーの写しと、起動の数の記録
+            os.utime(entry, (eight_days_ago, eight_days_ago))
+        (self.state / ".last-cleanup").unlink(missing_ok=True)
+        self.agent(str(new))
+        self.assertFalse((self.state / "sources" / "s0").exists())
+        self.assertTrue(self.snapshot(new).is_file())
+
+    def test_pr_create_cleanup_also_removes_old_snapshots(self):
+        # Stop が走らず、レビュワーを二度と起動しなくても、写しは保存日数で消える（セキュリティレビューの指摘）
+        old = self.write_file("docs/old.md", "古い")
+        self.agent(str(old), session="s0")
+        eight_days_ago = time.time() - 8 * 86400
+        for entry in (self.state / "sources" / "s0").iterdir():  # 落ちたレビュワーの写しと、起動の数の記録
+            os.utime(entry, (eight_days_ago, eight_days_ago))
+        (self.state / ".last-cleanup").unlink(missing_ok=True)
+        self.run_hook("pre-tool-use-bash", {"session_id": "s9", "cwd": str(self.repo), "tool_name": "Bash",
+                                            "tool_input": {"command": "gh pr create --fill"}})
+        self.assertFalse((self.state / "sources" / "s0").exists())
+
     def test_second_call_adds_to_the_first(self):
         first, second = self.write_file("docs/a.md", "x"), self.write_file("docs/b.md", "x")
         self.agent("docs/a.md")
@@ -693,6 +774,20 @@ class ReviewerEditTests(HookCase):
         for path in protected:
             with self.subTest(path=str(path)):
                 self.assertDenied(str(path))
+
+    def test_state_dir_is_denied_even_when_listed(self):
+        # 原文の写しと許可リストを書き換えさせない（セキュリティレビューの指摘）
+        targets = [self.state / "s1.reviewer-allow.json", self.state / "sources" / "s1" / "0123456789abcdef"]
+        self.allow(*targets)
+        for target in targets:
+            with self.subTest(path=str(target)):
+                self.assertDenied(str(target))
+
+    def test_vendored_submodule_is_denied_even_when_listed(self):
+        # スキル本体の外（submoduleのルートの scripts/ など）も、レビュワーに書き換えさせない
+        target = REPO_ROOT / "vendor" / "yomiyasu" / "scripts" / "yomiyasu_lint.py"
+        self.allow(target)
+        self.assertDenied(str(target))
 
     def test_symlink_to_protected_file_is_denied_even_when_listed(self):
         link = self.repo / "link.md"
@@ -830,6 +925,11 @@ class ConfluenceTests(HookCase):
         reason = self.pre(JP_LONG, pageId="9")[1]["hookSpecificOutput"]["permissionDecisionReason"]
         self.assertIn("レビュワーが変えた点をユーザーに見せ、投稿してよいかを確かめてから送る", reason)
         self.assertIn("ユーザーの確認なしに2回目を送らない", reason)
+
+    def test_confluence_reason_asks_to_show_pairs_without_summary(self):
+        reason = self.pre(JP_LONG, pageId="9")[1]["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("元 → 後", reason)
+        self.assertIn("要約せず", reason)
 
     def test_draft_suffix_follows_content_format(self):
         self.pre(JP_LONG, contentFormat="markdown", pageId="1")

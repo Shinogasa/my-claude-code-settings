@@ -18,7 +18,6 @@
   "env": {
     "CLAUDE_PROFILE": "default"
   },
-  "alwaysThinkingEnabled": true,
   "outputStyle": "ReviewAndDesign",
   "theme": "dark-daltonized",
   "effortLevel": "xhigh",

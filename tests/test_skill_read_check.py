@@ -224,11 +224,12 @@ class RepositoryManifestTests(unittest.TestCase):
         self.assertEqual(manifest["schemaVersion"], 1)
         entry = manifest["skills"]["yomiyasu"]
         self.assertEqual(entry["root"], "~/.claude/skills/yomiyasu")
-        self.assertEqual(entry["alternateRoots"], ["~/.claude/skills/yomiyasu/skills/yomiyasu"])
-        submodule = REPO_ROOT / "skills" / "yomiyasu"
-        roots = [submodule, submodule / "skills" / "yomiyasu"]
+        # v2ではスキル本体は1か所だけ。古い置き場を読んでも読んだことにしない
+        self.assertNotIn("alternateRoots", entry)
+        roots = [REPO_ROOT / "skills" / "yomiyasu"]
         for root in roots:
-            for relative in ["SKILL.md"] + entry["allOf"] + [item for group in entry["anyOf"] for item in group]:
+            # doc-types/pr.md はv2で増えた資料。v2の本体に届いている証拠として確かめる
+            for relative in ["SKILL.md", "references/doc-types/pr.md"] + entry["allOf"] + [item for group in entry["anyOf"] for item in group]:
                 with self.subTest(root=str(root), relative=relative):
                     self.assertTrue((root / relative).is_file())
 

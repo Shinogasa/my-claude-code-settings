@@ -26,4 +26,5 @@ Claude Code設定に関する作業時、関連するベストプラクティス
 
 - **作業に関連するファイルのみ読み込む**（全量読み込み禁止）
 - 内容はそのまま適用するのではなく、プロジェクトの文脈に合わせて判断する
-- 最新化が必要な場合は `git submodule update --remote` を実行する
+- 最新化が必要な場合は `git submodule update --remote claude-code-best-practice` を実行する。
+  パスを付けないと、ほかのsubmodule（yomiyasu・agent-toolkit-for-aws）まで進んでしまう
