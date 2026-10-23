@@ -63,7 +63,8 @@ name="\\\\?[\"']?([^[:space:];&|()\`'\"]*/)?(terraform|tofu)[\"']?"
 tf_prefix="(^|[;&|(\`])[[:space:]]*${prefix}${name}[[:space:]]+${options}"
 
 # 状態を変えうるサブコマンドだけを対象にする。fmt / validate / version は巻き込まない。
-printf '%s' "$command" | grep -Eq "${tf_prefix}(plan|apply|destroy|import|refresh|state|taint|untaint|force-unlock|workspace)\b"
+# パイプにしない。grep -q が先に終わると printf が SIGPIPE で失敗し、pipefail の下で判定の失敗と区別できなくなる
+grep -Eq "${tf_prefix}(plan|apply|destroy|import|refresh|state|taint|untaint|force-unlock|workspace)\b" <<<"$command"
 match_status=$?
 [ "$match_status" -eq 1 ] && exit 0
 if [ "$match_status" -ne 0 ]; then
@@ -114,7 +115,7 @@ ${default_ref} に入っている変更がこのブランチには無いため�
 #
 # それ以外（plan 等）は読み取りのみなので警告に留める。plan はむしろ
 # 偽陽性に気づくための経路なので、止めると発見が遅れる。
-printf '%s' "$command" | grep -Eq "${tf_prefix}(apply|destroy)\b"
+grep -Eq "${tf_prefix}(apply|destroy)\b" <<<"$command"
 # 判定に失敗したときは、apply / destroy かもしれないので止める側に倒す
 if [ $? -ne 1 ]; then
   jq -n --arg reason "${detail}
