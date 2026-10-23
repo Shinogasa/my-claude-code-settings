@@ -39,10 +39,14 @@ command=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null) 
 # Codex は codex/RTK.md の指示で全コマンドに rtk を付けるので、読み飛ばさないと deny が効かない。
 # 前置きの語は guard-dangerous-bash.py の PREFIX_WORDS とそろえる（テストで照合している）。
 # OpenTofu（tofu）は terraform と置き換えられる別実装なので、同じに扱う。
-prefix_word='(rtk|time|exec|nohup|command|builtin|env|!|if|then|elif|else|while|until|do|\{|\})'
-assignment='[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*'
+prefix_word='(time|exec|nohup|command|builtin|env|!|if|then|elif|else|while|until|do|\{|\})'
+# rtk は `rtk [opts] proxy [opts]` まで読み飛ばす（guard-dangerous-bash.py の skip_rtk_wrapper と同じ）。
+# proxy を prefix_word に入れないのは、`echo proxy terraform apply` を誤って止めないため。
 options='(-[^[:space:]]+[[:space:]]+)*'
-tf_prefix="(^|[;&|(])[[:space:]]*((${prefix_word}|${assignment})[[:space:]]+${options})*(terraform|tofu)[[:space:]]+${options}"
+rtk_wrapper="rtk[[:space:]]+${options}(proxy[[:space:]]+${options})?"
+# 代入の値は、引用符の中と $(...) の中の空白で切らない
+assignment="[A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|'[^']*'|\\\$\\([^)]*\\)|[^[:space:]'\"]+)*"
+tf_prefix="(^|[;&|(])[[:space:]]*((${prefix_word}|${assignment})[[:space:]]+${options}|${rtk_wrapper})*(terraform|tofu)[[:space:]]+${options}"
 
 # 状態を変えうるサブコマンドだけを対象にする。fmt / validate / version は巻き込まない。
 if ! printf '%s' "$command" | grep -Eq "${tf_prefix}(plan|apply|destroy|import|refresh|state)\b"; then
