@@ -10,6 +10,7 @@
 """
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -204,6 +205,19 @@ class TestBehindBranch(unittest.TestCase):
                 out = run_hook(command, self.repo)
                 self.assertNotEqual(out, "")
                 self.assertIsNone(json.loads(out)["hookSpecificOutput"].get("permissionDecision"))
+
+    def test_grep_failure_is_reported_instead_of_passing_silently(self):
+        # 正規表現を grep が受け付けないと終了コード2になる。一致なし（1）と同じに扱うと、
+        # どの terraform も黙って通る（2026-10-23 のセキュリティレビュー）
+        with tempfile.TemporaryDirectory() as stub_dir:
+            stub = Path(stub_dir) / "grep"
+            stub.write_text("#!/bin/sh\nexit 2\n")
+            stub.chmod(0o755)
+            payload = {"tool_name": "Bash", "tool_input": {"command": "terraform apply"}}
+            result = subprocess.run(
+                ["bash", str(HOOK)], input=json.dumps(payload), capture_output=True, text=True,
+                cwd=str(self.repo), env={**os.environ, "PATH": f"{stub_dir}:{os.environ['PATH']}"})
+        self.assertIn("systemMessage", json.loads(result.stdout))
 
     def test_word_after_non_prefix_command_is_ignored(self):
         for command in ("echo rtk terraform apply", "echo AWS_PROFILE=dev terraform apply",
