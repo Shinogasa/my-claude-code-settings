@@ -745,17 +745,14 @@ fetch 直後でも競合しうる）。フックの層では原理的に見切�
 
 **着手条件**: この経路での取りこぼしを観測したとき。
 
-### `warn-branch-behind-main` が、前置きの付いた `terraform apply` を止めない（2026-10-23 の調査）
+### `warn-branch-behind-main` が、https のリモートで fetch が止まると通る（2026-10-23 の調査）
 
-深刻度は中で、terraform を扱うリポジトリでは高。再現済み。
+深刻度は低。未再現。fetch の時間を縛っているのは `GIT_SSH_COMMAND` の ConnectTimeout だけなので、
+https のリモートで fetch が止まると、フック全体のタイムアウト（Claude 30秒、Codex 10秒）に達し、止めずに通る。
+同じ調査で見つかった前置き（`rtk` など）と `tofu` の件は、2026-10-23 に直した。
 
-- `rtk terraform apply`、`AWS_PROFILE=dev terraform apply`、`env terraform apply`、`time terraform apply` は、遅れたブランチでも何も出さずに通る。
-  判定（`tf_prefix`）が、行頭か `;&|(` の直後の `terraform` しか見ていないため
-- `codex/RTK.md` が Codex に「すべてのシェルコマンドに rtk を付ける」と指示している。そのため、**Codex では通常の書き方で apply の deny が効かない**
-- ほかに、`tofu apply` は対象外（再現済み）。https のリモートで fetch が止まるとフック全体のタイムアウトに達して通る（未再現）
-
-**決めること**: 前置きの除去を guard-dangerous-bash と同じ処理（`strip_prefixes`）に寄せるか、このフックの中で足すか。`tofu` を対象に入れるか。
-**着手条件**: 未定（2026-10-23に積んだ）。Codex で terraform を扱う前には直したい。
+**決めること**: fetch 全体の時間を縛るか（`timeout(1)` が無い環境への備えが要る）、制約として受け入れるか。
+**着手条件**: https のリモートで terraform を扱うリポジトリが出たとき。
 
 ### Codex の `apply_patch` で、パッチの本文を Bash のコマンドとして検査してしまう（2026-10-23 の調査）
 
