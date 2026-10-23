@@ -1238,6 +1238,25 @@ class TestDestructivePushTarget(TrackingFixture):
     def test_force_push_with_unresolved_directory_and_implicit_branch_is_blocked(self):
         self.assert_result('cd "$X" && git push --force', self.feature, BLOCK)
 
+    def test_push_option_value_ending_in_o_does_not_hide_the_remote(self):
+        # -oxo は値 "xo" の push option。次のトークンを値として読み飛ばすと origin を見失い、
+        # main を現在のブランチ（work）への push と読んで通す（2026-10-23 のセキュリティレビュー）
+        for command in ("git push -f -oxo origin main", "git push -d -oxo origin main"):
+            with self.subTest(command=command):
+                self.assert_result(command, self.feature, BLOCK)
+
+    def test_digit_flags_in_cluster_still_count_as_force_or_delete(self):
+        # git push は -4 / -6 もまとめ書きできる。-4f は force push（2026-10-23 に実機で確認）
+        for command in ("git push -4f origin main", "git push -f6 origin main", "git push -4d origin main"):
+            with self.subTest(command=command):
+                self.assert_result(command, self.feature, BLOCK)
+
+    def test_abbreviated_long_option_value_is_not_read_as_remote(self):
+        # --push-o は --push-option の略記で、次のトークンを値に取る（2026-10-23 に実機で確認）
+        for command in ("git push --force --push-o x origin", "git push --force --rece x origin"):
+            with self.subTest(command=command):
+                self.assert_result(command, self.main_repo, BLOCK)
+
     def test_explicit_refspec_does_not_need_the_directory(self):
         self.assert_result('cd "$X" && git push --force origin feature-x', self.feature, ALLOW)
 
