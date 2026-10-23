@@ -72,6 +72,12 @@ GH_FLAGS_WITH_VALUE = {"-R", "--repo"}  # 値を次の語に取る gh のフラ�
 SHELLS = {"bash", "sh", "zsh"}
 CLAUDE_TRAILER = re.compile(r"^Co-Authored-By:\s*Claude\b", re.IGNORECASE | re.MULTILINE)
 GIT_TIMEOUT_SECONDS = 10
+# リポジトリの設定から起動されうるコマンドを止める（fsmonitor・フック・属性・通信・認証）
+SAFE_GIT_CONFIG = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.attributesFile=/dev/null",
+                   "-c", "protocol.allow=never", "-c", "core.sshCommand=false", "-c", "core.askPass=",
+                   "-c", "credential.helper=")
+# 差分の中身を作るサブコマンド。textconv と外部 diff を使わせない
+DIFF_SUBCOMMANDS = {"diff", "log", "diff-tree"}
 TIME_BUDGET_SECONDS = 20  # settings.json の timeout（30秒）より先に、自分で止める。打ち切られたフックは止めたことにならない
 CONFLUENCE_TIME_BUDGET_SECONDS = 5  # Confluenceのフックの timeout（10秒）より先に止める
 LOCK_POLL_SECONDS = 0.05
@@ -357,12 +363,25 @@ class GitError(Exception):
     """レビューの候補を決めるためのgitの操作に失敗した。"""
 
 
+def _git_env() -> dict:
+    """利用者の GIT_* 環境変数（GIT_DIR・GIT_EXTERNAL_DIFF など）を引き継がない環境を返す。
+
+    GIT_NO_LAZY_FETCH=1 で、partial clone の欠けたオブジェクトを取りに行かない（取りに行くと remote の設定のコマンドが走る）。
+    """
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    return {**env, "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0", "GIT_NO_LAZY_FETCH": "1"}
+
+
 def _git(root: Path, *args: str) -> str:
+    """利用者がコマンドを承認する前に走るので、リポジトリの設定のコマンドを起動させない（principle-review.py の _git と同じ考え方）。"""
     step = f"git {args[0]}"
     remaining = _remaining(step)
     timeout = GIT_TIMEOUT_SECONDS if remaining is None else min(GIT_TIMEOUT_SECONDS, remaining)
+    if args[0] in DIFF_SUBCOMMANDS:
+        args = (args[0], "--no-ext-diff", "--no-textconv", *args[1:])
     try:
-        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(["git", "-C", str(root), *SAFE_GIT_CONFIG, *args], capture_output=True, text=True,
+                                timeout=timeout, env=_git_env(), stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired as error:
         _remaining(step)  # 予算の側で切れたなら BudgetError にする
         raise GitError(f"git {' '.join(args)}: {type(error).__name__}") from error

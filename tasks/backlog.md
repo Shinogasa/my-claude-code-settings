@@ -1305,16 +1305,3 @@ submoduleとプラグインの更新を洗い出したとき、次は版を比�
 
 **決めること**: 拒否するパス（`~/.ssh`・`~/.aws`・`.env` など、どこまで含めるか）と、`settings.json.template` に書くと全セッションの Read・Grep に効くことを受け入れるか。
 `principle-reviewer` は Read だけを使うが、成果物に読み先を指示されても従わないことは指示文で頼んでいるだけで、仕組みでは止めていない（2026-10-08 のセキュリティレビュー）。
-
-### guard-dangerous-bash.py と jp-doc-review.py の git 呼び出しも、承認前に相手の設定で動く経路（lazy fetch・filter など）を塞ぐか
-
-**決めること**: `hooks/principle-review.py` の `_git`（GIT_ 環境変数を引き継がない、`GIT_NO_LAZY_FETCH=1`、fsmonitor・フック・通信の無効化、
-filter の打ち消し、新しいセッションで起動してグループごと止める）を共通の補助に切り出して使うか、それぞれに必要な分だけ足すか。
-どちらのフックも利用者がコマンドを承認する前に、作業中のリポジトリで `git` を実行する。原則レビューのフックでは、
-partial clone の lazy fetch とサブモジュールの filter が承認前に走ることを 2026-10-08 に実測した。ほかの2つは確かめていない。
-
-### Git 2.45 未満で lazy fetch を止められない／per-protocol の allow で -c が上書きされる
-
-**決めること**: Git 2.45 未満を「検査できなかった」扱いにするか、`protocol.{file,ssh,git,http,https,ext}.allow=never` を明示するか。
-`GIT_NO_LAZY_FETCH` は Git 2.45.0 以降で効く。それ未満では lazy fetch を止められず、リポジトリの設定のコマンドが承認前に走りうる。
-`-c protocol.allow=never` も、リポジトリの `protocol.<名前>.allow=always` に上書きされる（仕様書 2026-10-08-work-principles-design.md の6章・10章）。
