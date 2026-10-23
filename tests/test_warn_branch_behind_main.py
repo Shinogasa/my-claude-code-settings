@@ -219,6 +219,12 @@ class TestBehindBranch(unittest.TestCase):
                 cwd=str(self.repo), env={**os.environ, "PATH": f"{stub_dir}:{os.environ['PATH']}"})
         self.assertIn("systemMessage", json.loads(result.stdout))
 
+    def test_long_command_after_apply_is_still_denied(self):
+        # grep -q は一致した時点で終わるので、パイプの残りを書いていた printf が SIGPIPE で 141 になる。
+        # pipefail の下ではそれがパイプ全体の終了コードになり、判定の失敗と取り違える
+        command = "terraform apply\n: <<'EOF'\n" + "x" * 200_000 + "\nEOF"
+        self.assertEqual(decision(command, self.repo), "deny")
+
     def test_word_after_non_prefix_command_is_ignored(self):
         for command in ("echo rtk terraform apply", "echo AWS_PROFILE=dev terraform apply",
                         "echo proxy terraform apply"):
