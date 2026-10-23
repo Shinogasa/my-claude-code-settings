@@ -775,6 +775,10 @@ guard-dangerous-bash にも、これらすべてと同じ穴がある（上の�
 
 guard-agent-profile・block-commit-on-merged-pr・require-full-tests-before-pr の cwd・skill-read-check の一部だけの Read は、2026-10-23 に直した。残りは Codex に関係するものと、未確認のもの。
 
+- guard-agent-profile（2026-10-23 のセキュリティレビューで残った Low。コードを読んで判断した）:
+  - 誤検知: 前置きの後ろの引用符付きの引数が claude / codex で始まると止まる（``time git commit -m "Claude の設定を直す"``、`xargs grep "claude code" .`）
+  - 見逃し: `script -c claude /dev/null`（値が1語）、前置きの後ろのパッケージの起動（`timeout 5 npx -p foo -- claude`）、`env -uCODEX_HOME codex`（-u に値を続けた形）
+  - オプションの値を数え上げる方式の限界なので、直すなら guard の前置きの解析と合わせて考える
 - require-full-tests-before-pr: matcher が Bash だけなので、Bash 以外（MCP など）で PR を作る経路は見ない（jp-doc-review も同じ）。未確認
 - skill-read-check: Bash の `head` / `sed -n` で一部だけ読んだ場合も、パスがあれば読んだと数える（2026-10-23 に Read の offset / limit だけ直した）
 - detect-parallel-sessions: 列挙が `pgrep -x claude` だけなので、Codex のセッション同士の並列は検出しない。未再現
