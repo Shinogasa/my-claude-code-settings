@@ -175,6 +175,22 @@ class PrReviewTests(HookCase):
     def reason(self, result):
         return result[1]["hookSpecificOutput"]["permissionDecisionReason"]
 
+    def test_repository_configured_diff_commands_are_not_run(self):
+        # git diff はリポジトリの設定の textconv・外部 diff を起動する。承認の前に走らせない（2026-10-23）
+        marker = self.base / "ran"
+        script = self.base / "evil.sh"
+        script.write_text(f"#!/bin/sh\ntouch {marker}\ncat \"$1\" 2>/dev/null\n", encoding="utf-8")
+        script.chmod(0o755)
+        self.git("config", "diff.evil.textconv", str(script))
+        self.git("config", "diff.external", str(script))
+        self.write_file(".gitattributes", "*.md diff=evil\n", root=self.git_repo)
+        self.git("add", ".gitattributes")
+        self.commit_file("docs/a.md", JP_LONG)
+        self.env_overrides["GIT_EXTERNAL_DIFF"] = str(script)
+        result = self.pr()
+        self.assertFalse(marker.exists(), result)
+        self.assertEqual(decision_of(result), "deny", result)
+
     def test_other_commands_are_ignored(self):
         self.commit_file("docs/a.md", JP_LONG)
         for command in ("git commit -m x", "gh pr view", "gh pr list"):
