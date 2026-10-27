@@ -1204,6 +1204,15 @@ Python や Markdown だけを触る作業中も常に効いている。
 
 **決めること**: sandboxを有効にするか。有効にするなら、壊れるコマンドへの例外をどこまで許すか、strictモードにするか。
 
+### P3: frontmatterの `effort` で、難しい仕事を担うagent・skillだけeffortを上げる
+
+2026-10-27に、既定のeffortを公式どおりmediumへ戻した（ADR 0040）。モデルが自分でセッションのeffortを変える手段は、
+公式の model-config ページに書かれていない（先頭10万字を確認。残りは未読）。ただし、skillとサブエージェントは
+frontmatterに `effort` を書けば、それが動く間だけ段階を上げられる。
+
+**決めること**: どのagent・skillに付けるか（候補: security-reviewer、principle-reviewer、planner）。
+何段階にするか。mediumで見落としが増えたと判断する材料を何にするか。
+
 ### P2: ReviewAndDesignスタイルをリファクタリングし、公式に寄せる
 
 `output-styles/review-and-design.md` は2026-03-17に自作したもので、古くなっている可能性がある。
