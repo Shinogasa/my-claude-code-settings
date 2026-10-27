@@ -741,11 +741,15 @@ template = json.loads(Path(settings_template).read_text(encoding="utf-8"))
 # テンプレートから消したキーは、前回テンプレートが書いた値のままなら消す（3-way）。
 # 適用後に誰かが書き換えた値は残し、消さなかったことを知らせる
 previous_template = state_module.load_state(state_file).get("templates", {}).get(settings_destination)
-settings, kept_keys = state_module.drop_removed_template_keys(settings, previous_template, template)
+settings, kept_keys, removed_keys = state_module.drop_removed_template_keys(
+    settings, previous_template, template
+)
+for key in removed_keys:
+    print(f"注意: {settings_destination} の {key} は、テンプレートから消えたので消しました。", file=sys.stderr)
 for key in kept_keys:
     print(
         f"注意: {settings_destination} の {key} はテンプレートから消えましたが、"
-        "適用後に値が変わっているので残しました。不要なら手で消してください。",
+        "値が変わっているか、消すと守りが緩む設定なので残しました。不要なら手で消してください。",
         file=sys.stderr,
     )
 existing_permissions = settings.get("permissions")

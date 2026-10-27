@@ -25,6 +25,9 @@ status: accepted
 - `permissions` の `allow` は、テンプレートから消した規則だけを取り除く。利用者が足した規則は残す
 - `deny` と `ask` は、テンプレートから消した規則も自動では消さず、標準エラーで知らせる。
   消すと守りが緩むうえ、利用者が同じ規則を自分で足していた場合と区別できないため（自動セキュリティレビューの指摘）
+- 消すと守りが外れる設定（`hooks`・`enabledPlugins`・`sandbox`・`disableAllHooks`・`allowManagedHooksOnly`、
+  `permissions` の `defaultMode`・`disableBypassPermissionsMode`）も、値が同じでも自動では消さずに知らせる（security-reviewerの指摘）
+- 実際に消したキーも、標準エラーに1行ずつ出す。間違って消したときに気づけるようにする
 - 適用のたびに今回のテンプレートを基準として記録し直すので、残したキーの通知は次の1回だけで止まる
 - 記録が無いとき（この変更の後の初回）は、何も消さない
 
@@ -59,6 +62,9 @@ Claude Codeが `settings.json` に書き込む値（`modelSettings` など）が
 - テンプレートからキーを消せば、次の `setup.sh` で動いている設定からも消える
 - この変更より前に消したキーは、記録が無いので消えない。`effortLevel` は手で消し済み
 - `env.json.template` から消した環境変数のキーは、今回の対象外で、まだ残る
+- `ownership.json` を書き換えられれば、消すキーを指定できる。ただし守りのキーは消せない。
+  また、`ownership.json` を書き換えられる人は `settings.json` も直接書き換えられるので、
+  記録をテンプレートのハッシュに結び付ける対策は採らなかった
 
 ## 根拠
 
