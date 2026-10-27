@@ -709,7 +709,9 @@ prepare_claude_files() {
   chmod 600 "$CLAUDE_SETTINGS_STAGED" "$CLAUDE_PERSONAL_STAGED" || return 1
   python3 - "$SCRIPT_DIR/settings.json.template" "$CLAUDE_DIR/settings.json" \
     "$SCRIPT_DIR/env.json.template" "$CLAUDE_SETTINGS_STAGED" \
-    "$CLAUDE_PERSONAL_STAGED" "$SETUP_MERGE_ENV" "$CODEX_DIR" "$CODEX_PERSONAL_DIR" <<'PY'
+    "$CLAUDE_PERSONAL_STAGED" "$SETUP_MERGE_ENV" "$CODEX_DIR" "$CODEX_PERSONAL_DIR" \
+    "$STATE_TOOL" "$(state_path claude)" <<'PY'
+import importlib.util
 import json
 import os
 import sys
@@ -717,8 +719,11 @@ from pathlib import Path
 
 (
     settings_template, settings_destination, env_template, settings_staged, personal_staged, merge_env,
-    codex_home, codex_personal_home,
+    codex_home, codex_personal_home, state_tool, state_file,
 ) = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("setup_state", state_tool)
+state_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(state_module)
 existing_path = Path(settings_destination)
 settings = {}
 try:
@@ -733,6 +738,16 @@ try:
 except (OSError, UnicodeError, json.JSONDecodeError):
     pass
 template = json.loads(Path(settings_template).read_text(encoding="utf-8"))
+# テンプレートから消したキーは、前回テンプレートが書いた値のままなら消す（3-way）。
+# 適用後に誰かが書き換えた値は残し、消さなかったことを知らせる
+previous_template = state_module.load_state(state_file).get("templates", {}).get(settings_destination)
+settings, kept_keys = state_module.drop_removed_template_keys(settings, previous_template, template)
+for key in kept_keys:
+    print(
+        f"注意: {settings_destination} の {key} はテンプレートから消えましたが、"
+        "適用後に値が変わっているので残しました。不要なら手で消してください。",
+        file=sys.stderr,
+    )
 existing_permissions = settings.get("permissions")
 settings.update(template)
 # permissions は丸ごと上書きしない。利用者や Claude Code が書いた defaultMode・allow などを残し、
@@ -790,12 +805,14 @@ commit_claude_files() {
   local state_file="$1" settings_snapshot="$2" personal_snapshot="$3"
   python3 - "$CLAUDE_SETTINGS_STAGED" "$CLAUDE_DIR/settings.json" \
     "$CLAUDE_PERSONAL_STAGED" "$CLAUDE_DIR/settings.personal.json" \
-    "$STATE_TOOL" "$state_file" "$settings_snapshot" "$personal_snapshot" <<'PY'
+    "$STATE_TOOL" "$state_file" "$settings_snapshot" "$personal_snapshot" \
+    "$SCRIPT_DIR/settings.json.template" <<'PY'
 import importlib.util
 import json
 import sys
+from pathlib import Path
 
-settings_staged, settings_destination, personal_staged, personal_destination, tool, state_path, settings_snapshot, personal_snapshot = sys.argv[1:]
+settings_staged, settings_destination, personal_staged, personal_destination, tool, state_path, settings_snapshot, personal_snapshot, settings_template = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("setup_state", tool)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -812,6 +829,10 @@ module.install_generated_file(
 state = module.load_state(state_path)
 state["generated"][settings_destination] = module.sha256_file(settings_destination)
 state["generated"][personal_destination] = module.sha256_file(personal_destination)
+# 次回、テンプレートから消したキーを判定する基準（base）として残す
+state.setdefault("templates", {})[settings_destination] = json.loads(
+    Path(settings_template).read_text(encoding="utf-8")
+)
 module.save_state(state_path, state)
 PY
   CLAUDE_SETTINGS_STAGED=""

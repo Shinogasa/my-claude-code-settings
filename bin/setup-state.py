@@ -327,7 +327,56 @@ def load_state(path):
         for path_name, checksum in generated.items()
     ):
         return {"version": 1, "generated": {}}
-    return {"version": 1, "generated": dict(generated)}
+    loaded = {"version": 1, "generated": dict(generated)}
+    # 前回適用したテンプレート。不正な形なら捨てる（消す判定をしないだけで、何も壊さない）
+    templates = state.get("templates")
+    if isinstance(templates, dict) and all(
+        isinstance(path_name, str) and isinstance(template, dict)
+        for path_name, template in templates.items()
+    ):
+        loaded["templates"] = dict(templates)
+    return loaded
+
+
+def _drop_removed_permission_rules(permissions, previous, current):
+    """前回のテンプレートの permissions にあって今回無い規則を、permissions から除いた写しを返す。"""
+    if not isinstance(permissions, dict) or not isinstance(previous, dict):
+        return permissions
+    current = current if isinstance(current, dict) else {}
+    result = dict(permissions)
+    for key, previous_value in previous.items():
+        current_value = current.get(key)
+        live_value = result.get(key)
+        if isinstance(previous_value, list) and isinstance(live_value, list):
+            dropped = [rule for rule in previous_value if rule not in (current_value or [])]
+            result[key] = [rule for rule in live_value if rule not in dropped]
+        elif key not in current and live_value == previous_value:
+            result.pop(key, None)
+    return result
+
+
+def drop_removed_template_keys(settings, previous, current):
+    """前回のテンプレートにあって今回のテンプレートに無いキーを、settings から除いた写しを返す。
+
+    3-way で判定する。値がテンプレートの書いたままなら消し、誰かが書き換えていたら残して、
+    残したキー名を返す。前回の記録が無ければ何も消さない。
+    """
+    if not isinstance(previous, dict):
+        return dict(settings), []
+    result = dict(settings)
+    kept = []
+    for key, previous_value in previous.items():
+        if key == "permissions" or key in current or key not in result:
+            continue
+        if result[key] == previous_value:
+            del result[key]
+        else:
+            kept.append(key)
+    if "permissions" in result:
+        result["permissions"] = _drop_removed_permission_rules(
+            result["permissions"], previous.get("permissions"), current.get("permissions")
+        )
+    return result, kept
 
 
 def save_state(path, state):
