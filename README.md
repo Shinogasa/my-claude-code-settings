@@ -45,7 +45,9 @@ bash setup.sh --claude
 1. git submodule の初期化・更新
 2. 選択したホストの設定ディレクトリへシンボリックリンクを作成
 3. Claudeを選択した場合、`settings.json.template` から `~/.claude/settings.json` を生成し、
-   `.env` が存在すれば `env` ブロック（APIキー等）を追加マージ
+   `.env` が存在すれば `env` ブロック（APIキー等）を追加マージ。
+   `permissions` は既存の値（`defaultMode` など）を残し、テンプレートの規則を足すだけにする。
+   テンプレートは、秘密鍵・認証情報・トークン・シェルの履歴・`.env` の類・terraform の state を、エージェントが Read することを拒否している
 4. Claudeを選択した場合、`~/.claude/settings.personal.json` を生成する
 5. Codexを選択した場合、`~/.codex-personal` があれば、そこにも同じリンクを張る（[認証プロファイルの切り替え](#認証プロファイルの切り替え)用）
 
@@ -515,7 +517,7 @@ persona polite     # 切り替える。反映されるのは次に始めるセ�
 │   ├── entries/                 #   設計Predict / ★ Delta
 │   └── code/                    #   コード学習のschema
 ├── docs/                        # ADR（docs/adr/）、設計書・計画（docs/superpowers/）、調査記録
-├── tasks/                       # backlog.md と lessons.md（todo.md は追跡しない）
+├── tasks/                       # backlog.md（todo/ は追跡しない）
 ├── tests/                       # テスト（tests/run.sh で実行）
 ├── .githooks/                   # 禁止パターンを検査する pre-commit、ペルソナを戻す post-checkout / post-merge
 ├── statusline.js                # ステータスライン表示
@@ -741,8 +743,8 @@ python3 -W error::ResourceWarning -m unittest tests.test_codex_model_switch_runt
 PRの前は `--all` で全件を流す。依存はuvの一時環境に入るだけで、システムやdotfilesには何も入れない。
 
 ```bash
-bash tests/run.sh          # 既定の組（約1分）
-bash tests/run.sh --all    # 全件（約4分）
+bash tests/run.sh          # 既定の組（約35秒）
+bash tests/run.sh --all    # 全件（約1分）
 bash tests/run.sh --dry-run --all  # 実行するコマンドを表示するだけ
 ```
 

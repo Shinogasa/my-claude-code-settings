@@ -294,6 +294,24 @@ class SetupCliTests(unittest.TestCase):
         # 既定のプロファイルにも明示の目印を置く。引き継いだ personal を上書きし、目印の脱落も検出できるようにする
         self.assertEqual(settings["env"]["CLAUDE_PROFILE"], "default")
 
+    def test_secret_reads_are_denied_without_dropping_existing_permissions(self):
+        # テンプレートの permissions で、利用者が足した defaultMode や allow・deny を上書きしない
+        (self.home / ".claude").mkdir()
+        existing = {"permissions": {"defaultMode": "auto", "allow": ["Bash(ls)"], "deny": ["Bash(curl *)"]}}
+        (self.home / ".claude" / "settings.json").write_text(json.dumps(existing), encoding="utf-8")
+        # 手で書き換えた settings.json は衝突になるので、--replace-conflicts で取り込む（退避したうえで中身を引き継ぐ）
+        for _ in range(2):  # 2回目で拒否のルールが重複しないことも確かめる
+            result = run_setup(self.repository, self.home, "--claude", "--replace-conflicts")
+            self.assertEqual(result.returncode, 0, result.stderr)
+        permissions = json.loads((self.home / ".claude" / "settings.json").read_text(encoding="utf-8"))["permissions"]
+        self.assertEqual(permissions["defaultMode"], "auto")
+        self.assertEqual(permissions["allow"], ["Bash(ls)"])
+        for rule in ("Bash(curl *)", "Read(~/.ssh/**)", "Read(~/.aws/credentials)", "Read(//**/.env)",
+                     "Read(//**/*.tfstate)", "Read(//**/.env.local)", "Read(//**/.envrc)",
+                     "Read(~/.git-credentials)", "Read(~/.zsh_history)", "Read(~/.claude.json)"):
+            with self.subTest(rule=rule):
+                self.assertEqual(permissions["deny"].count(rule), 1)
+
     def test_profiles_pin_codex_home_for_child_codex(self):
         # 個人プロファイルのセッションから素の codex を起動しても、個人用の CODEX_HOME で動くようにする（ADR 0036）
         (self.home / ".claude").mkdir()
@@ -691,6 +709,18 @@ class SetupCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(list((self.home / ".claude").iterdir()), [])
         self.assertFalse((self.home.parent / "commands.log").exists())
+
+    def test_invalid_settings_permissions_stops_before_home_apply(self):
+        (self.home / ".claude").mkdir()
+        template = self.repository / "settings.json.template"
+        document = json.loads(template.read_text(encoding="utf-8"))
+        document["permissions"] = {"deny": "Read(~/.ssh/**)"}  # リストでない
+        template.write_text(json.dumps(document), encoding="utf-8")
+
+        result = run_setup(self.repository, self.home, "--claude")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(list((self.home / ".claude").iterdir()), [])
 
     def test_submodule_and_git_hooks_run_after_preflight_before_home_apply(self):
         (self.home / ".claude").mkdir()
