@@ -8,6 +8,8 @@ status: accepted
 
 ## 背景
 
+目的は、テンプレートからキーを消したとき、次の `setup.sh` で動いている設定からも消え、手で直さずに済むようにすること。
+
 `setup.sh` は、既存の `~/.claude/settings.json` を読み、その上に `settings.json.template` を重ねて書き出す。
 `permissions` はリストに規則を足すだけにしている。既存の内容を残すのは、Claude Code自身や利用者が
 `settings.json` に書き込むためである（`/effort` の `modelSettings`、`/auto-mode-setup` の `autoMode` など）。
@@ -18,6 +20,9 @@ status: accepted
 分からなかった。
 
 ## 決定
+
+「前回のテンプレートを記録して消す」方針はユーザーが選んだ。値を比べて消す条件、`deny`・`ask` と守りのキーを残す扱いは、
+AIが足した（後の2つは自動セキュリティレビューと security-reviewer の指摘による）。
 
 - `ownership.json` に、前回適用したテンプレートを `templates`（生成先のパスごと）として残す
 - 前回のテンプレートにあって今回無いキーは、動いている値が前回の値のままなら消す。
@@ -61,7 +66,7 @@ Claude Codeが `settings.json` に書き込む値（`modelSettings` など）が
 
 - テンプレートからキーを消せば、次の `setup.sh` で動いている設定からも消える
 - この変更より前に消したキーは、記録が無いので消えない。`effortLevel` は手で消し済み
-- `env.json.template` から消した環境変数のキーは、今回の対象外で、まだ残る
+- `env.json.template` から消した環境変数のキーは、まだ残る。代わりの手段は検討しておらず、今回の範囲から外してbacklogに回した
 - `ownership.json` を書き換えられれば、消すキーを指定できる。ただし守りのキーは消せない。
   また、`ownership.json` を書き換えられる人は `settings.json` も直接書き換えられるので、
   記録をテンプレートのハッシュに結び付ける対策は採らなかった

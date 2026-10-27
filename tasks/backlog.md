@@ -1204,6 +1204,13 @@ Python や Markdown だけを触る作業中も常に効いている。
 
 **決めること**: sandboxを有効にするか。有効にするなら、動かなくなるコマンドへの例外をどこまで許すか、strictモードにするか。
 
+### P3: `env.json.template` から消した環境変数キーも、settings.json から消す
+
+ADR 0041で、`settings.json.template` から消したキーは3-wayで消すようにした。`env.json.template` 由来の `env` のキーは
+対象外で、テンプレートから消しても `settings.json` と `settings.personal.json` に残る。
+
+**決めること**: 同じ3-wayの仕組みを `env` にも使うか。`.env` の値との関係（空文字で上書きする今の動き）をどう扱うか。
+
 ### P3: frontmatterの `effort` で、難しい仕事を担うagent・skillだけeffortを上げる
 
 2026-10-27に、既定のeffortを公式どおりmediumへ戻した（ADR 0040）。モデルが自分でセッションのeffortを変える手段は、
