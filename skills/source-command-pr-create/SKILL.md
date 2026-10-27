@@ -1,6 +1,7 @@
 ---
 name: "source-command-pr-create"
 description: "現在のブランチの変更内容を確認し、GitHub PRの作成を支援する"
+disable-model-invocation: true
 ---
 
 # source-command-pr-create

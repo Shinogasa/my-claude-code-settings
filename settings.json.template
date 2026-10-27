@@ -44,7 +44,6 @@
   },
   "outputStyle": "ReviewAndDesign",
   "theme": "dark-daltonized",
-  "effortLevel": "xhigh",
   "hooks": {
     "PreToolUse": [
       {
