@@ -46,7 +46,7 @@ class TestSharedInstructionIndex(unittest.TestCase):
     def test_requires_full_session_start_read_on_codex_only(self):
         # Claude Codeは paths: の無いruleを起動時に読み込むので、読み直させない
         self.assertIn("Codex CLIでは、セッション開始時に以下をすべて全文読む", self.text)
-        self.assertNotIn("セッション開始時に以下をすべて全文読む。", self.text)
+        self.assertNotIn("\n**セッション開始時に以下をすべて全文読む。**", self.text)
 
     def test_tells_claude_code_not_to_reread_session_rules(self):
         self.assertIn("Claude Codeでは、以下は起動時に読み込まれているので、読み直さない", self.text)

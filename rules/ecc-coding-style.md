@@ -1,5 +1,6 @@
 ---
-alwaysApply: true
+paths:
+  - "**/*.{go,kt,kts,java,ts,tsx,js,jsx,mjs,py,rb,rs,swift,sh,bash,sql}"
 ---
 
 # Coding Style
