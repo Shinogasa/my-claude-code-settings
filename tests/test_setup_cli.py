@@ -343,6 +343,10 @@ class SetupCliTests(unittest.TestCase):
         settings = json.loads(settings_path.read_text(encoding="utf-8"))
         self.assertEqual(settings["theme"], "user-chosen")
         self.assertIn("theme", result.stderr)
+        # 基準を記録し直すので、同じキーの通知は次の1回だけで止まる
+        result = run_setup(self.repository, self.home, "--claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("の theme は", result.stderr)
 
     def test_profiles_pin_codex_home_for_child_codex(self):
         # 個人プロファイルのセッションから素の codex を起動しても、個人用の CODEX_HOME で動くようにする（ADR 0036）
