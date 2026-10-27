@@ -232,13 +232,23 @@ class SetupStateTests(unittest.TestCase):
         # 入力は書き換えない
         self.assertIn("theme", settings)
 
-    def test_drop_removed_template_keys_removes_dropped_permission_rules(self):
-        settings = {"permissions": {"defaultMode": "auto", "deny": ["Read(a)", "Read(b)", "Bash(user)"]}}
-        previous = {"permissions": {"deny": ["Read(a)", "Read(b)"]}}
+    def test_drop_removed_template_keys_removes_only_dropped_allow_rules(self):
+        # allow を消すのは権限を狭めるだけなので自動で消す
+        settings = {"permissions": {"defaultMode": "auto", "allow": ["Bash(a)", "Bash(b)", "Bash(user)"]}}
+        previous = {"permissions": {"allow": ["Bash(a)", "Bash(b)"]}}
+        current = {"permissions": {"allow": ["Bash(a)"]}}
+        result, kept = self.state.drop_removed_template_keys(settings, previous, current)
+        self.assertEqual(result["permissions"], {"defaultMode": "auto", "allow": ["Bash(a)", "Bash(user)"]})
+        self.assertEqual(kept, [])
+
+    def test_drop_removed_template_keys_keeps_dropped_deny_and_ask_rules(self):
+        # deny・ask を消すと守りが緩む。利用者が同じ規則を自分で足していた可能性もあるので、残して知らせる
+        settings = {"permissions": {"deny": ["Read(a)", "Read(b)"], "ask": ["Bash(push)"]}}
+        previous = {"permissions": {"deny": ["Read(a)", "Read(b)"], "ask": ["Bash(push)"]}}
         current = {"permissions": {"deny": ["Read(a)"]}}
         result, kept = self.state.drop_removed_template_keys(settings, previous, current)
-        self.assertEqual(result["permissions"], {"defaultMode": "auto", "deny": ["Read(a)", "Bash(user)"]})
-        self.assertEqual(kept, [])
+        self.assertEqual(result["permissions"], settings["permissions"])
+        self.assertEqual(kept, ["permissions.deny: Read(b)", "permissions.ask: Bash(push)"])
 
     def test_drop_removed_template_keys_without_record_changes_nothing(self):
         settings = {"theme": "dark"}
