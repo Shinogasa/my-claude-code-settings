@@ -213,6 +213,39 @@ class SetupStateTests(unittest.TestCase):
             self.base / ".claude" / "backups" / "20260821_010203" / "nested" / "settings.json",
         )
 
+    def test_load_state_keeps_recorded_templates(self):
+        # 前回適用したテンプレートを残さないと、テンプレートから消したキーを判定できない
+        state_path = self.base / ".claude" / ".my-claude-code-settings" / "ownership.json"
+        state = {"version": 1, "generated": {"/tmp/settings.json": "abc"},
+                 "templates": {"/tmp/settings.json": {"theme": "dark"}}}
+        self.state.save_state(state_path, state)
+        self.assertEqual(self.state.load_state(state_path), state)
+
+    def test_drop_removed_template_keys_removes_only_unchanged_values(self):
+        settings = {"theme": "dark", "effortLevel": "high", "model": "opus", "keep": 1}
+        previous = {"theme": "dark", "effortLevel": "xhigh", "keep": 1}
+        current = {"keep": 1}
+        result, kept = self.state.drop_removed_template_keys(settings, previous, current)
+        # テンプレートが書いた値のままなら消す。誰かが変えた値と、テンプレート外のキーは残す
+        self.assertEqual(result, {"effortLevel": "high", "model": "opus", "keep": 1})
+        self.assertEqual(kept, ["effortLevel"])
+        # 入力は書き換えない
+        self.assertIn("theme", settings)
+
+    def test_drop_removed_template_keys_removes_dropped_permission_rules(self):
+        settings = {"permissions": {"defaultMode": "auto", "deny": ["Read(a)", "Read(b)", "Bash(user)"]}}
+        previous = {"permissions": {"deny": ["Read(a)", "Read(b)"]}}
+        current = {"permissions": {"deny": ["Read(a)"]}}
+        result, kept = self.state.drop_removed_template_keys(settings, previous, current)
+        self.assertEqual(result["permissions"], {"defaultMode": "auto", "deny": ["Read(a)", "Bash(user)"]})
+        self.assertEqual(kept, [])
+
+    def test_drop_removed_template_keys_without_record_changes_nothing(self):
+        settings = {"theme": "dark"}
+        result, kept = self.state.drop_removed_template_keys(settings, None, {})
+        self.assertEqual(result, settings)
+        self.assertEqual(kept, [])
+
     def test_backup_path_allows_agent_skills_under_home_but_rejects_outside_home(self):
         home = self.base / "home"
         agent_skill = home / ".agents" / "skills" / "backend-patterns"

@@ -312,6 +312,38 @@ class SetupCliTests(unittest.TestCase):
             with self.subTest(rule=rule):
                 self.assertEqual(permissions["deny"].count(rule), 1)
 
+    def _drop_from_template(self, key):
+        template_path = self.repository / "settings.json.template"
+        template = json.loads(template_path.read_text(encoding="utf-8"))
+        template.pop(key)
+        template_path.write_text(json.dumps(template, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def test_key_removed_from_template_is_removed_from_settings(self):
+        (self.home / ".claude").mkdir()
+        result = run_setup(self.repository, self.home, "--claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self._drop_from_template("theme")
+        result = run_setup(self.repository, self.home, "--claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = json.loads((self.home / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        self.assertNotIn("theme", settings)
+
+    def test_key_removed_from_template_keeps_value_changed_after_apply(self):
+        (self.home / ".claude").mkdir()
+        result = run_setup(self.repository, self.home, "--claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings_path = self.home / ".claude" / "settings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["theme"] = "user-chosen"
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        self._drop_from_template("theme")
+        # 手で書き換えた settings.json は衝突になるので、--replace-conflicts で取り込む
+        result = run_setup(self.repository, self.home, "--claude", "--replace-conflicts")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        self.assertEqual(settings["theme"], "user-chosen")
+        self.assertIn("theme", result.stderr)
+
     def test_profiles_pin_codex_home_for_child_codex(self):
         # 個人プロファイルのセッションから素の codex を起動しても、個人用の CODEX_HOME で動くようにする（ADR 0036）
         (self.home / ".claude").mkdir()
