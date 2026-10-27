@@ -327,6 +327,8 @@ class SetupCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         settings = json.loads((self.home / ".claude" / "settings.json").read_text(encoding="utf-8"))
         self.assertNotIn("theme", settings)
+        # 実際に消したキーも知らせる
+        self.assertIn("theme", result.stderr)
 
     def test_key_removed_from_template_keeps_value_changed_after_apply(self):
         (self.home / ".claude").mkdir()

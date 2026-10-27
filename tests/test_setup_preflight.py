@@ -225,10 +225,11 @@ class SetupStateTests(unittest.TestCase):
         settings = {"theme": "dark", "effortLevel": "high", "model": "opus", "keep": 1}
         previous = {"theme": "dark", "effortLevel": "xhigh", "keep": 1}
         current = {"keep": 1}
-        result, kept = self.state.drop_removed_template_keys(settings, previous, current)
+        result, kept, removed = self.state.drop_removed_template_keys(settings, previous, current)
         # テンプレートが書いた値のままなら消す。誰かが変えた値と、テンプレート外のキーは残す
         self.assertEqual(result, {"effortLevel": "high", "model": "opus", "keep": 1})
         self.assertEqual(kept, ["effortLevel"])
+        self.assertEqual(removed, ["theme"])
         # 入力は書き換えない
         self.assertIn("theme", settings)
 
@@ -237,7 +238,7 @@ class SetupStateTests(unittest.TestCase):
         settings = {"permissions": {"defaultMode": "auto", "allow": ["Bash(a)", "Bash(b)", "Bash(user)"]}}
         previous = {"permissions": {"allow": ["Bash(a)", "Bash(b)"]}}
         current = {"permissions": {"allow": ["Bash(a)"]}}
-        result, kept = self.state.drop_removed_template_keys(settings, previous, current)
+        result, kept, removed = self.state.drop_removed_template_keys(settings, previous, current)
         self.assertEqual(result["permissions"], {"defaultMode": "auto", "allow": ["Bash(a)", "Bash(user)"]})
         self.assertEqual(kept, [])
 
@@ -246,13 +247,29 @@ class SetupStateTests(unittest.TestCase):
         settings = {"permissions": {"deny": ["Read(a)", "Read(b)"], "ask": ["Bash(push)"]}}
         previous = {"permissions": {"deny": ["Read(a)", "Read(b)"], "ask": ["Bash(push)"]}}
         current = {"permissions": {"deny": ["Read(a)"]}}
-        result, kept = self.state.drop_removed_template_keys(settings, previous, current)
+        result, kept, removed = self.state.drop_removed_template_keys(settings, previous, current)
         self.assertEqual(result["permissions"], settings["permissions"])
         self.assertEqual(kept, ["permissions.deny: Read(b)", "permissions.ask: Bash(push)"])
 
+    def test_drop_removed_template_keys_keeps_guarding_keys(self):
+        # 消すと守りが外れるキーは、値が同じでも自動では消さない（security-reviewerの指摘）
+        guard = {"hooks": {"PreToolUse": []}, "enabledPlugins": {"security-guidance": True},
+                 "sandbox": {"enabled": True}, "permissions": {"disableBypassPermissionsMode": "disable"}}
+        result, kept, removed = self.state.drop_removed_template_keys(dict(guard), guard, {})
+        self.assertEqual(result, guard)
+        self.assertEqual(sorted(kept), ["enabledPlugins", "hooks", "permissions.disableBypassPermissionsMode", "sandbox"])
+        self.assertEqual(removed, [])
+
+    def test_drop_removed_template_keys_ignores_non_list_template_value(self):
+        settings = {"permissions": {"allow": ["Bash(a)"]}}
+        previous = {"permissions": {"allow": ["Bash(a)"]}}
+        current = {"permissions": {"allow": "Bash(a)"}}
+        result, _, _ = self.state.drop_removed_template_keys(settings, previous, current)
+        self.assertEqual(result["permissions"], {"allow": ["Bash(a)"]})
+
     def test_drop_removed_template_keys_without_record_changes_nothing(self):
         settings = {"theme": "dark"}
-        result, kept = self.state.drop_removed_template_keys(settings, None, {})
+        result, kept, removed = self.state.drop_removed_template_keys(settings, None, {})
         self.assertEqual(result, settings)
         self.assertEqual(kept, [])
 
