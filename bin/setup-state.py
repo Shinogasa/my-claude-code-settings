@@ -338,21 +338,30 @@ def load_state(path):
     return loaded
 
 
+# 消すと守りが緩む規則。利用者が同じ規則を自分で足していた場合と区別できないので、自動では消さない
+_GUARDING_PERMISSION_KEYS = ("deny", "ask")
+
+
 def _drop_removed_permission_rules(permissions, previous, current):
-    """前回のテンプレートの permissions にあって今回無い規則を、permissions から除いた写しを返す。"""
+    """前回のテンプレートの permissions にあって今回無い規則を除いた写しと、残した規則を返す。"""
     if not isinstance(permissions, dict) or not isinstance(previous, dict):
-        return permissions
+        return permissions, []
     current = current if isinstance(current, dict) else {}
     result = dict(permissions)
+    kept = []
     for key, previous_value in previous.items():
         current_value = current.get(key)
         live_value = result.get(key)
         if isinstance(previous_value, list) and isinstance(live_value, list):
-            dropped = [rule for rule in previous_value if rule not in (current_value or [])]
-            result[key] = [rule for rule in live_value if rule not in dropped]
+            dropped = [rule for rule in previous_value
+                       if rule not in (current_value or []) and rule in live_value]
+            if key in _GUARDING_PERMISSION_KEYS:
+                kept.extend(f"permissions.{key}: {rule}" for rule in dropped)
+            else:
+                result[key] = [rule for rule in live_value if rule not in dropped]
         elif key not in current and live_value == previous_value:
             result.pop(key, None)
-    return result
+    return result, kept
 
 
 def drop_removed_template_keys(settings, previous, current):
@@ -373,9 +382,10 @@ def drop_removed_template_keys(settings, previous, current):
         else:
             kept.append(key)
     if "permissions" in result:
-        result["permissions"] = _drop_removed_permission_rules(
+        result["permissions"], kept_rules = _drop_removed_permission_rules(
             result["permissions"], previous.get("permissions"), current.get("permissions")
         )
+        kept.extend(kept_rules)
     return result, kept
 
 
