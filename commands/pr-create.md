@@ -1,4 +1,5 @@
 ---
+disable-model-invocation: true
 description: 現在のブランチの変更内容を確認し、GitHub PRの作成を支援する
 ---
 

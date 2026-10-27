@@ -43,14 +43,16 @@ class TestSharedInstructionIndex(unittest.TestCase):
     def setUpClass(cls):
         cls.text = CLAUDE_MD.read_text(encoding="utf-8")
 
-    def test_requires_full_session_start_read(self):
-        self.assertIn("セッション開始時に以下をすべて全文読む", self.text)
+    def test_requires_full_session_start_read_on_codex_only(self):
+        # Claude Codeは paths: の無いruleを起動時に読み込むので、読み直させない
+        self.assertIn("Codex CLIでは、セッション開始時に以下をすべて全文読む", self.text)
+        self.assertNotIn("\n**セッション開始時に以下をすべて全文読む。**", self.text)
 
-    def test_mentions_both_host_configuration_paths(self):
-        self.assertIn(
-            "各 `rules/...` は、Claude Codeでは\n`~/.claude/`、Codex CLIでは `~/.codex/` を起点に解決する。",
-            self.text,
-        )
+    def test_tells_claude_code_not_to_reread_session_rules(self):
+        self.assertIn("Claude Codeでは、以下は起動時に読み込まれているので、読み直さない", self.text)
+
+    def test_mentions_codex_configuration_path(self):
+        self.assertIn("各 `rules/...` は `~/.codex/` を起点に解決する。", self.text)
 
     def test_documents_markdown_links_are_not_transclusion(self):
         self.assertIn(
@@ -78,6 +80,19 @@ class TestSharedInstructionIndex(unittest.TestCase):
         ):
             with self.subTest(heading=heading):
                 self.assertIn(heading, self.text)
+
+    def test_session_rules_are_always_loaded(self):
+        # 常に効く必要があるruleに paths: を付けると、触るファイルが無い会話で読み込まれない
+        for rule in SESSION_RULES:
+            if rule in GENERATED_RULES:
+                rule = GENERATED_RULES[rule]
+            with self.subTest(rule=rule):
+                head = (REPO_ROOT / rule).read_text(encoding="utf-8").split("\n", 5)[:5]
+                self.assertNotIn("paths:", head)
+
+    def test_code_only_rule_is_path_scoped(self):
+        text = (REPO_ROOT / "rules/ecc-coding-style.md").read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("---\npaths:\n"))
 
     def test_session_rules_exist_as_files(self):
         for rule in SESSION_RULES:

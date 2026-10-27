@@ -1,0 +1,3 @@
+# worktreeへコピーするgitignore対象のファイル（公式 best-practices、ADR 0040）
+.env
+.githooks/patterns-local.txt
