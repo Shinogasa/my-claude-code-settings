@@ -515,7 +515,7 @@ persona polite     # 切り替える。反映されるのは次に始めるセ�
 │   ├── entries/                 #   設計Predict / ★ Delta
 │   └── code/                    #   コード学習のschema
 ├── docs/                        # ADR（docs/adr/）、設計書・計画（docs/superpowers/）、調査記録
-├── tasks/                       # backlog.md と lessons.md（todo.md は追跡しない）
+├── tasks/                       # backlog.md（todo/ は追跡しない）
 ├── tests/                       # テスト（tests/run.sh で実行）
 ├── .githooks/                   # 禁止パターンを検査する pre-commit、ペルソナを戻す post-checkout / post-merge
 ├── statusline.js                # ステータスライン表示
