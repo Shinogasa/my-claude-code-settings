@@ -342,7 +342,14 @@ def load_state(path):
 _GUARDING_PERMISSION_KEYS = ("deny", "ask")
 # 消すと守りが外れる設定。値がテンプレートの書いたままでも自動では消さず、人が決める
 _GUARDING_PERMISSION_SETTINGS = ("defaultMode", "disableBypassPermissionsMode")
-_GUARDING_TOP_LEVEL_KEYS = ("hooks", "enabledPlugins", "sandbox", "disableAllHooks", "allowManagedHooksOnly")
+# env は、消すと接続先やトークンの設定が外れて動かなくなるので、同じく残す
+_GUARDING_TOP_LEVEL_KEYS = (
+    "hooks", "enabledPlugins", "sandbox", "disableAllHooks", "allowManagedHooksOnly", "env",
+)
+# 消しても守りが緩まない設定。守りの一覧に無いキーは消える側に倒れるので、
+# テンプレートのキーは守りか、ここのどちらかに必ず分類する（テストで強制する）
+_REMOVABLE_TOP_LEVEL_KEYS = ("$schema", "statusLine", "outputStyle", "theme", "effortLevel")
+_REMOVABLE_PERMISSION_KEYS = ("allow",)
 
 
 def _drop_removed_permission_rules(permissions, previous, current):
