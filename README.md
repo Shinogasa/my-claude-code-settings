@@ -511,7 +511,6 @@ persona polite     # 切り替える。反映されるのは次に始めるセ�
 │   ├── audit-codex-plugins.py   #   Codex plugin policyの監査
 │   └── configure_codex_*.py     #   Codexの config.toml へSSH署名とsubagent既定値を設定する
 ├── output-styles/               # カスタムアウトプットスタイル
-│   ├── review-and-design.md     #   Review & Design（コードレビュー・設計判断特化）
 │   └── fast.md                  #   高速実行（説明最小限）
 ├── learning/                    # 旧学習ログ（読み取り専用。新規記録は専用学習store）
 │   ├── entries/                 #   設計Predict / ★ Delta
