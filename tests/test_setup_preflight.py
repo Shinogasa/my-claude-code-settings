@@ -213,6 +213,85 @@ class SetupStateTests(unittest.TestCase):
             self.base / ".claude" / "backups" / "20260821_010203" / "nested" / "settings.json",
         )
 
+    def test_load_state_keeps_recorded_templates(self):
+        # 前回適用したテンプレートを残さないと、テンプレートから消したキーを判定できない
+        state_path = self.base / ".claude" / ".my-claude-code-settings" / "ownership.json"
+        state = {"version": 1, "generated": {"/tmp/settings.json": "abc"},
+                 "templates": {"/tmp/settings.json": {"theme": "dark"}}}
+        self.state.save_state(state_path, state)
+        self.assertEqual(self.state.load_state(state_path), state)
+
+    def test_drop_removed_template_keys_removes_only_unchanged_values(self):
+        settings = {"theme": "dark", "effortLevel": "high", "model": "opus", "keep": 1}
+        previous = {"theme": "dark", "effortLevel": "xhigh", "keep": 1}
+        current = {"keep": 1}
+        result, kept, removed = self.state.drop_removed_template_keys(settings, previous, current)
+        # テンプレートが書いた値のままなら消す。誰かが変えた値と、テンプレート外のキーは残す
+        self.assertEqual(result, {"effortLevel": "high", "model": "opus", "keep": 1})
+        self.assertEqual(kept, ["effortLevel"])
+        self.assertEqual(removed, ["theme"])
+        # 入力は書き換えない
+        self.assertIn("theme", settings)
+
+    def test_drop_removed_template_keys_removes_only_dropped_allow_rules(self):
+        # allow を消すのは権限を狭めるだけなので自動で消す
+        settings = {"permissions": {"defaultMode": "auto", "allow": ["Bash(a)", "Bash(b)", "Bash(user)"]}}
+        previous = {"permissions": {"allow": ["Bash(a)", "Bash(b)"]}}
+        current = {"permissions": {"allow": ["Bash(a)"]}}
+        result, kept, removed = self.state.drop_removed_template_keys(settings, previous, current)
+        self.assertEqual(result["permissions"], {"defaultMode": "auto", "allow": ["Bash(a)", "Bash(user)"]})
+        self.assertEqual(kept, [])
+
+    def test_drop_removed_template_keys_keeps_dropped_deny_and_ask_rules(self):
+        # deny・ask を消すと守りが緩む。利用者が同じ規則を自分で足していた可能性もあるので、残して知らせる
+        settings = {"permissions": {"deny": ["Read(a)", "Read(b)"], "ask": ["Bash(push)"]}}
+        previous = {"permissions": {"deny": ["Read(a)", "Read(b)"], "ask": ["Bash(push)"]}}
+        current = {"permissions": {"deny": ["Read(a)"]}}
+        result, kept, removed = self.state.drop_removed_template_keys(settings, previous, current)
+        self.assertEqual(result["permissions"], settings["permissions"])
+        self.assertEqual(kept, ["permissions.deny: Read(b)", "permissions.ask: Bash(push)"])
+
+    def test_drop_removed_template_keys_keeps_guarding_keys(self):
+        # 消すと守りが外れるキーは、値が同じでも自動では消さない（security-reviewerの指摘）
+        guard = {"hooks": {"PreToolUse": []}, "enabledPlugins": {"security-guidance": True},
+                 "sandbox": {"enabled": True}, "permissions": {"disableBypassPermissionsMode": "disable"}}
+        result, kept, removed = self.state.drop_removed_template_keys(dict(guard), guard, {})
+        self.assertEqual(result, guard)
+        self.assertEqual(sorted(kept), ["enabledPlugins", "hooks", "permissions.disableBypassPermissionsMode", "sandbox"])
+        self.assertEqual(removed, [])
+
+    def test_drop_removed_template_keys_ignores_non_list_template_value(self):
+        settings = {"permissions": {"allow": ["Bash(a)"]}}
+        previous = {"permissions": {"allow": ["Bash(a)"]}}
+        current = {"permissions": {"allow": "Bash(a)"}}
+        result, _, _ = self.state.drop_removed_template_keys(settings, previous, current)
+        self.assertEqual(result["permissions"], {"allow": ["Bash(a)"]})
+
+    def test_every_template_key_is_classified_for_removal(self):
+        # 守りのキーの足し忘れは、消える側に倒れる。テンプレートにキーを足したら、どちらかへ分類させる
+        template = json.loads((ROOT / "settings.json.template").read_text(encoding="utf-8"))
+        classified = (set(self.state._GUARDING_TOP_LEVEL_KEYS)
+                      | set(self.state._REMOVABLE_TOP_LEVEL_KEYS)
+                      | {"permissions"})
+        for key in template:
+            with self.subTest(key=key):
+                self.assertIn(key, classified)
+        permission_classified = (set(self.state._GUARDING_PERMISSION_KEYS)
+                                 | set(self.state._GUARDING_PERMISSION_SETTINGS)
+                                 | set(self.state._REMOVABLE_PERMISSION_KEYS))
+        for key in template.get("permissions", {}):
+            with self.subTest(permission=key):
+                self.assertIn(key, permission_classified)
+
+    def test_removal_classes_do_not_overlap(self):
+        self.assertFalse(set(self.state._GUARDING_TOP_LEVEL_KEYS) & set(self.state._REMOVABLE_TOP_LEVEL_KEYS))
+
+    def test_drop_removed_template_keys_without_record_changes_nothing(self):
+        settings = {"theme": "dark"}
+        result, kept, removed = self.state.drop_removed_template_keys(settings, None, {})
+        self.assertEqual(result, settings)
+        self.assertEqual(kept, [])
+
     def test_backup_path_allows_agent_skills_under_home_but_rejects_outside_home(self):
         home = self.base / "home"
         agent_skill = home / ".agents" / "skills" / "backend-patterns"

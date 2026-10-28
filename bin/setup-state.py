@@ -327,7 +327,88 @@ def load_state(path):
         for path_name, checksum in generated.items()
     ):
         return {"version": 1, "generated": {}}
-    return {"version": 1, "generated": dict(generated)}
+    loaded = {"version": 1, "generated": dict(generated)}
+    # 前回適用したテンプレート。不正な形なら捨てる（消す判定をしないだけで、何も壊さない）
+    templates = state.get("templates")
+    if isinstance(templates, dict) and all(
+        isinstance(path_name, str) and isinstance(template, dict)
+        for path_name, template in templates.items()
+    ):
+        loaded["templates"] = dict(templates)
+    return loaded
+
+
+# 消すと守りが緩む規則。利用者が同じ規則を自分で足していた場合と区別できないので、自動では消さない
+_GUARDING_PERMISSION_KEYS = ("deny", "ask")
+# 消すと守りが外れる設定。値がテンプレートの書いたままでも自動では消さず、人が決める
+_GUARDING_PERMISSION_SETTINGS = ("defaultMode", "disableBypassPermissionsMode")
+# env は、消すと接続先やトークンの設定が外れて動かなくなるので、同じく残す
+_GUARDING_TOP_LEVEL_KEYS = (
+    "hooks", "enabledPlugins", "sandbox", "disableAllHooks", "allowManagedHooksOnly", "env",
+)
+# 消しても守りが緩まない設定。守りの一覧に無いキーは消える側に倒れるので、
+# テンプレートのキーは守りか、ここのどちらかに必ず分類する（テストで強制する）
+_REMOVABLE_TOP_LEVEL_KEYS = ("$schema", "statusLine", "outputStyle", "theme", "effortLevel")
+_REMOVABLE_PERMISSION_KEYS = ("allow",)
+
+
+def _drop_removed_permission_rules(permissions, previous, current):
+    """前回のテンプレートの permissions にあって今回無い規則を除いた写しと、残した規則・消した規則を返す。"""
+    if not isinstance(permissions, dict) or not isinstance(previous, dict):
+        return permissions, [], []
+    current = current if isinstance(current, dict) else {}
+    result = dict(permissions)
+    kept = []
+    removed = []
+    for key, previous_value in previous.items():
+        current_value = current.get(key)
+        live_value = result.get(key)
+        if isinstance(previous_value, list) and isinstance(live_value, list):
+            # テンプレート側がリストでなければ、消す判定をしない
+            if current_value is not None and not isinstance(current_value, list):
+                continue
+            dropped = [rule for rule in previous_value
+                       if rule not in (current_value or []) and rule in live_value]
+            if key in _GUARDING_PERMISSION_KEYS:
+                kept.extend(f"permissions.{key}: {rule}" for rule in dropped)
+            else:
+                result[key] = [rule for rule in live_value if rule not in dropped]
+                removed.extend(f"permissions.{key}: {rule}" for rule in dropped)
+        elif key not in current and key in result:
+            if key in _GUARDING_PERMISSION_SETTINGS or live_value != previous_value:
+                kept.append(f"permissions.{key}")
+            else:
+                del result[key]
+                removed.append(f"permissions.{key}")
+    return result, kept, removed
+
+
+def drop_removed_template_keys(settings, previous, current):
+    """前回のテンプレートにあって今回のテンプレートに無いキーを、settings から除いた写しを返す。
+
+    3-way で判定する。値がテンプレートの書いたままなら消し、誰かが書き換えていたら残す。
+    守りのキーは値が同じでも残す。戻り値は (写し, 残したキー, 消したキー)。前回の記録が無ければ何も消さない。
+    """
+    if not isinstance(previous, dict):
+        return dict(settings), [], []
+    result = dict(settings)
+    kept = []
+    removed = []
+    for key, previous_value in previous.items():
+        if key == "permissions" or key in current or key not in result:
+            continue
+        if key in _GUARDING_TOP_LEVEL_KEYS or result[key] != previous_value:
+            kept.append(key)
+        else:
+            del result[key]
+            removed.append(key)
+    if "permissions" in result:
+        result["permissions"], kept_rules, removed_rules = _drop_removed_permission_rules(
+            result["permissions"], previous.get("permissions"), current.get("permissions")
+        )
+        kept.extend(kept_rules)
+        removed.extend(removed_rules)
+    return result, kept, removed
 
 
 def save_state(path, state):
