@@ -1220,14 +1220,6 @@ frontmatterに `effort` を書けば、それが動く間だけ段階を上げ�
 **決めること**: どのagent・skillに付けるか（候補: security-reviewer、principle-reviewer、planner）。
 何段階にするか。mediumで見落としが増えたと判断する材料を何にするか。
 
-### P2: ReviewAndDesignスタイルをリファクタリングし、公式に寄せる
-
-`output-styles/review-and-design.md` は2026-03-17に自作したもので、古くなっている可能性がある。
-公式は「レビュアーは頼まれれば必ず何か見つける。指摘は正しさに関わるものだけにし、スタイルは指摘させない」としている。
-★ ReviewのMaintainability項目は、この主張とぶつかる恐れがある（ADR 0040）。
-
-**決めること**: スタイルの役割を、学習モード・コード学習とどう分けるか。★ Reviewの指摘を、正しさと変更容易性に実害があるものへ絞るか。
-
 ### P3: superpowersプラグインを v7.0.1 へ上げる（marketplace待ち）
 
 2026-10-22の時点で、インストール済みは v7.0.0（`bb92a77`）、上流の最新は v7.0.1（`2ce8aa1`）。
