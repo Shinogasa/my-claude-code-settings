@@ -267,6 +267,25 @@ class SetupStateTests(unittest.TestCase):
         result, _, _ = self.state.drop_removed_template_keys(settings, previous, current)
         self.assertEqual(result["permissions"], {"allow": ["Bash(a)"]})
 
+    def test_every_template_key_is_classified_for_removal(self):
+        # 守りのキーの足し忘れは、消える側に倒れる。テンプレートにキーを足したら、どちらかへ分類させる
+        template = json.loads((ROOT / "settings.json.template").read_text(encoding="utf-8"))
+        classified = (set(self.state._GUARDING_TOP_LEVEL_KEYS)
+                      | set(self.state._REMOVABLE_TOP_LEVEL_KEYS)
+                      | {"permissions"})
+        for key in template:
+            with self.subTest(key=key):
+                self.assertIn(key, classified)
+        permission_classified = (set(self.state._GUARDING_PERMISSION_KEYS)
+                                 | set(self.state._GUARDING_PERMISSION_SETTINGS)
+                                 | set(self.state._REMOVABLE_PERMISSION_KEYS))
+        for key in template.get("permissions", {}):
+            with self.subTest(permission=key):
+                self.assertIn(key, permission_classified)
+
+    def test_removal_classes_do_not_overlap(self):
+        self.assertFalse(set(self.state._GUARDING_TOP_LEVEL_KEYS) & set(self.state._REMOVABLE_TOP_LEVEL_KEYS))
+
     def test_drop_removed_template_keys_without_record_changes_nothing(self):
         settings = {"theme": "dark"}
         result, kept, removed = self.state.drop_removed_template_keys(settings, None, {})
