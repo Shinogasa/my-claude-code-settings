@@ -1143,17 +1143,20 @@ Claude 5.x の既定 effort は `medium` で、4.x の `high` より低い。利
 ただし2026-10-29の失敗調査では、ミスの大半が「確かめずに報告した・動かした」型だった。
 high に上げた後も、secret の出力は防げていない。そのため、effort が主な原因かは未確認である。
 
-既定を上げるのは見送った。推奨から外れ、コストも増えるため。
-動いているClaudeに推奨 effort を判断させる案も見送った。medium の判断力に頼ることになり、発火が漏れやすいため。
+既定を上げるのは、推奨から外れ、コストも増えるため見送った。
+動いているClaudeに推奨 effort を判断させる案も、medium の判断力に頼ることになり、発火が漏れやすいため見送った。
 
 案: `codex/MODEL_ROUTING.md` の作業の分け方（機械作業／通常作業／複雑なロジック／複数レイヤーのデバッグ／曖昧な設計）を、
 Claude 側の判断表の軸に流用する。割り当てる effort の値はGPT-6向けなので流用しない。
-確実に `effort:` を付けられるのは、自作のskillとagentだけである（superpowers のskillはプラグインの持ち物）。
+frontmatter の `effort:` を確実に付けられるのは、自作のskillとagentである。superpowers のskillはプラグインの持ち物で、
+更新するとfrontmatterへの書き換えが消える。プラグインのskillに、設定の側から effort を上書きする手段は、
+submodule `claude-code-best-practice` の skills・settings の文書を `effort` でgrepした範囲では見つからなかった。
+公式ドキュメントの最新版は見ていないので、そこに手段があれば、この前提は崩れる。
 skill の `effort` 上書きが、呼び出しの後まで続くかは未確認。
 
 **決めること**: どの作業で effort の差が出るかを、正解が分かっている題材（既知のバグを含む差分への `/code-review` など）で
 medium と high を比べて測るか。差が出た作業だけ、`effort:` を付けるか、利用者が `/effort` で上げる判断表にするか。
-**着手条件**: secret対策を入れた後も、medium で防げたはずのミスが残るとき。
+**着手条件**: secret対策を入れた後も、medium で起き、high なら防げたと考えられるミスが残るとき。
 
 ### `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` を外せるか → 残すと決めた（2026-10-07）
 
