@@ -192,6 +192,21 @@ SessionStartの検査（`hooks/check-codex-base-provider.py`）にもplugin監�
 **決めること**: exportを `prepare_claude_files` の直前まで遅らせるか、引数かファイルで渡す形に替えるか。
 **着手条件**: `setup.sh` の生成処理に手を入れる別の作業が来たとき。
 
+### P3: `setup.sh` が毎回出す Codex の注意を片付ける
+
+2026-10-29に `setup.sh --all` を実行したとき、次の注意が出た。どれも今回の変更とは関係がなく、実行のたびに出る。
+
+- 「Codex hooks を配置しました。trust state は変更していません。/hooks で review して承認してください」は、
+  承認済みかどうかを見ずに毎回出る。`~/.codex/config.toml` の `[hooks.state]` には `~/.codex/hooks.json` の
+  `trusted_hash` があるが、今の `hooks.json` と一致するかは確かめていない。一致しなければ、危険コマンドのガードが
+  通知なくスキップされる。個人用（`~/.codex-personal`）の検査は上の「`CODEX_HOME` 分離の残り」にあり、
+  個人アカウントの再開まで止めている。会社用の `~/.codex` は止める理由が無い
+- `~/.codex/personal.config.toml`（ADR 0026 で廃止）が残っていて、退避を促す注意が毎回出る
+
+**決めること**: 承認の検査を会社用の `~/.codex` だけ先に入れるか、個人用と一緒にするか。
+一致しないときに、FAILURESに積んで止めるか、注意を出すだけにするか。
+`personal.config.toml` は、中身を確かめてから退避する（setupに消させるか、手で退避するか）。
+
 ### P2: `context7` / `serena` のCodex向け候補を個別評価する
 
 両者は有用候補だが、Claude版のimportをそのまま使わない。Codex公式・curated・公開pluginを
