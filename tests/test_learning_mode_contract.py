@@ -231,6 +231,12 @@ class TestLearningModeSplit(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, OUTPUT_RULE)
 
+    def test_completion_report_labels_are_countable(self):
+        """効果を会話記録から数え直せるよう、3点のラベルを固定する（ADR 0042）。"""
+        for label in ("`AIが決めたこと:`", "`理由:`", "`残るリスク・未確認:`"):
+            with self.subTest(label=label):
+                self.assertIn(label, OUTPUT_RULE)
+
     def test_readme_directory_tree_names_split_responsibilities(self):
         """ディレクトリ一覧から新skillと軽量ruleを見つけられる。"""
         self.assertTrue("├── learning-mode/" in README)
