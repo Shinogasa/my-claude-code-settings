@@ -198,14 +198,15 @@ SessionStartの検査（`hooks/check-codex-base-provider.py`）にもplugin監�
 
 - 「Codex hooks を配置しました。trust state は変更していません。/hooks で review して承認してください」は、
   承認済みかどうかを見ずに毎回出る。`~/.codex/config.toml` の `[hooks.state]` には `~/.codex/hooks.json` の
-  `trusted_hash` があるが、今の `hooks.json` と一致するかは確かめていない。一致しなければ、危険コマンドのガードが
+  `trusted_hash` があるが、今の `hooks.json` と一致するかは、setup.sh も照合しておらず、手でも確かめていない。
+  一致しなければ、危険コマンドのガードが
   通知なくスキップされる。個人用（`~/.codex-personal`）の検査は上の「`CODEX_HOME` 分離の残り」にあり、
-  個人アカウントの再開まで止めている。会社用の `~/.codex` は止める理由が無い
+  個人アカウントの再開まで止めている。会社用の `~/.codex` の検査は止める理由が無い
 - `~/.codex/personal.config.toml`（ADR 0026 で廃止）が残っていて、退避を促す注意が毎回出る
 
 **決めること**: 承認の検査を会社用の `~/.codex` だけ先に入れるか、個人用と一緒にするか。
 一致しないときに、FAILURESに積んで止めるか、注意を出すだけにするか。
-`personal.config.toml` は、中身を確かめてから退避する（setupに消させるか、手で退避するか）。
+`personal.config.toml` は中身を確かめてから退避する（setupに消させるか、手で退避するか）。
 
 ### P2: `context7` / `serena` のCodex向け候補を個別評価する
 
