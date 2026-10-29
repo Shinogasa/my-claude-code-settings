@@ -42,7 +42,6 @@
   "env": {
     "CLAUDE_PROFILE": "default"
   },
-  "outputStyle": "ReviewAndDesign",
   "theme": "dark-daltonized",
   "hooks": {
     "PreToolUse": [

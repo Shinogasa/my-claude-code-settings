@@ -19,9 +19,7 @@ PLUGIN_POLICY = json.loads(
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 CLAUDE = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
 SETUP = (ROOT / "setup.sh").read_text(encoding="utf-8")
-REVIEW_STYLE = (ROOT / "output-styles" / "review-and-design.md").read_text(
-    encoding="utf-8"
-)
+OUTPUT_RULE = (ROOT / "rules" / "output-formatting.md").read_text(encoding="utf-8")
 SKILL_MANIFEST = json.loads(
     (ROOT / "manifests" / "skills.json").read_text(encoding="utf-8")
 )
@@ -221,9 +219,23 @@ class TestLearningModeSplit(unittest.TestCase):
         self.assertTrue("判定は `rules/learning-mode.md`、手順と書式は `skills/learning-mode/SKILL.md`" in CLAUDE)
         self.assertTrue("`skills/learning-mode/SKILL.md` の抽象化ルール参照" in CLAUDE)
 
-    def test_review_style_points_to_rule_and_skill(self):
-        """レビュー表示が新しい手順の所在を案内する。"""
-        self.assertTrue("★ Predict・★ Delta は `rules/learning-mode.md` と `skills/learning-mode/SKILL.md`" in REVIEW_STYLE)
+    def test_review_and_design_style_is_retired(self):
+        """学習と重複していた出力スタイルを、ファイルと既定設定の両方から外す。"""
+        self.assertFalse((ROOT / "output-styles" / "review-and-design.md").exists())
+        self.assertNotIn("outputStyle", SETTINGS)
+
+    def test_completion_report_lists_three_items(self):
+        """学習イベントの外でも、AIの仕事をレビューできる材料を完了報告に残す。"""
+        self.assertIn("## 完了報告", OUTPUT_RULE)
+        for marker in ("AIが自分で決めたこと", "理由を1行", "残っているリスク"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, OUTPUT_RULE)
+
+    def test_completion_report_labels_are_countable(self):
+        """効果を会話記録から数え直せるよう、3点のラベルを固定する（ADR 0042）。"""
+        for label in ("`AIが決めたこと:`", "`理由:`", "`残るリスク・未確認:`"):
+            with self.subTest(label=label):
+                self.assertIn(label, OUTPUT_RULE)
 
     def test_readme_directory_tree_names_split_responsibilities(self):
         """ディレクトリ一覧から新skillと軽量ruleを見つけられる。"""
@@ -243,10 +255,6 @@ class TestLearningPluginPolicy(unittest.TestCase):
         self.assertEqual(
             PLUGIN_POLICY["plugins"][self.PLUGIN_ID]["status"], "deny"
         )
-
-    def test_review_style_does_not_delegate_to_disabled_plugin(self):
-        self.assertNotIn("learning-output-style プラグインが管理", REVIEW_STYLE)
-        self.assertIn("rules/learning-mode.md", REVIEW_STYLE)
 
 
 class TestDeprecatedCommandRouting(unittest.TestCase):

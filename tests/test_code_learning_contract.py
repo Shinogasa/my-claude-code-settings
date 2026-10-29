@@ -11,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "code-learning" / "SKILL.md"
 ROUTER = ROOT / "rules" / "code-learning.md"
-REVIEW_STYLE = ROOT / "output-styles" / "review-and-design.md"
+OUTPUT_RULE = ROOT / "rules" / "output-formatting.md"
 RECORD_SCHEMA = ROOT / "learning" / "code" / "README.md"
 HOST_FIXTURE = ROOT / "tests" / "fixtures" / "code-learning-host-probe"
 
@@ -87,13 +87,10 @@ class CodeLearningSkillContract(unittest.TestCase):
         self.assertIn("どう直せば", text)
         self.assertIn("明示的な引取り", text)
 
-    def test_review_style_does_not_reveal_a_review_exercise_early(self):
-        text = REVIEW_STYLE.read_text(encoding="utf-8")
-        self.assertIn("code-learning", text)
+    def test_completion_report_does_not_reveal_a_learning_answer_early(self):
+        text = OUTPUT_RULE.read_text(encoding="utf-8")
+        self.assertIn("学習イベントの対象にした判断", text)
         self.assertIn("理由まで回答", text)
-        for form in ("Write", "Modify", "Review", "Investigate", "Predict"):
-            with self.subTest(form=form):
-                self.assertIn(form, text)
 
     def test_investigate_retry_and_resume_keep_user_ownership(self):
         text = SKILL.read_text(encoding="utf-8")
