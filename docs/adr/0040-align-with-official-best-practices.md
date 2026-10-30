@@ -23,7 +23,7 @@ submodule `claude-code-best-practice` が追っているのは仕様（キー名
 - `settings.json.template` が `effortLevel: xhigh` を常時指定していた。公式の既定はmediumで、
   high以上は見落としやすいケースに使うものとしている
 - 副作用のあるskillに `disable-model-invocation` が無く、`.worktreeinclude` も無かった
-  （`pr-create` に付けた `disable-model-invocation` は、ADR 0043で外した）
+  （`pr-create` に付けた `disable-model-invocation` は、ADR 0045で外した）
 
 ユーザーの方針は「基本はベストプラクティスに沿わせる。公式リファレンスなので最大の効果が出るはず」。
 
@@ -39,7 +39,7 @@ submodule `claude-code-best-practice` が追っているのは仕様（キー名
    という使い方を示しており、ユーザーもこれを採った。xhighを常時使うと、日常の作業にも時間とトークンを払い続ける
 5. `pr-create` 系のskillとcommandに `disable-model-invocation: true` を付ける。Codex CLIは、このfrontmatterを
    読まない。そのため、公式の手段である `agents/openai.yaml` の `policy.allow_implicit_invocation: false` も置く
-   （この決定はADR 0043で取り消した。ほかの決定は有効）
+   （この決定はADR 0045で取り消した。ほかの決定は有効）
 6. `.worktreeinclude` で `.env` と `.githooks/patterns-local.txt` をworktreeへコピーする
 7. `paths:` は「そのruleが要る前に、必ず特定の種類のファイルに触れるか」で付けるかを決める。
    当てはまるのはコードを書くときの規約 `rules/ecc-coding-style.md` だけなので、これにだけ付ける
