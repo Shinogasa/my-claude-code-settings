@@ -237,8 +237,14 @@ class BashTests(GuardSecretReadBase):
 class FinalReviewTests(GuardSecretReadBase):
     """最終レビュー（コードレビューと security-reviewer）の指摘を固定する。"""
 
-    setUp = BashTests.setUp
-    bash = BashTests.bash
+    def setUp(self):
+        super().setUp()
+        self.token = self.make_file(self.home / ".config" / "app" / "token")
+        self.zshrc = self.make_file(self.home / ".zshrc.local")
+        self.starship = self.make_file(self.home / ".config" / "starship.toml", mode=0o644)
+
+    def bash(self, command):
+        return self.run_hook("Bash", {"command": command})
 
     # --- 素通りしていたもの ---
     def test_multiline_after_cd_blocked(self):
