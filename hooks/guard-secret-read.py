@@ -318,7 +318,7 @@ def _starts_substitution(command: str, index: int, heredoc: bool) -> bool:
 def extract_substitutions(command: str, known: list, heredoc: bool = False):
     """引用符とエスケープを追いながら、外側の $(...)・`...`・<(...) を __SUBSTn__ へ置き換える。
 
-    単一引用符・ANSI-C クォートの中と、エスケープした文字は置換として扱わない。語の頭の # から行末まではコメントとして除く。
+    単一引用符・ANSI-C クォートの中と、エスケープした文字は置換として扱わない。
     heredoc=True のときは heredoc の本文として読み、引用符を特別に扱わない。
     入れ子は、本文を判定するときに同じ処理で取り出す。番号は known（外側で取り出し済みの本文）に続けて振る。
     戻り値は (置換後のコマンド, known に足した本文の一覧, 閉じていない引用・置換が残ったか)。
@@ -356,12 +356,9 @@ def extract_substitutions(command: str, known: list, heredoc: bool = False):
                 out.append(command[index:end])
             index = end
             continue
+        # コメントは除かない。# を普通の文字として残すと、コメントの中身も判定に回り、止める側に倒れる
         if not heredoc and char == '"':
             in_double = not in_double
-        elif not heredoc and not in_double and char == "#" and (index == 0 or command[index - 1] in " \t\n;&|("):
-            newline = command.find("\n", index)
-            index = len(command) if newline < 0 else newline
-            continue
         out.append(char)
         index += 1
     return "".join(out), bodies, in_double
