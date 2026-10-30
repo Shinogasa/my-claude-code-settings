@@ -387,6 +387,9 @@ class FinalReviewTests(GuardSecretReadBase):
         command = f"cat <<EOF\n$(echo \")\" ; cat {self.zshrc})\nEOF"
         self.assert_exit(self.bash(command), BLOCK)
 
+    def test_escaped_space_before_hash_does_not_hide_command(self):
+        self.assert_exit(self.bash("echo a\\ #x; cat ~/.zshrc.local"), BLOCK)
+
     # --- 止めすぎていたもの ---
     def test_listing_piped_to_grep_allowed(self):
         self.assert_exit(self.bash("ls -la ~/.config | grep starship"), ALLOW)
