@@ -62,6 +62,10 @@ AIがうっかり secret のファイルを読んで値を出力する事故を�
 
 ### 層2: フックで標準の隙間を埋める（`hooks/` に新設）
 
+2026-10-30の実機確認で、層1の deny が Bash の `cat` に効かないと分かった（ADR 0043）。
+そのため層2は、下の「場所 × 権限」の判定に加えて、`settings.json.template` の deny 一覧も読み、
+一覧に当たるパスを権限に関係なく止める。
+
 `guard-dangerous-bash.py` には足さず、別のフックにする。登録するのは `settings.json.template` だけで、`codex/hooks.json` には登録しない。
 こうすると、Codexでの振る舞いが変わらないことを配線で保証できる。
 
