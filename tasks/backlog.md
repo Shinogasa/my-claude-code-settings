@@ -653,6 +653,17 @@ AI が正解を作ると差分フィードバックの信頼性が落ちるた�
 
 ## フックの守備範囲の穴
 
+### P3: Orca がグローバル設定へフックを差し込む
+
+2026-10-30に、Orca（`/Applications/Orca.app`、フックの本体は `~/.orca/agent-hooks/`）が、
+`~/.claude/settings.json` と `~/.codex/hooks.json` へ自分のフックを差し込んだ。
+`~/.codex/hooks.json` はこのリポジトリの `codex/hooks.json` へのsymlinkなので、作業ツリーが汚れ、
+Codex のランタイムテストが1件落ちた。`~/.claude/settings.json` は setup.sh が conflict として扱い、更新できなかった。
+このときは利用者の判断で Orca のフックを外し、setup.sh で作り直した（元のファイルは setup.sh のバックアップにある）。
+
+**決めること**: Orca を使い続けるか。使うなら、Orca のフックをテンプレートに取り込むか、
+Orca がsymlink先（リポジトリ）へ書き込まないようにする方法があるか（Orca がいつ再び差し込むかは未確認）。
+
 ### P3: secret 読み取りガード（ADR 0043）の残り
 
 2026-10-30に、Claude Code の Read・Grep・Bash を対象にして入れた。次の点は残っている。
@@ -670,6 +681,7 @@ AI が正解を作ると差分フィードバックの信頼性が落ちるた�
 - **例外にした場所の広さ**: `.claude/projects`（会話記録）と `.claude/plugins` は丸ごと読める。過去に出た値を読み直しうる
 - **読み口の行モード**: キーの位置にある大文字スネークの値（s3fs の passwd 形式のアクセスキーIDなど）がキー名として出る
 - **フックの入力の `cwd`**: 前の Bash 呼び出しの `cd` を反映するかは未確認
+- **heredoc の本文の中の入れ子のコマンド置換**: 引用しない heredoc の本文では、置換の入れ子を1段しか判定しない（2026-10-30の自動レビュー5回目。High 以外は backlog に回すと決めた）
 
 **決めること**: Codex を再び使い始めたら、フックを `codex/hooks.json` にも登録するか。
 `ANTHROPIC_AUTH_TOKEN` を `apiKeyHelper` などで settings.json の外へ出すか。
