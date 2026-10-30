@@ -34,9 +34,13 @@ BLOCK_EXIT = 2
 METADATA_COMMANDS = frozenset({
     "ls", "stat", "test", "[", "file", "wc", "du", "cd", "realpath", "readlink", "basename", "dirname",
     "echo", "printf", "export", "true", "false", "type", "which", "show-config-structure",
+    "mkdir", "touch", "chmod", "chown", "rmdir",
 })
 # 中身を出さないコマンドのうち、出力が名前の一覧ではないもの。パイプの後段に渡しても読み取りにならない
-NON_LISTING_COMMANDS = frozenset({"show-config-structure", "echo", "printf", "export", "true", "false", "type", "which"})
+NON_LISTING_COMMANDS = frozenset({
+    "show-config-structure", "echo", "printf", "export", "true", "false", "type", "which",
+    "mkdir", "touch", "chmod", "chown", "rmdir",
+})
 # find でも、これらがあれば中身を出しうる
 FIND_OUTPUT_ACTIONS = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"})
 # 単純コマンドの区切りに使う文字。; & | ( ) と改行
@@ -416,6 +420,12 @@ class BashChecker:
         reason = self.check_substitutions(tokens)
         if reason:
             return reason
+        # HOME を代入し直すと、~ や $HOME の展開先が判定の基準とずれるので止める
+        stripped_for_export = strip_prefixes(tokens)
+        exported = stripped_for_export[1:] if stripped_for_export[:1] == ["export"] else []
+        if any(t.startswith("HOME=") for t in tokens if ASSIGNMENT.match(t)) and (
+                all(ASSIGNMENT.match(t) for t in tokens) or exported) or any(t.startswith("HOME=") for t in exported):
+            return "HOME を代入し直しています。判定の基準のホームとずれるので止めます"
         # 代入だけの単純コマンドは、以降のコマンドの変数として覚える。HOME は判定の基準なので上書きさせない。
         # VAR=x cmd のような前置きの代入は、bash が引数を先に展開するので、その引数の判定には使わない
         if all(ASSIGNMENT.match(token) for token in tokens):
