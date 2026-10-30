@@ -27,7 +27,8 @@ class GuardSecretReadWiringTests(unittest.TestCase):
         self.assertNotIn("guard-secret-read", CODEX_HOOKS)
 
     def test_deny_covers_leaked_files(self):
-        for rule in ("Read(~/.zshrc.local)", "Read(~/.codex/config.toml)", "Read(~/.claude/settings.json)"):
+        for rule in ("Read(~/.zshrc.local)", "Read(~/.codex/config.toml)", "Read(~/.claude/settings.json)",
+                     "Read(~/.claude/settings.json.*)"):
             self.assertIn(rule, DENY)
 
     def test_deny_name_patterns_scoped_to_config(self):

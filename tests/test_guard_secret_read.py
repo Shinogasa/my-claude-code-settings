@@ -331,6 +331,13 @@ class FinalReviewTests(GuardSecretReadBase):
     def test_assigned_variable_path_blocked(self):
         self.assert_exit(self.bash("X=~/.config/app; cat $X/token"), BLOCK)
 
+    def test_declare_secret_name_blocked(self):
+        self.assert_exit(self.bash("declare -p ANTHROPIC_AUTH_TOKEN"), BLOCK)
+
+    def test_prefix_assignment_does_not_override_home(self):
+        # bash は $HOME を先に展開するので、その場の HOME=... は判定に使わない
+        self.assert_exit(self.bash("HOME=/tmp cat $HOME/.zshrc.local"), BLOCK)
+
     # --- 止めすぎていたもの ---
     def test_listing_piped_to_grep_allowed(self):
         self.assert_exit(self.bash("ls -la ~/.config | grep starship"), ALLOW)
