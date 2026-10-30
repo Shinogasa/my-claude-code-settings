@@ -200,6 +200,22 @@ class BashTests(GuardSecretReadBase):
     def test_command_substitution_blocked(self):
         self.assert_exit(self.bash("cat $(find ~/.config -name token)"), BLOCK)
 
+    def test_bundled_short_options_blocked(self):
+        self.assert_exit(self.bash("tool -vf~/.zshrc.local"), BLOCK)
+
+    def test_listing_cwd_piped_to_reader_blocked(self):
+        self.assert_exit(self.bash("cd ~/.config/app && ls | xargs cat"), BLOCK)
+
+    def test_listing_piped_to_while_read_blocked(self):
+        self.assert_exit(self.bash("ls ~/.config/app | while read f; do cat \"$f\"; done"), BLOCK)
+
+    def test_substitution_after_cd_home_blocked(self):
+        self.assert_exit(self.bash("cd ~ && cat $(ls .zshrc.local)"), BLOCK)
+
+    def test_listing_then_unrelated_command_allowed(self):
+        # パイプでつながっていなければ、前段の一覧は後段の入力にならない
+        self.assert_exit(self.bash("ls ~/.config; git status"), ALLOW)
+
     def test_inline_script_with_path_blocked(self):
         # スクリプトの中にパスがそのまま書かれていれば止める。組み立てたパスは受け入れた抜け道
         self.assert_exit(self.bash("python3 -c \"print(open('" + str(self.token) + "').read())\""), BLOCK)
