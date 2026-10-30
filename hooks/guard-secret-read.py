@@ -338,7 +338,7 @@ def dumps_environment(tokens: list) -> bool:
     if name == "set":
         return not args
     if name in SHELL_DUMPERS:
-        return not names
+        return not names or any(is_secret_name(n.split("=", 1)[0]) for n in names if "=" not in n)
     return False
 
 
@@ -416,11 +416,13 @@ class BashChecker:
         reason = self.check_substitutions(tokens)
         if reason:
             return reason
-        for token in tokens:
-            if not ASSIGNMENT.match(token):
-                break
-            name, value = token.split("=", 1)
-            self.variables[name] = expand(value, self.home, "") if value.startswith("~") else value
+        # 代入だけの単純コマンドは、以降のコマンドの変数として覚える。HOME は判定の基準なので上書きさせない。
+        # VAR=x cmd のような前置きの代入は、bash が引数を先に展開するので、その引数の判定には使わない
+        if all(ASSIGNMENT.match(token) for token in tokens):
+            for token in tokens:
+                name, value = token.split("=", 1)
+                if name != "HOME":
+                    self.variables[name] = expand(value, self.home, "") if value.startswith("~") else value
         tokens = strip_prefixes(tokens)
         if not tokens:
             return None

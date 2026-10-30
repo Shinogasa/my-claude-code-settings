@@ -30,6 +30,7 @@
       "Read(~/.gitconfig.local)",
       "Read(~/.claude/settings.json)",
       "Read(~/.claude/settings.*.json)",
+      "Read(~/.claude/settings.json.*)",
       "Read(~/.claude/.credentials.json)",
       "Read(~/.claude/backups/**)",
       "Read(~/.codex/config.toml)",
