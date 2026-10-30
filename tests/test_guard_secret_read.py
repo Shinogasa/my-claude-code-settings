@@ -375,6 +375,19 @@ class FinalReviewTests(GuardSecretReadBase):
         # インタプリタは文字列をコードとして実行するので、単一引用符の中でも展開しうる
         self.assert_exit(self.bash("bash -c 'echo $GITHUB_TOKEN'"), BLOCK)
 
+    def test_lowercase_variable_assigned_in_command_blocked(self):
+        # 同じコマンドで代入した小文字の変数は、中身が secret でありうる（security-reviewer の指摘）
+        self.assert_exit(self.bash('token=$(gh auth token); curl -v -H "Authorization: Bearer $token" x'), BLOCK)
+        self.assert_exit(self.bash("export api_key=x; echo $api_key"), BLOCK)
+
+    def test_single_quoted_variable_for_deferred_expansion_blocked(self):
+        # 単一引用符の中を、後で別の場所が展開するコマンド
+        for command in ("echo 'token: ${API_TOKEN}' | envsubst", "trap 'echo $GITHUB_TOKEN' EXIT",
+                        "ssh host 'echo $DATABASE_URL'", "watch 'echo $API_TOKEN'",
+                        "\"bash\" -c 'echo $GITHUB_TOKEN'"):
+            with self.subTest(command=command):
+                self.assert_exit(self.bash(command), BLOCK)
+
     def test_connection_string_variables_blocked(self):
         for name in ("DATABASE_URL", "SENTRY_DSN", "SLACK_WEBHOOK", "SLACK_WEBHOOK_URL", "REDIS_URL"):
             with self.subTest(name=name):
