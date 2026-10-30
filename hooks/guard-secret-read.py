@@ -89,7 +89,6 @@ SAFE_CONSUMERS = frozenset({
 ALWAYS_RECURSIVE = frozenset({"rg", "ag", "ack"})
 # heredoc の開始。<<EOF、<<-EOF、<<'EOF'、<<"EOF"、<<\EOF の形を受ける（<<< は here-string なので除く）
 HEREDOC_OPENER = re.compile(r"<<(?!<)(-?)\s*(\\?)(['\"]?)([^\s'\"<>;&|()]+)\3")
-SUBSTITUTION_BODY = re.compile(r"\$\(([^()]*)\)|`([^`]*)`|<\(([^()]*)\)")
 SUBSTITUTION_MARK = re.compile(r"__SUBST(\d+)__")
 # コマンド置換を解析できなかったときに、ホームを指しうる書き方
 HOME_REFERENCES = re.compile(r"(?:^|[\s=@:])~(?:/|\s|$)|\bHOME\b")
@@ -251,22 +250,71 @@ def strip_heredoc_bodies(command: str):
     return "".join(result), bodies
 
 
+def _closing_index(command: str, start: int):
+    """$( や <( の本文の終わり（対応する ) の位置）を返す。見つからなければ None。"""
+    depth, index = 1, start
+    while index < len(command):
+        char = command[index]
+        if char == "\\":
+            index += 2
+            continue
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if depth == 0:
+            return index
+        index += 1
+    return None
+
+
+def _closing_backtick(command: str, start: int):
+    index = start
+    while index < len(command):
+        if command[index] == "\\":
+            index += 2
+            continue
+        if command[index] == "`":
+            return index
+        index += 1
+    return None
+
+
 def extract_substitutions(command: str, known: list):
-    """内側から順に $(...)・`...`・<(...) を __SUBSTn__ へ置き換える。
+    """引用符とエスケープを追いながら、外側の $(...)・`...`・<(...) を __SUBSTn__ へ置き換える。
 
-    番号は known（外側で取り出し済みの本文）に続けて振る。戻り値は (置換後のコマンド, known に足した本文の一覧)。
+    単一引用符の中とエスケープした文字は置換として扱わない。入れ子は、本文を判定するときに同じ処理で取り出す。
+    番号は known（外側で取り出し済みの本文）に続けて振る。
+    戻り値は (置換後のコマンド, known に足した本文の一覧, 閉じていない置換が残ったか)。
     """
-    bodies = list(known)
-
-    def replace(match):
-        bodies.append(next(g for g in match.groups() if g is not None))
-        return f"__SUBST{len(bodies) - 1}__"
-
-    while True:
-        replaced = SUBSTITUTION_BODY.sub(replace, command)
-        if replaced == command:
-            return command, bodies
-        command = replaced
+    bodies, out = list(known), []
+    index, in_single, in_double = 0, False, False
+    while index < len(command):
+        char = command[index]
+        if in_single:
+            in_single = char != "'"
+            out.append(char)
+            index += 1
+            continue
+        if char == "\\":
+            out.append(command[index:index + 2])
+            index += 2
+            continue
+        if char == "'" and not in_double:
+            in_single = True
+        elif char == '"':
+            in_double = not in_double
+        elif char == "`" or (command.startswith(("$(", "<("), index) and not command.startswith("$((", index)):
+            opener = 1 if char == "`" else 2
+            end = (_closing_backtick(command, index + 1) if char == "`"
+                   else _closing_index(command, index + 2))
+            if end is None:
+                out.append(command[index:])
+                return "".join(out), bodies, True
+            bodies.append(command[index + opener:end])
+            out.append(f"__SUBST{len(bodies) - 1}__")
+            index = end + 1
+            continue
+        out.append(char)
+        index += 1
+    return "".join(out), bodies, False
 
 
 def is_separator(token: str) -> bool:
@@ -448,9 +496,11 @@ class BashChecker:
             variable = secret_variable(body)
             if variable:
                 return f"heredoc の中で、環境変数 {variable} の値を展開します"
-            for match in SUBSTITUTION_BODY.finditer(body):
-                inner = BashChecker(self.home, self.cwd, self.substitutions, self.variables)
-                if inner.check(next(g for g in match.groups() if g is not None)) or inner.listed_guarded:
+            # heredoc の本文は引用符の外として展開されるので、引用符を外した形で置換を取り出す
+            _, inner_bodies, _ = extract_substitutions(body.replace("'", "").replace('"', ""), [])
+            for inner_body in inner_bodies:
+                inner = BashChecker(self.home, self.cwd, [], self.variables)
+                if inner.check(inner_body) or inner.listed_guarded:
                     return "heredoc の中のコマンド置換で、secret を含みうる場所を指しています"
         words = {os.path.basename(w) for w in re.split(r"[\s;&|()]+", command) if w}
         if any(INTERPRETER.match(w) for w in words):
@@ -460,8 +510,8 @@ class BashChecker:
             # 区切り語を解析できなかった heredoc は、ホームを指す書き方があれば止める
             if re.search(r"<<(?!<)", command) and (looks_guarded(command, self.home) or HOME_REFERENCES.search(command)):
                 return "解析できない heredoc と、ホームを指す書き方が一緒に使われています"
-        command, self.substitutions = extract_substitutions(command, self.substitutions)
-        if any(s in command for s in ("$(", "`", "<(")) and (
+        command, self.substitutions, unclosed = extract_substitutions(command, self.substitutions)
+        if unclosed and (
                 looks_guarded(expand_variables(command, self.home), self.home) or HOME_REFERENCES.search(command)):
             return "解析できないコマンド置換と、ホームを指す書き方が一緒に使われています"
         commands = split_simple_commands(command)
