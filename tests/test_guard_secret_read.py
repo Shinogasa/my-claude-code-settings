@@ -343,6 +343,27 @@ class FinalReviewTests(GuardSecretReadBase):
         # bash は $HOME を先に展開するので、その場の HOME=... は判定に使わない
         self.assert_exit(self.bash("HOME=/tmp cat $HOME/.zshrc.local"), BLOCK)
 
+    # --- 層1の deny が Bash に効かなかった分（2026-10-30に実機で確認）---
+    def test_denied_exact_path_blocked_in_bash(self):
+        self.make_file(self.home / ".npmrc", mode=0o644)
+        self.assert_exit(self.bash("cat ~/.npmrc"), BLOCK)
+
+    def test_denied_name_pattern_blocked_in_bash(self):
+        self.make_file(self.home / ".config" / "app" / "probe-token", mode=0o644)
+        self.assert_exit(self.bash("cat ~/.config/app/probe-token"), BLOCK)
+
+    def test_denied_env_file_in_repo_blocked(self):
+        self.make_file(self.repo / ".env", mode=0o644)
+        self.assert_exit(self.bash("grep KEY .env"), BLOCK)
+
+    def test_denied_path_blocked_in_read(self):
+        npmrc = self.make_file(self.home / ".npmrc", mode=0o644)
+        self.assert_exit(self.run_hook("Read", {"file_path": str(npmrc)}), BLOCK)
+
+    def test_repo_file_not_in_deny_allowed(self):
+        self.make_file(self.repo / "README.md", mode=0o644)
+        self.assert_exit(self.bash("cat README.md"), ALLOW)
+
     # --- 止めすぎていたもの ---
     def test_listing_piped_to_grep_allowed(self):
         self.assert_exit(self.bash("ls -la ~/.config | grep starship"), ALLOW)
