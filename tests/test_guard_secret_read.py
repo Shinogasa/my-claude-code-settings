@@ -216,6 +216,14 @@ class BashTests(GuardSecretReadBase):
         # パイプでつながっていなければ、前段の一覧は後段の入力にならない
         self.assert_exit(self.bash("ls ~/.config; git status"), ALLOW)
 
+    def test_commit_message_mentioning_path_allowed(self):
+        # メッセージの中でパスに触れるだけなら、読み取りではない
+        self.assert_exit(self.bash("git commit -m \"漏れていた ~/.zshrc.local を足す\""), ALLOW)
+
+    def test_heredoc_commit_message_allowed(self):
+        command = "git commit -m \"$(cat <<'EOF'\n~/.zshrc.local を足す\nEOF\n)\""
+        self.assert_exit(self.bash(command), ALLOW)
+
     def test_inline_script_with_path_blocked(self):
         # スクリプトの中にパスがそのまま書かれていれば止める。組み立てたパスは受け入れた抜け道
         self.assert_exit(self.bash("python3 -c \"print(open('" + str(self.token) + "').read())\""), BLOCK)
