@@ -339,6 +339,19 @@ class FinalReviewTests(GuardSecretReadBase):
         self.assert_exit(self.bash("HOME=/tmp; cat ~/.zshrc.local"), BLOCK)
         self.assert_exit(self.bash("export HOME=/tmp"), BLOCK)
 
+    def test_chmod_widening_blocked(self):
+        # 権限を広げると、権限で判定するガードを次の cat がすり抜ける
+        self.assert_exit(self.bash("chmod 644 ~/.zshrc.local"), BLOCK)
+        self.assert_exit(self.bash("chmod go+r ~/.zshrc.local"), BLOCK)
+
+    def test_chown_blocked(self):
+        self.assert_exit(self.bash("chown nobody ~/.zshrc.local"), BLOCK)
+
+    def test_home_write_forms_blocked(self):
+        for command in ("unset HOME", "declare HOME=/tmp", "printf -v HOME x", "read HOME", "HOME+=x"):
+            with self.subTest(command=command):
+                self.assert_exit(self.bash(command), BLOCK)
+
     def test_prefix_assignment_does_not_override_home(self):
         # bash は $HOME を先に展開するので、その場の HOME=... は判定に使わない
         self.assert_exit(self.bash("HOME=/tmp cat $HOME/.zshrc.local"), BLOCK)
