@@ -12,6 +12,7 @@ permissions.deny（層1）は一覧に載せた場所しか止めない。この
 守るのは、うっかり読んで出力してしまう事故だけである。Bash はコマンドの文字列から推定しているので、
 意図して書き換えたコマンドは見抜けない。Claude Code にだけ登録し、Codex（codex/hooks.json）には登録しない。
 """
+import functools
 import glob
 import json
 import os
@@ -20,6 +21,12 @@ import re
 import shlex
 import stat
 import sys
+from pathlib import Path
+
+# permissions.deny の正本。実機で、deny が Read ツールにしか効かず Bash の cat には効かないと分かった（2026-10-30）。
+# そのため同じ一覧をフックでも読み、Read・Grep・Bash のどれでも、権限に関係なく止める
+SETTINGS_TEMPLATE = Path(__file__).resolve().parent.parent / "settings.json.template"
+DENY_READ_RULE = re.compile(r"^Read\((.+)\)$")
 
 # Claude Code 自身が作る600のファイルのうち、作業で読むものの置き場所。権限ではなく場所で例外にする
 EXEMPT_DIRS = (
@@ -114,6 +121,54 @@ def guarded_area(path: str, home: str) -> bool:
     return not any(rel == d or rel.startswith(d + os.sep) for d in EXEMPT_DIRS)
 
 
+def glob_to_regex(pattern: str) -> str:
+    """gitignore 形式（**・*・?）のパターンを、パス全体に当てる正規表現にする。"""
+    out, index = [], 0
+    while index < len(pattern):
+        if pattern.startswith("**/", index):
+            out.append("(?:.*/)?")
+            index += 3
+        elif pattern.startswith("**", index):
+            out.append(".*")
+            index += 2
+        elif pattern[index] == "*":
+            out.append("[^/]*")
+            index += 1
+        elif pattern[index] == "?":
+            out.append("[^/]")
+            index += 1
+        else:
+            out.append(re.escape(pattern[index]))
+            index += 1
+    return "^" + "".join(out) + "$"
+
+
+@functools.lru_cache(maxsize=None)
+def deny_patterns(home: str) -> tuple:
+    """テンプレートの Read(...) の deny を、ホームを展開した正規表現にする。~/ と // の形だけを扱う。"""
+    rules = json.loads(SETTINGS_TEMPLATE.read_text(encoding="utf-8"))["permissions"]["deny"]
+    patterns = []
+    for rule in rules:
+        match = DENY_READ_RULE.match(rule)
+        if not match:
+            continue
+        pattern = match.group(1)
+        if pattern.startswith("~/"):
+            pattern = home + pattern[1:]
+        elif pattern.startswith("//"):
+            pattern = pattern[1:]
+        else:
+            continue
+        patterns.append(re.compile(glob_to_regex(pattern)))
+    return tuple(patterns)
+
+
+def is_denied(path: str, home: str) -> bool:
+    """要求されたパスか、その実体が deny の一覧に当たるか。"""
+    candidates = {os.path.normpath(path), os.path.realpath(path)}
+    return any(p.match(c) for p in deny_patterns(home) for c in candidates)
+
+
 def is_owner_only_file(path: str) -> bool:
     st = os.stat(path)
     return stat.S_ISREG(st.st_mode) and stat.S_IMODE(st.st_mode) & 0o077 == 0
@@ -121,7 +176,10 @@ def is_owner_only_file(path: str) -> bool:
 
 def classify(path: str, home: str, cwd: str) -> str:
     """allow・block・unknown のどれかを返す。ディレクトリは、対象範囲にあれば中を走査されうるので止める。"""
-    target = os.path.realpath(expand(path, home, cwd))
+    requested = expand(path, home, cwd)
+    if is_denied(requested, home):
+        return BLOCK
+    target = os.path.realpath(requested)
     home_real = os.path.realpath(home)
     # ホームそのものや、その上のディレクトリを走査されると対象範囲まで届く
     if os.path.isdir(target) and (home_real + os.sep).startswith(target.rstrip(os.sep) + os.sep):
