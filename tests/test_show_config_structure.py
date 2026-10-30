@@ -42,9 +42,31 @@ class ShowConfigStructureTests(unittest.TestCase):
         self.assertNotIn("hello", out.stdout)
 
     def test_allowed_key_value_shown(self):
-        out = self.run_tool(self.write_json({"model": "opus", "permissions": {"deny": ["Read(~/.ssh/**)"]}}))
+        out = self.run_tool(self.write_json({"model": "opus", "theme": "dark"}))
         self.assertIn("model: str = opus", out.stdout)
-        self.assertIn("permissions.deny[0]: str = Read(~/.ssh/**)", out.stdout)
+        self.assertIn("theme: str = dark", out.stdout)
+
+    def test_permission_rules_masked(self):
+        # ルール文字列にはコマンドごとトークンを書きうる
+        out = self.run_tool(self.write_json({"permissions": {"allow": ["Bash(curl -H tokXYZ)"]}}))
+        self.assertIn("permissions.allow[0]: str = <伏せた>", out.stdout)
+        self.assertNotIn("tokXYZ", out.stdout)
+
+    def test_status_line_masked(self):
+        out = self.run_tool(self.write_json({"statusLine": {"command": "show tokXYZ"}}))
+        self.assertNotIn("tokXYZ", out.stdout)
+
+    def test_token_like_key_masked(self):
+        out = self.run_tool(self.write_json({"env": {"ANTHROPIC_AUTH_TOKEN": "v", "aB3dE5gH7jK9mN1p": "v"}}))
+        self.assertIn("env.ANTHROPIC_AUTH_TOKEN: str = <伏せた>", out.stdout)
+        self.assertIn("env.<伏せたキー>: str = <伏せた>", out.stdout)
+        self.assertNotIn("aB3dE5gH7jK9mN1p", out.stdout)
+
+    def test_line_mode_masks_token_like_key(self):
+        out = self.run_tool(self.write_text("token", "aB3dE5gH7jK9mN1p:zzz\nEMPTY=\n"))
+        self.assertIn("行1: <伏せた>", out.stdout)
+        self.assertIn("行2: <伏せた>", out.stdout)
+        self.assertNotIn("aB3dE5gH7jK9mN1p", out.stdout)
 
     def test_hooks_masked(self):
         out = self.run_tool(self.write_json({"hooks": {"PreToolUse": [{"hooks": [{"command": "curl -H tok123"}]}]}}))
