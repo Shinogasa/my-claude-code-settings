@@ -250,71 +250,121 @@ def strip_heredoc_bodies(command: str):
     return "".join(result), bodies
 
 
-def _closing_index(command: str, start: int):
-    """$( や <( の本文の終わり（対応する ) の位置）を返す。見つからなければ None。"""
-    depth, index = 1, start
-    while index < len(command):
-        char = command[index]
-        if char == "\\":
-            index += 2
-            continue
-        depth += {"(": 1, ")": -1}.get(char, 0)
-        if depth == 0:
-            return index
-        index += 1
+def _construct_end(command: str, index: int):
+    """index から始まる引用・置換の終わりの次の位置を返す。閉じていなければ None。
+
+    扱うもの: '...'、$'...'（ANSI-C。\\' はエスケープ）、"..."、`...`、$(...)・<(...)（入れ子と、中の引用符を追う）。
+    """
+    if command.startswith("$'", index):
+        position = index + 2
+        while position < len(command):
+            if command[position] == "\\":
+                position += 2
+            elif command[position] == "'":
+                return position + 1
+            else:
+                position += 1
+        return None
+    char = command[index]
+    if char == "'":
+        close = command.find("'", index + 1)
+        return None if close < 0 else close + 1
+    if char in ('"', "`"):
+        position = index + 1
+        while position < len(command):
+            current = command[position]
+            if current == "\\":
+                position += 2
+            elif current == char:
+                return position + 1
+            elif char == '"' and (current == "`" or command.startswith("$(", position)):
+                position = _construct_end(command, position)
+                if position is None:
+                    return None
+            else:
+                position += 1
+        return None
+    # $( か <(
+    depth, position = 1, index + 2
+    while position < len(command):
+        current = command[position]
+        if current == "\\":
+            position += 2
+        elif current in ("'", '"', "`") or command.startswith(("$'", "$("), position):
+            position = _construct_end(command, position)
+            if position is None:
+                return None
+        elif current == "(":
+            depth += 1
+            position += 1
+        elif current == ")":
+            depth -= 1
+            position += 1
+            if depth == 0:
+                return position
+        else:
+            position += 1
     return None
 
 
-def _closing_backtick(command: str, start: int):
-    index = start
-    while index < len(command):
-        if command[index] == "\\":
-            index += 2
-            continue
-        if command[index] == "`":
-            return index
-        index += 1
-    return None
+def _starts_substitution(command: str, index: int, heredoc: bool) -> bool:
+    if command[index] == "`":
+        return True
+    if command.startswith("$((", index):
+        return False
+    return command.startswith("$(", index) or (not heredoc and command.startswith("<(", index))
 
 
-def extract_substitutions(command: str, known: list):
+def extract_substitutions(command: str, known: list, heredoc: bool = False):
     """引用符とエスケープを追いながら、外側の $(...)・`...`・<(...) を __SUBSTn__ へ置き換える。
 
-    単一引用符の中とエスケープした文字は置換として扱わない。入れ子は、本文を判定するときに同じ処理で取り出す。
-    番号は known（外側で取り出し済みの本文）に続けて振る。
-    戻り値は (置換後のコマンド, known に足した本文の一覧, 閉じていない置換が残ったか)。
+    単一引用符・ANSI-C クォートの中と、エスケープした文字は置換として扱わない。語の頭の # から行末まではコメントとして除く。
+    heredoc=True のときは heredoc の本文として読み、引用符を特別に扱わない。
+    入れ子は、本文を判定するときに同じ処理で取り出す。番号は known（外側で取り出し済みの本文）に続けて振る。
+    戻り値は (置換後のコマンド, known に足した本文の一覧, 閉じていない引用・置換が残ったか)。
     """
     bodies, out = list(known), []
-    index, in_single, in_double = 0, False, False
+    index, in_double = 0, False
     while index < len(command):
         char = command[index]
-        if in_single:
-            in_single = char != "'"
-            out.append(char)
-            index += 1
-            continue
         if char == "\\":
             out.append(command[index:index + 2])
             index += 2
             continue
-        if char == "'" and not in_double:
-            in_single = True
-        elif char == '"':
-            in_double = not in_double
-        elif char == "`" or (command.startswith(("$(", "<("), index) and not command.startswith("$((", index)):
-            opener = 1 if char == "`" else 2
-            end = (_closing_backtick(command, index + 1) if char == "`"
-                   else _closing_index(command, index + 2))
+        if _starts_substitution(command, index, heredoc):
+            end = _construct_end(command, index)
             if end is None:
                 out.append(command[index:])
                 return "".join(out), bodies, True
-            bodies.append(command[index + opener:end])
+            opener = 1 if char == "`" else 2
+            closer = 1
+            bodies.append(command[index + opener:end - closer])
             out.append(f"__SUBST{len(bodies) - 1}__")
-            index = end + 1
+            index = end
+            continue
+        if not heredoc and not in_double and (char == "'" or command.startswith("$'", index)):
+            end = _construct_end(command, index)
+            if end is None:
+                out.append(command[index:])
+                return "".join(out), bodies, True
+            if char == "$":
+                # shlex は ANSI-C クォートを読めないので、中身が同じ二重引用符の文字列に書き換える
+                decoded = re.sub(r"\\(.)", lambda m: m.group(1), command[index + 2:end - 1])
+                escaped = re.sub(r'(["\\$`\\\\])', r"\\\1", decoded)
+                out.append(f'"{escaped}"')
+            else:
+                out.append(command[index:end])
+            index = end
+            continue
+        if not heredoc and char == '"':
+            in_double = not in_double
+        elif not heredoc and not in_double and char == "#" and (index == 0 or command[index - 1] in " \t\n;&|("):
+            newline = command.find("\n", index)
+            index = len(command) if newline < 0 else newline
             continue
         out.append(char)
         index += 1
-    return "".join(out), bodies, False
+    return "".join(out), bodies, in_double
 
 
 def is_separator(token: str) -> bool:
@@ -496,8 +546,10 @@ class BashChecker:
             variable = secret_variable(body)
             if variable:
                 return f"heredoc の中で、環境変数 {variable} の値を展開します"
-            # heredoc の本文は引用符の外として展開されるので、引用符を外した形で置換を取り出す
-            _, inner_bodies, _ = extract_substitutions(body.replace("'", "").replace('"', ""), [])
+            # heredoc の本文では引用符は特別な意味を持たない。heredoc として読んで置換を取り出す
+            _, inner_bodies, unclosed = extract_substitutions(body, [], heredoc=True)
+            if unclosed and (looks_guarded(body, self.home) or HOME_REFERENCES.search(body)):
+                return "heredoc の中に、解析できない置換とホームを指す書き方があります"
             for inner_body in inner_bodies:
                 inner = BashChecker(self.home, self.cwd, [], self.variables)
                 if inner.check(inner_body) or inner.listed_guarded:
