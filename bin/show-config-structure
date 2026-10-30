@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""設定ファイルのキー構造だけを出し、値を伏せる。
+
+secret を含みうるファイル（~/.claude/settings.json、~/.codex/config.toml など）を、AIが値を見ずに調べるための読み口。
+値を出すのは、先頭のキーが ALLOWED_TOP_KEYS にあるときだけ。伏せるかどうかは値の形を見ずに、キーだけで決める。
+値の形で検出する方式は、外れると値がそのまま出るため（設計: docs/superpowers/specs/2026-10-29-secret-read-guard-design.md）。
+
+使い方: show-config-structure <path>
+"""
+import json
+import re
+import sys
+import tomllib
+from pathlib import Path
+from typing import Iterator
+
+# 値の種類が決まっていて、secret を書く場所ではないキー。
+# hooks・statusLine はコマンド文字列を、permissions はルール文字列を持ち、どれもトークンを直書きしうるので入れない
+ALLOWED_TOP_KEYS = frozenset({
+    "$schema", "model", "theme", "enabledPlugins", "autoCompactEnabled",
+    "askUserQuestionTimeout", "modelSettings", "model_reasoning_effort", "approval_policy", "sandbox_mode",
+})
+MASK = "<伏せた>"
+MASKED_KEY = "<伏せたキー>"
+# 行単位で見るときに、キー名とみなす行の形（KEY=value、key: value、export KEY=value）。値が空の行はキーとみなさない
+LINE_KEY = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][\w.-]*)\s*[=:]\s*\S")
+# キー名として出してよい形。大文字のスネーク（環境変数）か、小文字のスネーク・ケバブだけを通す。
+# 大文字と小文字が混ざったものや数字の多いものは、トークンがキーの位置にある可能性があるので伏せる
+PLAIN_KEY = re.compile(
+    r"^(?:[A-Z][A-Z0-9_]*|[a-z][a-z0-9_]*(?:[-.][a-z0-9_]+)*|[A-Za-z][a-z]*(?:[A-Z][a-z]+)*[0-9]{0,2})$"
+)
+MAX_KEY_LENGTH = 64
+MAX_KEY_DIGITS = 3
+
+
+def shown_key(key: str) -> str:
+    plain = PLAIN_KEY.match(key) and len(key) <= MAX_KEY_LENGTH and sum(c.isdigit() for c in key) <= MAX_KEY_DIGITS
+    return key if plain else MASKED_KEY
+
+
+def type_name(value) -> str:
+    return {dict: "object", list: "array", str: "str", bool: "bool", int: "int", float: "float"}.get(type(value), "null")
+
+
+def walk(value, path: str, allowed: bool) -> Iterator[str]:
+    """構造をたどって1行ずつ返す。allowed は先頭キーで決め、下へ引き継ぐ。"""
+    if isinstance(value, dict):
+        if path:
+            yield f"{path}: object"
+        for key, child in value.items():
+            key = str(key)
+            child_allowed = allowed if path else key in ALLOWED_TOP_KEYS
+            # 許可したキーの下ではキー名もそのまま出す（プラグイン名などを含むため）
+            name = key if child_allowed else shown_key(key)
+            child_path = f"{path}.{name}" if path else name
+            yield from walk(child, child_path, child_allowed)
+        return
+    if isinstance(value, list):
+        yield f"{path}: array"
+        for index, child in enumerate(value):
+            yield from walk(child, f"{path}[{index}]", allowed)
+        return
+    shown = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+    yield f"{path}: {type_name(value)} = {shown if allowed else MASK}"
+
+
+def structured_lines(path: Path) -> Iterator[str]:
+    text = path.read_text(encoding="utf-8")
+    data = json.loads(text) if path.suffix == ".json" else tomllib.loads(text)
+    return walk(data, "", False)
+
+
+def line_mode(path: Path) -> Iterator[str]:
+    """JSON・TOML 以外の形式。キー名だけを出し、値と、キーの形でない行はすべて伏せる。"""
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        match = LINE_KEY.match(line)
+        key = shown_key(match.group(1)) if match else MASKED_KEY
+        yield f"行{number}: {key} = {MASK}" if key != MASKED_KEY else f"行{number}: {MASK}"
+
+
+def main(argv: list) -> int:
+    if len(argv) != 2:
+        print("使い方: show-config-structure <path>", file=sys.stderr)
+        return 1
+    path = Path(argv[1]).expanduser()
+    try:
+        lines = list(structured_lines(path) if path.suffix in (".json", ".toml") else line_mode(path))
+    except Exception as error:
+        # 例外のメッセージには原文の断片が入りうるので、型名とパスだけを出す
+        print(f"読み取りに失敗した（{type(error).__name__}）: {path}", file=sys.stderr)
+        return 1
+    print("\n".join(lines))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

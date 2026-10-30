@@ -666,6 +666,65 @@ AI が正解を作ると差分フィードバックの信頼性が落ちるた�
 
 ## フックの守備範囲の穴
 
+### P3: Orca がグローバル設定へフックを差し込む
+
+2026-10-30に、Orca（`/Applications/Orca.app`、フックの本体は `~/.orca/agent-hooks/`）が、
+`~/.claude/settings.json` と `~/.codex/hooks.json` へ自分のフックを差し込んだ。
+`~/.codex/hooks.json` はこのリポジトリの `codex/hooks.json` へのsymlinkなので、作業ツリーが汚れ、
+Codex のランタイムテストが1件落ちた。`~/.claude/settings.json` は setup.sh が conflict として扱い、更新できなかった。
+このときは利用者の判断で Orca のフックを外し、setup.sh で作り直した（元のファイルは setup.sh のバックアップにある）。
+
+**決めること**: Orca を使い続けるか。使うなら、Orca のフックをテンプレートに取り込むか、
+Orca がsymlink先（リポジトリ）へ書き込まないようにする方法があるか（Orca がいつ再び差し込むかは未確認）。
+
+### P2: secret 読み取りガードの止めすぎ（2026-10-30の security-reviewer、実機で再現）
+
+- **小文字の変数で止まる**: 名前の判定を大文字にしてから部分で比べるので、`for key in a b; do echo "$key"; done` や、jq の中の `'$KEY'` が止まる。
+  逆に `$DATABASE_URL`・`$SENTRY_DSN`・`$SLACK_WEBHOOK` は通る（取りこぼし）
+- **HOME を差し替えた隔離実行が止まる**: `HOME=$(mktemp -d) bash setup.sh --dry-run` が止まる。このリポジトリで普段使う形
+
+**決めること**: 変数名の判定を、大文字に限るか、実際に export されていて値がある変数に限るか。
+HOME の差し替えは、代入先が一時ディレクトリなら通すか、差し替え後のホームで判定するか。
+
+### P3: secret 読み取りガード（ADR 0043）の残り
+
+2026-10-30に、Claude Code の Read・Grep・Bash を対象にして入れた。次の点は残っている。
+
+- **Codex への展開**: Codex には `permissions.deny` に当たる層が無いので、入れるならフックだけが守りになる。
+  利用者は2026-10-29の時点でCodexを使っていない
+- **組み立てたパス**: `python3 -c` や `node -e` の中でパスを組み立てて読む経路は止まらない（受け入れた抜け道）
+- **フックのファイルが無いとき**: 既存の決まりで、止めずに通す。fail-close と食い違う
+- **MCP のファイル読み取りツール**（serena など）: 対象外
+- **`~/.claude/settings.json` の `ANTHROPIC_AUTH_TOKEN`**: 設定ファイルに値が残っている
+- **プロンプトインジェクションによる持ち出し**: フックは文字列からの推定なので、AIが意図して回り込むと止まらない。
+  OS のレベルで止めるには sandbox が要るが、SSH の git push や Go 製 CLI の TLS 検証が失敗するため、2026-10-29に見送った
+
+- **リポジトリ配下の `.env` を `grep` で読む経路**: Read と `cat` は既存の deny が止めるが、`grep KEY .env` は止まらない（2026-10-30の最終レビュー）
+- **例外にした場所の広さ**: `.claude/projects`（会話記録）と `.claude/plugins` は丸ごと読める。過去に出た値を読み直しうる
+- **読み口の行モード**: キーの位置にある大文字スネークの値（s3fs の passwd 形式のアクセスキーIDなど）がキー名として出る
+- **フックの入力の `cwd`**: 前の Bash 呼び出しの `cd` を反映するかは未確認
+- **前置きの代入をインタプリタが読む経路**: `F=<パス> python3 -c "open(os.environ['F'])"` のように、前置きの代入で渡したパスは判定しない（自動レビュー5回目）
+- **HOME への書き込みの残りの形**: `HOME[0]=`、`-vHOME`（つなげた形）、`declare -n` で HOME を指す形（自動レビュー6回目）
+- **chmod のモードの解釈**: `chmod --reference=x` など、モード以外の指定を権限を絞る変更と取り違えうる（自動レビュー6回目）
+- **リポジトリ配下の deny に無い名前**: `.env.staging`・`.env.test`・`terraform.tfvars`・`*.pem`・`credentials.json` は通る。
+  `grep -rn password .`、`find . -name '.env*' -exec cat {} \;` のように名指ししない読み方も通る（2026-10-30の security-reviewer、Medium）
+- **644 の secret 入りファイル**: `~/.zshrc`・`~/.zshenv`・`~/.profile`・`~/.kube/config`・`~/.config/gcloud/**` などは、deny に無く権限も 644 なので通る（同 Medium）
+- **ファイルを読まずに secret を出すコマンド**: `git config --list`、`git remote -v`（URL にトークン）、`gh auth token`、`terraform output`、
+  `kubectl get secret -o yaml`、`security find-generic-password -w`、`python3 -c 'print(os.environ)'` などは検査していない（同 Medium）
+- **fail-open の残り**: `resolve_home()` が try の外にある。python3 が無い・10秒のタイムアウトは非ブロック（同 Low）
+- **例外にした場所**: `~/.claude/shell-snapshots`・`session-env`・`file-history` の中身と権限は未確認（同 Low）
+- **疑わしいコメントの判定**: 行の残りに目印（`}` など）があるかで決めている。`${...}` と `$((...))` の入れ子の深さを追って、深さ0の語の頭だけをコメントとして扱う形にするか（自動レビュー11回目の High。2026-10-30から、指摘は High も含めて backlog に積むと利用者が決めた）
+- **自動セキュリティレビューが毎回新しい指摘を出す件**: 原因は、レビューがコミットごとの差分を対象にすること、bash の文法を文字列解析で真似る方式に終わりが無いこと、レビュワーが脅威モデル（事故だけ）を知らないことだと見ている。
+  effort は主因ではない（レビュワーはプラグイン側の Opus で動き、セッションの effort は関係しない）。
+  **決めること**: `.claude/claude-security-guidance.md`（プラグインがレビューのプロンプトに足すプロジェクト規則）に、脅威モデルと ADR 0043 で受け入れた限界を書くか。sandbox へ移るか
+- **置換の中のコメントと ANSI-C のエスケープ**: `$(...)` の中の `#` コメントや、`$'\x2e'` のような ANSI-C のエスケープを、bash と同じには読まない（自動レビュー8回目の Medium）
+- **rm で対象範囲のディレクトリを消すと止まる**: 中身は出さないので止めすぎ（2026-10-30の実機確認）
+
+**決めること**: Codex を再び使い始めたら、フックを `codex/hooks.json` にも登録するか。
+`ANTHROPIC_AUTH_TOKEN` を `apiKeyHelper` などで settings.json の外へ出すか。
+フックのファイルが無いときに、secret 読み取りガードだけは止めるようにするか。
+sandbox を、`excludedCommands` で git や Go 製 CLI を外に出す形で入れ直すか（入れるなら、外に出したコマンドは守られない）。
+
 PR #17 の本文にレビュー観点として書いたが、マージで参照されなくなったため移した。
 **PR 本文は残課題の置き場にならない。**
 

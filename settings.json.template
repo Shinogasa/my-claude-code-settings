@@ -25,7 +25,30 @@
       "Read(//**/.env.development)",
       "Read(//**/.envrc)",
       "Read(//**/*.tfstate)",
-      "Read(//**/*.tfstate.backup)"
+      "Read(//**/*.tfstate.backup)",
+      "Read(~/.zshrc.local)",
+      "Read(~/.gitconfig.local)",
+      "Read(~/.claude/settings.json)",
+      "Read(~/.claude/settings.*.json)",
+      "Read(~/.claude/settings.json.*)",
+      "Read(~/.claude/.credentials.json)",
+      "Read(~/.claude/backups/**)",
+      "Read(~/.codex/config.toml)",
+      "Read(~/.codex/config.toml.*)",
+      "Read(~/.codex/*.bak)",
+      "Read(~/.codex/*.config.toml)",
+      "Read(~/.codex/auth.json)",
+      "Read(~/.codex/history.jsonl)",
+      "Read(~/.codex-personal/**)",
+      "Read(~/.config/cw-workspace-local/**)",
+      "Read(~/.config/github-copilot/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.config/**/*token*)",
+      "Read(~/.config/**/*secret*)",
+      "Read(~/.config/**/*credential*)",
+      "Read(~/.config/**/auth.json)",
+      "Read(~/.config/**/*.pem)",
+      "Read(~/.config/**/*.key)"
     ]
   },
   "enabledPlugins": {
@@ -82,6 +105,16 @@
             "type": "command",
             "command": "if [ -f ~/.claude/hooks/principle-review.py ]; then python3 ~/.claude/hooks/principle-review.py; else echo '{\"systemMessage\":\"原則レビューのフック（~/.claude/hooks/principle-review.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
             "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Grep|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f ~/.claude/hooks/guard-secret-read.py ]; then python3 ~/.claude/hooks/guard-secret-read.py; else echo '{\"systemMessage\":\"フック（~/.claude/hooks/guard-secret-read.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
+            "timeout": 10
           }
         ]
       },
