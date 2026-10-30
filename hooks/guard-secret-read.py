@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""secret を含みうるファイルの中身が、AIのツール呼び出しで出力されるのを止める PreToolUse フック。
+"""secret を含みうるファイルや環境変数の値が、AIのツール呼び出しで出力されるのを止める PreToolUse フック。
 
 使い方: guard-secret-read.py（入力は stdin の JSON。exit 0 で許可、exit 2 でブロック）
-設計: docs/superpowers/specs/2026-10-29-secret-read-guard-design.md
+設計: docs/superpowers/specs/2026-10-29-secret-read-guard-design.md、判断の経緯: docs/adr/0043-secret-read-guard.md
 
 permissions.deny（層1）は一覧に載せた場所しか止めない。このフック（層2）は、一覧に無いファイルも
 「場所 × 権限」で判定して止める。対象範囲は ~/.config 配下と、ホーム直下のドットファイル・ドットディレクトリ。
 その中で、本人だけが読める権限（600 など）の通常ファイルを secret とみなす。
 判定できないとき（stat が失敗する、解析で例外が出る）は、対象範囲に見えるなら止める（fail-close）。
 
-Claude Code にだけ登録する。Codex（codex/hooks.json）には登録しない。
+守るのは、うっかり読んで出力してしまう事故だけである。Bash はコマンドの文字列から推定しているので、
+意図して書き換えたコマンドは見抜けない。Claude Code にだけ登録し、Codex（codex/hooks.json）には登録しない。
 """
 import glob
 import json
 import os
+import pwd
 import re
 import shlex
 import stat
@@ -31,45 +33,57 @@ BLOCK_EXIT = 2
 # 中身を出さないコマンド。対象範囲のパスを引数に取っても通す
 METADATA_COMMANDS = frozenset({
     "ls", "stat", "test", "[", "file", "wc", "du", "cd", "realpath", "readlink", "basename", "dirname",
-    "show-config-structure",
+    "echo", "printf", "export", "true", "false", "type", "which", "show-config-structure",
 })
+# 中身を出さないコマンドのうち、出力が名前の一覧ではないもの。パイプの後段に渡しても読み取りにならない
+NON_LISTING_COMMANDS = frozenset({"show-config-structure", "echo", "printf", "export", "true", "false", "type", "which"})
 # find でも、これらがあれば中身を出しうる
 FIND_OUTPUT_ACTIONS = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"})
-# 単純コマンドの区切り
-SEPARATORS = frozenset({";", "&&", "||", "|", "|&", "&", "(", ")", "\n"})
+# 単純コマンドの区切りに使う文字。; & | ( ) と改行
+SEPARATOR_CHARS = frozenset(";&|()\n")
 # 出力側のリダイレクト。直後のトークンは書き込み先なので判定しない
-OUTPUT_REDIRECTS = frozenset({">", ">>", ">&", "&>", ">|"})
+OUTPUT_REDIRECTS = frozenset({">", ">>", ">&", "&>", ">|", "&>>"})
 # 先頭にあっても本体のコマンドではないもの
-WRAPPERS = frozenset({"env", "sudo", "command", "exec", "time", "nohup", "rtk"})
+WRAPPERS = frozenset({"env", "sudo", "command", "exec", "time", "nohup", "rtk", "nice", "timeout", "caffeinate"})
 ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
 GLOB_CHARS = re.compile(r"[*?\[]")
+DURATION = re.compile(r"^\d+(\.\d+)?[smhd]?$")
 # パスではなくコードや文として書かれた引数（python3 -c "..." など）
 CODE_LIKE = re.compile(r"[\s()'\";]")
 HOME_VARIABLE = re.compile(r"\$\{HOME\}|\$HOME(?![A-Za-z0-9_])")
-SUBSTITUTIONS = ("$(", "`", "<(")
-PIPES = frozenset({"|", "|&"})
-# 引数をコードとして実行するコマンド。文字列の中に書かれたパスを読みうる
-INTERPRETERS = frozenset({
-    "python", "python3", "node", "deno", "bun", "ruby", "perl", "php", "sh", "bash", "zsh", "fish", "osascript",
+VARIABLE_REFERENCE = re.compile(r"\$\{?([A-Za-z_]\w*)")
+# 名前にこれらの部分を含む環境変数は、値が secret でありうる
+SECRET_NAME_PARTS = frozenset({
+    "TOKEN", "KEY", "SECRET", "PASSWORD", "PASSWD", "PASS", "CREDENTIAL", "CREDENTIALS", "AUTH", "PAT", "APIKEY",
 })
-# heredoc の本文はコマンドの入力データで、パスとして解釈されない
-HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2(?=\n|$)", re.DOTALL)
-# コマンド置換と組み合わさると、置換の中でホームを指しうる書き方
+# 環境変数を一覧で出すコマンド。引数なしで動かすと値まで出る
+ENV_DUMPERS = frozenset({"env", "printenv"})
+SHELL_DUMPERS = frozenset({"set", "export", "declare", "typeset"})
+# 引数や本文をコードとして実行するコマンド。文字列の中に書かれたパスを読みうる
+INTERPRETER = re.compile(
+    r"^(?:python[0-9.]*|node(?:js)?|deno|bun|tsx|ts-node|ruby|perl|php|lua|sh|bash|zsh|fish|osascript"
+    r"|awk|gawk|sed|sqlite3|eval|source|\.)$"
+)
+# パイプの前段から名前を受け取り、そのファイルを開きうるコマンド
+NAME_CONSUMERS = frozenset({"xargs", "parallel", "while", "until", "for", "read"})
+# パスを省くと作業ディレクトリを再帰的に走査するコマンド
+ALWAYS_RECURSIVE = frozenset({"rg", "ag", "ack"})
+# heredoc の開始。<<EOF、<<-EOF、<<'EOF'、<<"EOF"、<<\EOF の形を受ける（<<< は here-string なので除く）
+HEREDOC_OPENER = re.compile(r"<<(?!<)(-?)\s*\\?(['\"]?)([^\s'\"<>;&|()]+)\2")
+SUBSTITUTION_BODY = re.compile(r"\$\(([^()]*)\)|`([^`]*)`|<\(([^()]*)\)")
+SUBSTITUTION_MARK = re.compile(r"__SUBST(\d+)__")
+# コマンド置換を解析できなかったときに、ホームを指しうる書き方
 HOME_REFERENCES = re.compile(r"(?:^|[\s=@:])~(?:/|\s|$)|\bHOME\b")
 
 
-def expand_home_variable(text: str, home: str) -> str:
-    return HOME_VARIABLE.sub(lambda _: home, text)
+def resolve_home() -> str:
+    """HOME が空でも判定できるよう、アカウントのホームへ倒す。"""
+    return os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir
 
 
-def path_candidates(arg: str) -> list:
-    """引数から、パスとして読まれうる部分を取り出す（--opt=x、KEY=x、@x、-fx の x）。"""
-    candidates = [] if arg.startswith("-") else [arg]
-    if "=" in arg:
-        candidates.append(arg.split("=", 1)[1])
-    if arg.startswith("-") and not arg.startswith("--") and len(arg) > 2 and "=" not in arg:
-        candidates.append(arg[2:])
-    return [c[1:] if c.startswith("@") else c for c in candidates if c]
+def expand_variables(text: str, home: str) -> str:
+    """$HOME はフックが判定に使うホームへ、それ以外の変数はフックの環境の値へ展開する。"""
+    return os.path.expandvars(HOME_VARIABLE.sub(lambda _: home, text))
 
 
 def expand(path: str, home: str, cwd: str) -> str:
@@ -129,13 +143,73 @@ def check_path(path: str, home: str, cwd: str):
     return None
 
 
+# ---- Bash ----
+
+def is_secret_name(name: str) -> bool:
+    return bool(SECRET_NAME_PARTS.intersection(name.upper().split("_")))
+
+
+def secret_variable(text: str):
+    """名前が secret らしい変数の参照があれば、その名前を返す。"""
+    return next((m.group(1) for m in VARIABLE_REFERENCE.finditer(text) if is_secret_name(m.group(1))), None)
+
+
+def strip_heredoc_bodies(command: str):
+    """heredoc の本文と終端行を取り除く。開始行の残り（&& の後のコマンドなど）は残す。
+
+    戻り値は (本文を除いたコマンド, 本文の一覧)。終端が見つからない heredoc は、そのまま残す。
+    """
+    bodies, result, position = [], [], 0
+    for opener in HEREDOC_OPENER.finditer(command):
+        if opener.start() < position:
+            continue
+        line_end = command.find("\n", opener.end())
+        if line_end < 0:
+            continue
+        terminator = re.compile(r"^\t*" + re.escape(opener.group(3)) + r"[ \t]*$", re.MULTILINE)
+        end = terminator.search(command, line_end + 1)
+        if not end:
+            continue
+        result.append(command[position:opener.start()])
+        result.append(command[opener.end():line_end])
+        bodies.append(command[line_end + 1:end.start()])
+        position = end.end()
+    result.append(command[position:])
+    return "".join(result), bodies
+
+
+def extract_substitutions(command: str):
+    """内側から順に $(...)・`...`・<(...) を __SUBSTn__ へ置き換え、(置換後のコマンド, 本文の一覧) を返す。"""
+    bodies = []
+
+    def replace(match):
+        bodies.append(next(g for g in match.groups() if g is not None))
+        return f"__SUBST{len(bodies) - 1}__"
+
+    while True:
+        replaced = SUBSTITUTION_BODY.sub(replace, command)
+        if replaced == command:
+            return command, bodies
+        command = replaced
+
+
+def is_separator(token: str) -> bool:
+    return bool(token) and set(token) <= SEPARATOR_CHARS
+
+
+def is_pipe(separator: str) -> bool:
+    return separator.strip("\n") in ("|", "|&")
+
+
 def split_simple_commands(command: str) -> list:
-    """(直前の区切り, トークン) の並びに分ける。先頭の区切りは空文字列。"""
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    """(直前の区切り, トークン) の並びに分ける。改行も区切りとして扱い、# はコメントとして扱わない。"""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars="();<>|&\n")
+    lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
+    lexer.commenters = ""
     commands, current, separator = [], [], ""
     for token in lexer:
-        if token in SEPARATORS:
+        if is_separator(token):
             if current:
                 commands.append((separator, current))
             current, separator = [], token
@@ -147,10 +221,19 @@ def split_simple_commands(command: str) -> list:
 
 
 def strip_prefixes(tokens: list) -> list:
-    """先頭の VAR=value と、env・sudo などの包み込むコマンドを外す。"""
+    """先頭の VAR=value と、env・sudo・timeout などの包み込むコマンドを外す。"""
     index = 0
-    while index < len(tokens) and (ASSIGNMENT.match(tokens[index]) or os.path.basename(tokens[index]) in WRAPPERS):
-        index += 1
+    while index < len(tokens):
+        word = os.path.basename(tokens[index])
+        if ASSIGNMENT.match(tokens[index]):
+            index += 1
+        elif word in WRAPPERS:
+            index += 1
+            while index < len(tokens) and (tokens[index].startswith("-") or
+                                           (word == "timeout" and DURATION.match(tokens[index]))):
+                index += 1
+        else:
+            break
     return tokens[index:]
 
 
@@ -168,29 +251,40 @@ def split_redirects(tokens: list):
     return args, sources
 
 
+def path_candidates(arg: str) -> list:
+    """引数から、パスとして読まれうる部分を取り出す（--opt=x、KEY=x、@x、-fx の x）。"""
+    candidates = [] if arg.startswith("-") else [arg]
+    if "=" in arg:
+        candidates.append(arg.split("=", 1)[1])
+    if arg.startswith("-") and not arg.startswith("--") and len(arg) > 2 and "=" not in arg:
+        candidates.append(arg[2:])
+    return [c[1:] if c.startswith("@") else c for c in candidates if c]
+
+
 def judge_arg(arg: str, home: str, cwd, cwd_guarded: bool, interpreter: bool = False) -> str:
     """1つの引数を判定する。cwd が None なのは、解決できない cd の後。"""
-    arg = expand_home_variable(arg, home)
+    arg = expand_variables(arg, home)
     # ~user の形は展開先を確かめられないので止める
     if arg.startswith("~") and arg != "~" and not arg.startswith("~/"):
         return BLOCK
+    base = cwd or "/"
     if CODE_LIKE.search(arg):
+        # 空白を含むパスは、実在すればパスとして判定する。実在しなければコードや文として扱う
+        if os.path.lexists(expand(arg, home, base)):
+            return BLOCK if classify(arg, home, base) != ALLOW else ALLOW
         # コードとして実行されるときだけ、中に書かれたパスを読みうる。それ以外は文（コミットメッセージなど）
         return BLOCK if interpreter and looks_guarded(arg, home) else ALLOW
     if "$" in arg or "`" in arg:
         return BLOCK if looks_guarded(arg, home) else ALLOW
     if cwd is None and not (arg.startswith("/") or arg.startswith("~")):
         return BLOCK if cwd_guarded else ALLOW
-    base = cwd or "/"
     if GLOB_CHARS.search(arg):
         matches = glob.glob(expand(arg, home, base))
         if not matches:
             return BLOCK if looks_guarded(arg, home) or guarded_area(expand(arg, home, base), home) else ALLOW
         return BLOCK if any(classify(m, home, base) != ALLOW for m in matches) else ALLOW
     verdict = classify(arg, home, base)
-    if verdict == UNKNOWN:
-        return BLOCK
-    return verdict
+    return BLOCK if verdict == UNKNOWN else verdict
 
 
 def is_metadata_command(name: str, args: list) -> bool:
@@ -199,61 +293,159 @@ def is_metadata_command(name: str, args: list) -> bool:
     return name in METADATA_COMMANDS
 
 
-def check_bash(command: str, home: str, cwd: str):
-    """ブロックの理由を返す。許可なら None。同じコマンドの中の cd を追う。"""
-    # インタプリタは heredoc の本文をコードとして実行するので、本文に書かれたパスを読みうる
-    words = {os.path.basename(w) for w in re.split(r"[\s;&|()]+", HEREDOC.sub("", command)) if w}
-    if words & INTERPRETERS and any(looks_guarded(expand_home_variable(m.group(0), home), home)
-                                    for m in HEREDOC.finditer(command)):
-        return "インタプリタに渡す heredoc の中で、secret を含みうる場所を指しています"
-    command = HEREDOC.sub("<<heredoc", command)
-    # コマンド置換の中身は1つのコマンドとして追えないので、ホームを指しうる書き方があれば止める
-    if any(s in command for s in SUBSTITUTIONS) and (
-            looks_guarded(expand_home_variable(command, home), home) or HOME_REFERENCES.search(command)):
-        return "コマンド置換と、ホームを指す書き方が一緒に使われています"
-    cwd_guarded = False
-    # 中身を出さないコマンドが対象範囲を指したか。パイプの後段はその出力を読みうる
-    listed_guarded = False
-    for separator, tokens in split_simple_commands(command):
-        if separator in PIPES and listed_guarded:
+def searches_cwd_recursively(name: str, args: list) -> bool:
+    """パスを省いて、作業ディレクトリを再帰的に走査するか。"""
+    positional = [a for a in args if not a.startswith("-")]
+    if name in ALWAYS_RECURSIVE:
+        return len(positional) <= 1
+    if name == "git" and positional[:1] == ["grep"]:
+        return len(positional) <= 2
+    recursive = any(a in ("--recursive", "--dereference-recursive") or
+                    (a.startswith("-") and not a.startswith("--") and ("r" in a or "R" in a)) for a in args)
+    return name == "grep" and recursive and len(positional) <= 1
+
+
+def is_names_only_view(tokens: list) -> bool:
+    """env の出力から変数名だけを取り出す `cut -d= -f1` か。"""
+    stripped = strip_prefixes(tokens)
+    if not stripped or os.path.basename(stripped[0]) != "cut":
+        return False
+    joined = " ".join(stripped[1:])
+    return bool(re.search(r"-d\s*['\"]?=", joined)) and bool(re.search(r"-f\s*1(?![\d,-])", joined))
+
+
+def dumps_environment(tokens: list) -> bool:
+    """環境変数を値ごと一覧で出すか（引数なしの env・printenv・set、export -p など）。"""
+    if not tokens:
+        return False
+    name = os.path.basename(tokens[0])
+    rest = [t for t in tokens[1:] if not t.startswith("-") or t == "-p"]
+    if name == "env":
+        return not [t for t in tokens[1:] if not t.startswith("-") and not ASSIGNMENT.match(t)]
+    if name == "printenv":
+        return not rest or any(is_secret_name(t) for t in rest)
+    if name in SHELL_DUMPERS:
+        return not tokens[1:] or "-p" in tokens[1:]
+    return False
+
+
+class BashChecker:
+    """1つの Bash コマンドを、単純コマンドごとに判定する。同じコマンドの中の cd を追う。"""
+
+    def __init__(self, home: str, cwd: str):
+        self.home = home
+        self.cwd = cwd
+        self.cwd_guarded = False
+        self.listed_guarded = False
+
+    def check(self, command: str):
+        command, heredocs = strip_heredoc_bodies(command)
+        words = {os.path.basename(w) for w in re.split(r"[\s;&|()]+", command) if w}
+        if any(INTERPRETER.match(w) for w in words):
+            # インタプリタは heredoc の本文をコードとして実行するので、本文に書かれたパスを読みうる
+            if any(looks_guarded(expand_variables(b, self.home), self.home) for b in heredocs):
+                return "インタプリタに渡す heredoc の中で、secret を含みうる場所を指しています"
+            # 区切り語を解析できなかった heredoc は、ホームを指す書き方があれば止める
+            if re.search(r"<<(?!<)", command) and (looks_guarded(command, self.home) or HOME_REFERENCES.search(command)):
+                return "解析できない heredoc と、ホームを指す書き方が一緒に使われています"
+        command, substitutions = extract_substitutions(command)
+        if any(s in command for s in ("$(", "`", "<(")) and (
+                looks_guarded(expand_variables(command, self.home), self.home) or HOME_REFERENCES.search(command)):
+            return "解析できないコマンド置換と、ホームを指す書き方が一緒に使われています"
+        self.substitutions = substitutions
+        commands = split_simple_commands(command)
+        for index, (separator, tokens) in enumerate(commands):
+            following = commands[index + 1] if index + 1 < len(commands) else None
+            reason = self.check_simple(separator, tokens, following)
+            if reason:
+                return reason
+        return None
+
+    def check_substitutions(self, tokens: list):
+        """引数に埋め込まれたコマンド置換の中身を、今の作業ディレクトリで判定する。"""
+        for token in tokens:
+            for mark in SUBSTITUTION_MARK.finditer(token):
+                body = self.substitutions[int(mark.group(1))]
+                inner = BashChecker(self.home, self.cwd)
+                inner.substitutions = []
+                inner.cwd_guarded = self.cwd_guarded
+                reason = inner.check(body)
+                if reason or inner.listed_guarded:
+                    return f"コマンド置換の中で、secret を含みうる場所を指しています（{reason or '一覧'}）"
+        return None
+
+    def check_simple(self, separator: str, tokens: list, following):
+        if is_pipe(separator) and self.listed_guarded:
             consumer = strip_prefixes(tokens)
-            if not consumer or not is_metadata_command(os.path.basename(consumer[0]), consumer[1:]):
-                return "secret を含みうる場所の一覧を、パイプの後段で読もうとしています"
-        elif separator not in PIPES:
-            listed_guarded = False
+            name = os.path.basename(consumer[0]) if consumer else ""
+            if name in NAME_CONSUMERS or INTERPRETER.match(name):
+                return "secret を含みうる場所の一覧を、パイプの後段で開こうとしています"
+        elif not is_pipe(separator):
+            self.listed_guarded = False
+        variable = secret_variable(" ".join(tokens))
+        if variable:
+            return f"環境変数 {variable} の値を出力しうるコマンドです"
+        if dumps_environment(tokens) or dumps_environment(strip_prefixes(tokens)):
+            names_only = following and is_pipe(following[0]) and is_names_only_view(following[1])
+            if not names_only:
+                return "環境変数を値ごと一覧で出すコマンドです。名前だけ見るなら env | cut -d= -f1 を使って"
+        reason = self.check_substitutions(tokens)
+        if reason:
+            return reason
         tokens = strip_prefixes(tokens)
         if not tokens:
-            continue
+            return None
         name = os.path.basename(tokens[0])
         args, sources = split_redirects(tokens[1:])
         # 入力リダイレクトは、どのコマンドでも中身を読む経路になる
         for source in sources:
-            if judge_arg(source, home, cwd, cwd_guarded) == BLOCK:
+            if judge_arg(source, self.home, self.cwd, self.cwd_guarded) == BLOCK:
                 return f"{source} を入力リダイレクトで読もうとしています"
         if name == "cd":
-            target = expand_home_variable(next((a for a in args if not a.startswith("-")), "~"), home)
-            if "$" in target or "`" in target or GLOB_CHARS.search(target):
-                cwd, cwd_guarded = None, looks_guarded(target, home) or "HOME" in target
-            elif cwd is not None or target.startswith(("/", "~")):
-                cwd = os.path.realpath(expand(target, home, cwd or "/"))
-            continue
+            self.change_directory(args)
+            return None
         # まとめたショートオプション（-vf~/.x など）は、どこからがパスか分からないので文字列で判定する
-        if any(a.startswith("-") and not a.startswith("--") and looks_guarded(expand_home_variable(a, home), home)
-               for a in args):
+        if any(a.startswith("-") and not a.startswith("--") and
+               looks_guarded(expand_variables(a, self.home), self.home) for a in args):
             return f"{name} のオプションが、secret を含みうる場所を指しています"
         candidates = [c for arg in args for c in path_candidates(arg)]
         if is_metadata_command(name, args):
-            # 引数が無いときは、作業ディレクトリが暗黙の対象になる
-            implicit = cwd_guarded if cwd is None else guarded_area(cwd, home)
-            listed_guarded = listed_guarded or (not candidates and implicit) or any(
-                judge_arg(c, home, cwd, cwd_guarded) == BLOCK or guarded_area(expand(c, home, cwd or "/"), home)
-                for c in candidates)
-            continue
-        interpreter = name in INTERPRETERS
+            if name not in NON_LISTING_COMMANDS:
+                self.listed_guarded = self.listed_guarded or self.touches_guarded(candidates)
+            return None
+        if searches_cwd_recursively(name, args) and self.cwd_is_guarded():
+            return f"{name} が、パスを省いて作業ディレクトリ（secret を含みうる場所）を走査します"
+        interpreter = bool(INTERPRETER.match(name))
         for candidate in candidates:
-            if judge_arg(candidate, home, cwd, cwd_guarded, interpreter) == BLOCK:
+            if judge_arg(candidate, self.home, self.cwd, self.cwd_guarded, interpreter) == BLOCK:
                 return f"{name} が {candidate} を読もうとしています（secret を含みうる場所）"
-    return None
+        return None
+
+    def change_directory(self, args: list):
+        target = expand_variables(next((a for a in args if not a.startswith("-")), "~"), self.home)
+        if "$" in target or "`" in target or GLOB_CHARS.search(target) or "__SUBST" in target:
+            self.cwd, self.cwd_guarded = None, looks_guarded(target, self.home) or "HOME" in target
+        elif self.cwd is not None or target.startswith(("/", "~")):
+            self.cwd = os.path.realpath(expand(target, self.home, self.cwd or "/"))
+
+    def cwd_is_guarded(self) -> bool:
+        if self.cwd is None:
+            return self.cwd_guarded
+        return classify(self.cwd, self.home, "/") != ALLOW
+
+    def touches_guarded(self, candidates: list) -> bool:
+        """中身を出さないコマンドが、対象範囲を指したか。引数が無ければ作業ディレクトリが対象になる。"""
+        if not candidates:
+            return self.cwd_is_guarded() or (self.cwd is not None and guarded_area(self.cwd, self.home))
+        base = self.cwd or "/"
+        return any(judge_arg(c, self.home, self.cwd, self.cwd_guarded) == BLOCK or
+                   guarded_area(expand(expand_variables(c, self.home), self.home, base), self.home)
+                   for c in candidates)
+
+
+def check_bash(command: str, home: str, cwd: str):
+    """ブロックの理由を返す。許可なら None。"""
+    return BashChecker(home, cwd).check(command)
 
 
 def decide(data: dict, home: str):
@@ -274,14 +466,27 @@ def block(reason: str) -> int:
     return BLOCK_EXIT
 
 
+def suspicious_after_error(raw: str, data, home: str) -> bool:
+    """判定中に例外が出たとき、止めるべきか。対象範囲のパス・ホームの参照・対象範囲の作業ディレクトリを見る。"""
+    if looks_guarded(raw, home) or HOME_REFERENCES.search(raw):
+        return True
+    cwd = data.get("cwd") if isinstance(data, dict) else None
+    if not isinstance(cwd, str) or not cwd:
+        return False
+    real = os.path.realpath(cwd)
+    return real == os.path.realpath(home) or guarded_area(real, home)
+
+
 def main() -> int:
     raw = sys.stdin.read()
-    home = os.environ.get("HOME", "")
+    home = resolve_home()
+    data = None
     try:
-        reason = decide(json.loads(raw), home)
+        data = json.loads(raw)
+        reason = decide(data, home)
     except Exception as error:
-        if looks_guarded(raw, home):
-            return block(f"入力を判定できませんでした（{type(error).__name__}）。対象範囲のパスを含むので止めます")
+        if suspicious_after_error(raw, data, home):
+            return block(f"入力を判定できませんでした（{type(error).__name__}）。対象範囲を指しうるので止めます")
         return 0
     return block(reason) if reason else 0
 
