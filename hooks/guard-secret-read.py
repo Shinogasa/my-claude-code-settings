@@ -64,12 +64,15 @@ INTERPRETER = re.compile(
     r"^(?:python[0-9.]*|node(?:js)?|deno|bun|tsx|ts-node|ruby|perl|php|lua|sh|bash|zsh|fish|osascript"
     r"|awk|gawk|sed|sqlite3|eval|source|\.)$"
 )
-# パイプの前段から名前を受け取り、そのファイルを開きうるコマンド
-NAME_CONSUMERS = frozenset({"xargs", "parallel", "while", "until", "for", "read"})
+# パイプの前段から名前の一覧を受け取っても、名前を文字列として扱うだけのコマンド。これ以外の後段は止める
+SAFE_CONSUMERS = frozenset({
+    "grep", "egrep", "fgrep", "head", "tail", "sort", "uniq", "wc", "cut", "tr", "column", "nl", "cat", "less", "more",
+    "tee", "rev", "fold", "fmt", "comm",
+})
 # パスを省くと作業ディレクトリを再帰的に走査するコマンド
 ALWAYS_RECURSIVE = frozenset({"rg", "ag", "ack"})
 # heredoc の開始。<<EOF、<<-EOF、<<'EOF'、<<"EOF"、<<\EOF の形を受ける（<<< は here-string なので除く）
-HEREDOC_OPENER = re.compile(r"<<(?!<)(-?)\s*\\?(['\"]?)([^\s'\"<>;&|()]+)\2")
+HEREDOC_OPENER = re.compile(r"<<(?!<)(-?)\s*(\\?)(['\"]?)([^\s'\"<>;&|()]+)\3")
 SUBSTITUTION_BODY = re.compile(r"\$\(([^()]*)\)|`([^`]*)`|<\(([^()]*)\)")
 SUBSTITUTION_MARK = re.compile(r"__SUBST(\d+)__")
 # コマンド置換を解析できなかったときに、ホームを指しうる書き方
@@ -81,8 +84,10 @@ def resolve_home() -> str:
     return os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir
 
 
-def expand_variables(text: str, home: str) -> str:
-    """$HOME はフックが判定に使うホームへ、それ以外の変数はフックの環境の値へ展開する。"""
+def expand_variables(text: str, home: str, variables=None) -> str:
+    """同じコマンドの中で代入した変数、$HOME（判定に使うホーム）、フックの環境の値の順に展開する。"""
+    for name, value in (variables or {}).items():
+        text = re.sub(r"\$\{" + name + r"\}|\$" + name + r"(?![A-Za-z0-9_])", lambda _: value, text)
     return os.path.expandvars(HOME_VARIABLE.sub(lambda _: home, text))
 
 
@@ -157,7 +162,7 @@ def secret_variable(text: str):
 def strip_heredoc_bodies(command: str):
     """heredoc の本文と終端行を取り除く。開始行の残り（&& の後のコマンドなど）は残す。
 
-    戻り値は (本文を除いたコマンド, 本文の一覧)。終端が見つからない heredoc は、そのまま残す。
+    戻り値は (本文を除いたコマンド, (本文, 区切り語を引用したか) の一覧)。終端が見つからない heredoc は、そのまま残す。
     """
     bodies, result, position = [], [], 0
     for opener in HEREDOC_OPENER.finditer(command):
@@ -166,21 +171,25 @@ def strip_heredoc_bodies(command: str):
         line_end = command.find("\n", opener.end())
         if line_end < 0:
             continue
-        terminator = re.compile(r"^\t*" + re.escape(opener.group(3)) + r"[ \t]*$", re.MULTILINE)
+        terminator = re.compile(r"^\t*" + re.escape(opener.group(4)) + r"[ \t]*$", re.MULTILINE)
         end = terminator.search(command, line_end + 1)
         if not end:
             continue
         result.append(command[position:opener.start()])
         result.append(command[opener.end():line_end])
-        bodies.append(command[line_end + 1:end.start()])
+        quoted = bool(opener.group(2) or opener.group(3))
+        bodies.append((command[line_end + 1:end.start()], quoted))
         position = end.end()
     result.append(command[position:])
     return "".join(result), bodies
 
 
-def extract_substitutions(command: str):
-    """内側から順に $(...)・`...`・<(...) を __SUBSTn__ へ置き換え、(置換後のコマンド, 本文の一覧) を返す。"""
-    bodies = []
+def extract_substitutions(command: str, known: list):
+    """内側から順に $(...)・`...`・<(...) を __SUBSTn__ へ置き換える。
+
+    番号は known（外側で取り出し済みの本文）に続けて振る。戻り値は (置換後のコマンド, known に足した本文の一覧)。
+    """
+    bodies = list(known)
 
     def replace(match):
         bodies.append(next(g for g in match.groups() if g is not None))
@@ -261,9 +270,9 @@ def path_candidates(arg: str) -> list:
     return [c[1:] if c.startswith("@") else c for c in candidates if c]
 
 
-def judge_arg(arg: str, home: str, cwd, cwd_guarded: bool, interpreter: bool = False) -> str:
+def judge_arg(arg: str, home: str, cwd, cwd_guarded: bool, interpreter: bool = False, variables=None) -> str:
     """1つの引数を判定する。cwd が None なのは、解決できない cd の後。"""
-    arg = expand_variables(arg, home)
+    arg = expand_variables(arg, home, variables)
     # ~user の形は展開先を確かめられないので止める
     if arg.startswith("~") and arg != "~" and not arg.startswith("~/"):
         return BLOCK
@@ -310,8 +319,9 @@ def is_names_only_view(tokens: list) -> bool:
     stripped = strip_prefixes(tokens)
     if not stripped or os.path.basename(stripped[0]) != "cut":
         return False
+    # -d= と -f1 だけを許す（-d = や -f 1 と分けた書き方も受ける）。それ以外の引数があれば値が出うる
     joined = " ".join(stripped[1:])
-    return bool(re.search(r"-d\s*['\"]?=", joined)) and bool(re.search(r"-f\s*1(?![\d,-])", joined))
+    return joined in ("-d= -f1", "-f1 -d=", "-d = -f 1", "-f 1 -d =", "-d= -f 1", "-f 1 -d=", "-d = -f1", "-f1 -d =")
 
 
 def dumps_environment(tokens: list) -> bool:
@@ -319,40 +329,55 @@ def dumps_environment(tokens: list) -> bool:
     if not tokens:
         return False
     name = os.path.basename(tokens[0])
-    rest = [t for t in tokens[1:] if not t.startswith("-") or t == "-p"]
+    args, _ = split_redirects(tokens[1:])
+    names = [t for t in args if not t.startswith("-")]
     if name == "env":
-        return not [t for t in tokens[1:] if not t.startswith("-") and not ASSIGNMENT.match(t)]
+        return not [t for t in names if not ASSIGNMENT.match(t)]
     if name == "printenv":
-        return not rest or any(is_secret_name(t) for t in rest)
+        return not names or any(is_secret_name(t) for t in names)
+    if name == "set":
+        return not args
     if name in SHELL_DUMPERS:
-        return not tokens[1:] or "-p" in tokens[1:]
+        return not names
     return False
 
 
 class BashChecker:
     """1つの Bash コマンドを、単純コマンドごとに判定する。同じコマンドの中の cd を追う。"""
 
-    def __init__(self, home: str, cwd: str):
+    def __init__(self, home: str, cwd: str, substitutions=None, variables=None):
         self.home = home
         self.cwd = cwd
         self.cwd_guarded = False
         self.listed_guarded = False
+        self.substitutions = list(substitutions or [])
+        self.variables = dict(variables or {})
 
     def check(self, command: str):
         command, heredocs = strip_heredoc_bodies(command)
+        # 区切り語を引用しない heredoc の本文は展開されるので、変数の参照と置換を判定する
+        for body, quoted in heredocs:
+            if quoted:
+                continue
+            variable = secret_variable(body)
+            if variable:
+                return f"heredoc の中で、環境変数 {variable} の値を展開します"
+            for match in SUBSTITUTION_BODY.finditer(body):
+                inner = BashChecker(self.home, self.cwd, self.substitutions, self.variables)
+                if inner.check(next(g for g in match.groups() if g is not None)) or inner.listed_guarded:
+                    return "heredoc の中のコマンド置換で、secret を含みうる場所を指しています"
         words = {os.path.basename(w) for w in re.split(r"[\s;&|()]+", command) if w}
         if any(INTERPRETER.match(w) for w in words):
             # インタプリタは heredoc の本文をコードとして実行するので、本文に書かれたパスを読みうる
-            if any(looks_guarded(expand_variables(b, self.home), self.home) for b in heredocs):
+            if any(looks_guarded(expand_variables(b, self.home), self.home) for b, _ in heredocs):
                 return "インタプリタに渡す heredoc の中で、secret を含みうる場所を指しています"
             # 区切り語を解析できなかった heredoc は、ホームを指す書き方があれば止める
             if re.search(r"<<(?!<)", command) and (looks_guarded(command, self.home) or HOME_REFERENCES.search(command)):
                 return "解析できない heredoc と、ホームを指す書き方が一緒に使われています"
-        command, substitutions = extract_substitutions(command)
+        command, self.substitutions = extract_substitutions(command, self.substitutions)
         if any(s in command for s in ("$(", "`", "<(")) and (
                 looks_guarded(expand_variables(command, self.home), self.home) or HOME_REFERENCES.search(command)):
             return "解析できないコマンド置換と、ホームを指す書き方が一緒に使われています"
-        self.substitutions = substitutions
         commands = split_simple_commands(command)
         for index, (separator, tokens) in enumerate(commands):
             following = commands[index + 1] if index + 1 < len(commands) else None
@@ -366,8 +391,7 @@ class BashChecker:
         for token in tokens:
             for mark in SUBSTITUTION_MARK.finditer(token):
                 body = self.substitutions[int(mark.group(1))]
-                inner = BashChecker(self.home, self.cwd)
-                inner.substitutions = []
+                inner = BashChecker(self.home, self.cwd, self.substitutions, self.variables)
                 inner.cwd_guarded = self.cwd_guarded
                 reason = inner.check(body)
                 if reason or inner.listed_guarded:
@@ -378,8 +402,8 @@ class BashChecker:
         if is_pipe(separator) and self.listed_guarded:
             consumer = strip_prefixes(tokens)
             name = os.path.basename(consumer[0]) if consumer else ""
-            if name in NAME_CONSUMERS or INTERPRETER.match(name):
-                return "secret を含みうる場所の一覧を、パイプの後段で開こうとしています"
+            if name not in SAFE_CONSUMERS:
+                return "secret を含みうる場所の一覧を、パイプの後段で開きうるコマンドへ渡しています"
         elif not is_pipe(separator):
             self.listed_guarded = False
         variable = secret_variable(" ".join(tokens))
@@ -392,6 +416,11 @@ class BashChecker:
         reason = self.check_substitutions(tokens)
         if reason:
             return reason
+        for token in tokens:
+            if not ASSIGNMENT.match(token):
+                break
+            name, value = token.split("=", 1)
+            self.variables[name] = expand(value, self.home, "") if value.startswith("~") else value
         tokens = strip_prefixes(tokens)
         if not tokens:
             return None
@@ -399,14 +428,14 @@ class BashChecker:
         args, sources = split_redirects(tokens[1:])
         # 入力リダイレクトは、どのコマンドでも中身を読む経路になる
         for source in sources:
-            if judge_arg(source, self.home, self.cwd, self.cwd_guarded) == BLOCK:
+            if judge_arg(source, self.home, self.cwd, self.cwd_guarded, variables=self.variables) == BLOCK:
                 return f"{source} を入力リダイレクトで読もうとしています"
         if name == "cd":
             self.change_directory(args)
             return None
         # まとめたショートオプション（-vf~/.x など）は、どこからがパスか分からないので文字列で判定する
         if any(a.startswith("-") and not a.startswith("--") and
-               looks_guarded(expand_variables(a, self.home), self.home) for a in args):
+               looks_guarded(expand_variables(a, self.home, self.variables), self.home) for a in args):
             return f"{name} のオプションが、secret を含みうる場所を指しています"
         candidates = [c for arg in args for c in path_candidates(arg)]
         if is_metadata_command(name, args):
@@ -417,12 +446,12 @@ class BashChecker:
             return f"{name} が、パスを省いて作業ディレクトリ（secret を含みうる場所）を走査します"
         interpreter = bool(INTERPRETER.match(name))
         for candidate in candidates:
-            if judge_arg(candidate, self.home, self.cwd, self.cwd_guarded, interpreter) == BLOCK:
+            if judge_arg(candidate, self.home, self.cwd, self.cwd_guarded, interpreter, variables=self.variables) == BLOCK:
                 return f"{name} が {candidate} を読もうとしています（secret を含みうる場所）"
         return None
 
     def change_directory(self, args: list):
-        target = expand_variables(next((a for a in args if not a.startswith("-")), "~"), self.home)
+        target = expand_variables(next((a for a in args if not a.startswith("-")), "~"), self.home, self.variables)
         if "$" in target or "`" in target or GLOB_CHARS.search(target) or "__SUBST" in target:
             self.cwd, self.cwd_guarded = None, looks_guarded(target, self.home) or "HOME" in target
         elif self.cwd is not None or target.startswith(("/", "~")):
@@ -438,8 +467,8 @@ class BashChecker:
         if not candidates:
             return self.cwd_is_guarded() or (self.cwd is not None and guarded_area(self.cwd, self.home))
         base = self.cwd or "/"
-        return any(judge_arg(c, self.home, self.cwd, self.cwd_guarded) == BLOCK or
-                   guarded_area(expand(expand_variables(c, self.home), self.home, base), self.home)
+        return any(judge_arg(c, self.home, self.cwd, self.cwd_guarded, variables=self.variables) == BLOCK or
+                   guarded_area(expand(expand_variables(c, self.home, self.variables), self.home, base), self.home)
                    for c in candidates)
 
 
