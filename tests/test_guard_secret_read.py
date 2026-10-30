@@ -224,6 +224,11 @@ class BashTests(GuardSecretReadBase):
         command = "git commit -m \"$(cat <<'EOF'\n~/.zshrc.local を足す\nEOF\n)\""
         self.assert_exit(self.bash(command), ALLOW)
 
+    def test_interpreter_heredoc_with_path_blocked(self):
+        # heredoc の本文をコードとして実行するので、中に書かれたパスを読みうる
+        command = "python3 - <<'PY'\nprint(open('" + str(self.token) + "').read())\nPY"
+        self.assert_exit(self.bash(command), BLOCK)
+
     def test_inline_script_with_path_blocked(self):
         # スクリプトの中にパスがそのまま書かれていれば止める。組み立てたパスは受け入れた抜け道
         self.assert_exit(self.bash("python3 -c \"print(open('" + str(self.token) + "').read())\""), BLOCK)
