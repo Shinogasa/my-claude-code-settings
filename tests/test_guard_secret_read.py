@@ -396,6 +396,12 @@ class FinalReviewTests(GuardSecretReadBase):
     def test_comment_mentioning_path_allowed(self):
         self.assert_exit(self.bash("# ~/.zshrc.local の件\ngit status"), ALLOW)
 
+    def test_hash_after_arithmetic_is_not_comment(self):
+        self.assert_exit(self.bash(f"cd {self.home} && echo $((1))#x; cat .zshrc.local"), BLOCK)
+
+    def test_hash_inside_parameter_expansion_keeps_rest(self):
+        self.assert_exit(self.bash(f"echo ${{x# }}; cat {self.zshrc}"), BLOCK)
+
     # --- 止めすぎていたもの ---
     def test_listing_piped_to_grep_allowed(self):
         self.assert_exit(self.bash("ls -la ~/.config | grep starship"), ALLOW)
