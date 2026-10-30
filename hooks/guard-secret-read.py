@@ -46,9 +46,10 @@ GLOB_CHARS = re.compile(r"[*?\[]")
 # パスではなくコードや文として書かれた引数（python3 -c "..." など）
 CODE_LIKE = re.compile(r"[\s()'\";]")
 HOME_VARIABLE = re.compile(r"\$\{HOME\}|\$HOME(?![A-Za-z0-9_])")
-# 前段の出力を引数にして別のコマンドを動かすもの。前段が対象範囲を指していれば読み取りになる
-ARGUMENT_FEEDERS = frozenset({"xargs", "parallel"})
 SUBSTITUTIONS = ("$(", "`", "<(")
+PIPES = frozenset({"|", "|&"})
+# コマンド置換と組み合わさると、置換の中でホームを指しうる書き方
+HOME_REFERENCES = re.compile(r"(?:^|[\s=@:])~(?:/|\s|$)|\bHOME\b")
 
 
 def expand_home_variable(text: str, home: str) -> str:
@@ -123,18 +124,19 @@ def check_path(path: str, home: str, cwd: str):
 
 
 def split_simple_commands(command: str) -> list:
+    """(直前の区切り, トークン) の並びに分ける。先頭の区切りは空文字列。"""
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
-    commands, current = [], []
+    commands, current, separator = [], [], ""
     for token in lexer:
         if token in SEPARATORS:
             if current:
-                commands.append(current)
-            current = []
+                commands.append((separator, current))
+            current, separator = [], token
         else:
             current.append(token)
     if current:
-        commands.append(current)
+        commands.append((separator, current))
     return commands
 
 
@@ -190,12 +192,20 @@ def is_metadata_command(name: str, args: list) -> bool:
 
 def check_bash(command: str, home: str, cwd: str):
     """ブロックの理由を返す。許可なら None。同じコマンドの中の cd を追う。"""
-    if any(s in command for s in SUBSTITUTIONS) and looks_guarded(expand_home_variable(command, home), home):
-        return "コマンド置換の中で、secret を含みうる場所を指しています"
+    # コマンド置換の中身は1つのコマンドとして追えないので、ホームを指しうる書き方があれば止める
+    if any(s in command for s in SUBSTITUTIONS) and (
+            looks_guarded(expand_home_variable(command, home), home) or HOME_REFERENCES.search(command)):
+        return "コマンド置換と、ホームを指す書き方が一緒に使われています"
     cwd_guarded = False
-    # 中身を出さないコマンドが対象範囲を指したか。後の xargs などがその出力を読みうる
+    # 中身を出さないコマンドが対象範囲を指したか。パイプの後段はその出力を読みうる
     listed_guarded = False
-    for tokens in split_simple_commands(command):
+    for separator, tokens in split_simple_commands(command):
+        if separator in PIPES and listed_guarded:
+            consumer = strip_prefixes(tokens)
+            if not consumer or not is_metadata_command(os.path.basename(consumer[0]), consumer[1:]):
+                return "secret を含みうる場所の一覧を、パイプの後段で読もうとしています"
+        elif separator not in PIPES:
+            listed_guarded = False
         tokens = strip_prefixes(tokens)
         if not tokens:
             continue
@@ -212,11 +222,15 @@ def check_bash(command: str, home: str, cwd: str):
             elif cwd is not None or target.startswith(("/", "~")):
                 cwd = os.path.realpath(expand(target, home, cwd or "/"))
             continue
-        if name in ARGUMENT_FEEDERS and listed_guarded:
-            return f"{name} が、前段で指した secret を含みうる場所のファイルを読みうります"
+        # まとめたショートオプション（-vf~/.x など）は、どこからがパスか分からないので文字列で判定する
+        if any(a.startswith("-") and not a.startswith("--") and looks_guarded(expand_home_variable(a, home), home)
+               for a in args):
+            return f"{name} のオプションが、secret を含みうる場所を指しています"
         candidates = [c for arg in args for c in path_candidates(arg)]
         if is_metadata_command(name, args):
-            listed_guarded = listed_guarded or any(
+            # 引数が無いときは、作業ディレクトリが暗黙の対象になる
+            implicit = cwd_guarded if cwd is None else guarded_area(cwd, home)
+            listed_guarded = listed_guarded or (not candidates and implicit) or any(
                 judge_arg(c, home, cwd, cwd_guarded) == BLOCK or guarded_area(expand(c, home, cwd or "/"), home)
                 for c in candidates)
             continue
