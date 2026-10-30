@@ -664,6 +664,15 @@ Codex のランタイムテストが1件落ちた。`~/.claude/settings.json` �
 **決めること**: Orca を使い続けるか。使うなら、Orca のフックをテンプレートに取り込むか、
 Orca がsymlink先（リポジトリ）へ書き込まないようにする方法があるか（Orca がいつ再び差し込むかは未確認）。
 
+### P2: secret 読み取りガードの止めすぎ（2026-10-30の security-reviewer、実機で再現）
+
+- **小文字の変数で止まる**: 名前の判定を大文字にしてから部分で比べるので、`for key in a b; do echo "$key"; done` や、jq の中の `'$KEY'` が止まる。
+  逆に `$DATABASE_URL`・`$SENTRY_DSN`・`$SLACK_WEBHOOK` は通る（取りこぼし）
+- **HOME を差し替えた隔離実行が止まる**: `HOME=$(mktemp -d) bash setup.sh --dry-run` が止まる。このリポジトリで普段使う形
+
+**決めること**: 変数名の判定を、大文字に限るか、実際に export されていて値がある変数に限るか。
+HOME の差し替えは、代入先が一時ディレクトリなら通すか、差し替え後のホームで判定するか。
+
 ### P3: secret 読み取りガード（ADR 0043）の残り
 
 2026-10-30に、Claude Code の Read・Grep・Bash を対象にして入れた。次の点は残っている。
@@ -684,6 +693,13 @@ Orca がsymlink先（リポジトリ）へ書き込まないようにする方�
 - **前置きの代入をインタプリタが読む経路**: `F=<パス> python3 -c "open(os.environ['F'])"` のように、前置きの代入で渡したパスは判定しない（自動レビュー5回目）
 - **HOME への書き込みの残りの形**: `HOME[0]=`、`-vHOME`（つなげた形）、`declare -n` で HOME を指す形（自動レビュー6回目）
 - **chmod のモードの解釈**: `chmod --reference=x` など、モード以外の指定を権限を絞る変更と取り違えうる（自動レビュー6回目）
+- **リポジトリ配下の deny に無い名前**: `.env.staging`・`.env.test`・`terraform.tfvars`・`*.pem`・`credentials.json` は通る。
+  `grep -rn password .`、`find . -name '.env*' -exec cat {} \;` のように名指ししない読み方も通る（2026-10-30の security-reviewer、Medium）
+- **644 の secret 入りファイル**: `~/.zshrc`・`~/.zshenv`・`~/.profile`・`~/.kube/config`・`~/.config/gcloud/**` などは、deny に無く権限も 644 なので通る（同 Medium）
+- **ファイルを読まずに secret を出すコマンド**: `git config --list`、`git remote -v`（URL にトークン）、`gh auth token`、`terraform output`、
+  `kubectl get secret -o yaml`、`security find-generic-password -w`、`python3 -c 'print(os.environ)'` などは検査していない（同 Medium）
+- **fail-open の残り**: `resolve_home()` が try の外にある。python3 が無い・10秒のタイムアウトは非ブロック（同 Low）
+- **例外にした場所**: `~/.claude/shell-snapshots`・`session-env`・`file-history` の中身と権限は未確認（同 Low）
 - **疑わしいコメントの判定**: 行の残りに目印（`}` など）があるかで決めている。`${...}` と `$((...))` の入れ子の深さを追って、深さ0の語の頭だけをコメントとして扱う形にするか（自動レビュー11回目の High。2026-10-30から、指摘は High も含めて backlog に積むと利用者が決めた）
 - **自動セキュリティレビューが毎回新しい指摘を出す件**: 原因は、レビューがコミットごとの差分を対象にすること、bash の文法を文字列解析で真似る方式に終わりが無いこと、レビュワーが脅威モデル（事故だけ）を知らないことだと見ている。
   effort は主因ではない（レビュワーはプラグイン側の Opus で動き、セッションの effort は関係しない）。
