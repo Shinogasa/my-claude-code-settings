@@ -306,6 +306,31 @@ class FinalReviewTests(GuardSecretReadBase):
     def test_substitution_listing_home_blocked(self):
         self.assert_exit(self.bash("cd ~ && cat $(ls .zshrc.local)"), BLOCK)
 
+    def test_nested_substitution_blocked(self):
+        self.assert_exit(self.bash(f"cd {self.home} && cat $(echo $(ls .zshrc.local))"), BLOCK)
+
+    def test_env_dump_to_file_blocked(self):
+        self.assert_exit(self.bash("env > /tmp/env.txt"), BLOCK)
+
+    def test_declare_exported_blocked(self):
+        self.assert_exit(self.bash("declare -x"), BLOCK)
+
+    def test_cut_complement_blocked(self):
+        self.assert_exit(self.bash("env | cut -d= -f1 --complement"), BLOCK)
+
+    def test_unquoted_heredoc_secret_variable_blocked(self):
+        self.assert_exit(self.bash("cat <<EOF\n$ANTHROPIC_AUTH_TOKEN\nEOF"), BLOCK)
+
+    def test_quoted_heredoc_secret_variable_allowed(self):
+        # 引用符で囲んだ区切り語の heredoc は展開されないので、変数名は文字列のまま
+        self.assert_exit(self.bash("cat <<'EOF'\n$ANTHROPIC_AUTH_TOKEN\nEOF"), ALLOW)
+
+    def test_listing_piped_to_unknown_consumer_blocked(self):
+        self.assert_exit(self.bash("ls ~/.config/app | some-tool"), BLOCK)
+
+    def test_assigned_variable_path_blocked(self):
+        self.assert_exit(self.bash("X=~/.config/app; cat $X/token"), BLOCK)
+
     # --- 止めすぎていたもの ---
     def test_listing_piped_to_grep_allowed(self):
         self.assert_exit(self.bash("ls -la ~/.config | grep starship"), ALLOW)
