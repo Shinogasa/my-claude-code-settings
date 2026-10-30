@@ -397,6 +397,13 @@ class FinalReviewTests(GuardSecretReadBase):
         # 中身を読まない操作。実機で ~/.config に作業用のディレクトリを作ろうとして止まった
         self.assert_exit(self.bash("mkdir -p ~/.config/newdir && touch ~/.config/newdir/a && chmod 600 ~/.config/newdir/a"), ALLOW)
 
+    def test_escaped_backticks_in_pr_body_allowed(self):
+        # PR 本文のコードスパン。エスケープしたバッククォートはコマンド置換ではない（実機で止まった）
+        self.assert_exit(self.bash("gh pr create --body \"see \\`~/.zshrc.local\\` here\""), ALLOW)
+
+    def test_backticks_in_single_quotes_allowed(self):
+        self.assert_exit(self.bash("git commit -m 'see `~/.zshrc.local` and $(x)'"), ALLOW)
+
     def test_export_path_allowed(self):
         self.assert_exit(self.bash("export PATH=\"$HOME/.local/bin:$PATH\""), ALLOW)
 
