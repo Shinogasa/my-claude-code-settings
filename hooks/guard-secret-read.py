@@ -75,7 +75,17 @@ VARIABLE_REFERENCE = re.compile(r"\$\{?([A-Za-z_]\w*)")
 # 名前にこれらの部分を含む環境変数は、値が secret でありうる
 SECRET_NAME_PARTS = frozenset({
     "TOKEN", "KEY", "SECRET", "PASSWORD", "PASSWD", "PASS", "CREDENTIAL", "CREDENTIALS", "AUTH", "PAT", "APIKEY",
+    "DSN", "WEBHOOK",
 })
+# URL・URI と一緒にあれば、資格情報を含む接続文字列とみなす部分（DATABASE_URL、REDIS_URL など）
+CONNECTION_NAME_PARTS = frozenset({
+    "DATABASE", "DB", "REDIS", "MONGO", "MONGODB", "POSTGRES", "POSTGRESQL", "MYSQL", "AMQP", "RABBITMQ", "BROKER",
+})
+# 環境変数の secret は大文字スネークで書く。小文字はシェルの一時変数（for key in ... など）
+SECRET_NAME_SHAPE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+# HOME の差し替え先として通す、作ったばかりの一時ディレクトリ（$(mktemp -d) など）
+MKTEMP_BODY = re.compile(r"^\s*mktemp(?:\s+[\w./%-]+)*\s*$")
+TEMP_ROOTS = ("/tmp", "/private/tmp")
 # 環境変数を一覧で出すコマンド。引数なしで動かすと値まで出る
 ENV_DUMPERS = frozenset({"env", "printenv"})
 SHELL_DUMPERS = frozenset({"set", "export", "declare", "typeset"})
@@ -221,7 +231,34 @@ def check_path(path: str, home: str, cwd: str):
 # ---- Bash ----
 
 def is_secret_name(name: str) -> bool:
-    return bool(SECRET_NAME_PARTS.intersection(name.upper().split("_")))
+    if not SECRET_NAME_SHAPE.match(name):
+        return False
+    parts = set(name.split("_"))
+    if SECRET_NAME_PARTS & parts:
+        return True
+    return bool(parts & {"URL", "URI"}) and bool(CONNECTION_NAME_PARTS & parts)
+
+
+def expandable_text(command: str) -> str:
+    """bash が変数を展開する部分だけを残す。単一引用符の中と、エスケープした文字を除く。"""
+    out, index, in_double = [], 0, False
+    while index < len(command):
+        char = command[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == "'" and not in_double:
+            close = command.find("'", index + 1)
+            if close < 0:
+                out.append(command[index:])
+                break
+            index = close + 1
+            continue
+        if char == '"':
+            in_double = not in_double
+        out.append(char)
+        index += 1
+    return "".join(out)
 
 
 def secret_variable(text: str):
@@ -520,10 +557,29 @@ def dumps_environment(tokens: list) -> bool:
     return False
 
 
-def writes_home(tokens: list) -> bool:
-    """HOME へ書き込む形か（HOME=、HOME+=、unset HOME、declare HOME=、printf -v HOME、read HOME など）。"""
-    if any(re.match(r"^HOME\+?=", t) for t in tokens):
-        return True
+def is_new_temp_dir(value: str, substitutions: list, home: str) -> bool:
+    """HOME の差し替え先が、$(mktemp ...) か、/tmp・$TMPDIR の配下（そのものは除く）か。"""
+    mark = SUBSTITUTION_MARK.fullmatch(value)
+    if mark:
+        return bool(MKTEMP_BODY.match(substitutions[int(mark.group(1))]))
+    if "__SUBST" in value:
+        return False
+    path = os.path.normpath(expand_variables(value, home))
+    tmpdir = os.environ.get("TMPDIR", "").rstrip(os.sep)
+    roots = TEMP_ROOTS + ((tmpdir, os.path.realpath(tmpdir)) if tmpdir else ())
+    return any(path.startswith(root + os.sep) for root in roots)
+
+
+def writes_home(tokens: list, substitutions=(), home: str = "") -> bool:
+    """HOME へ書き込む形か（HOME=、HOME+=、unset HOME、declare HOME=、printf -v HOME、read HOME など）。
+
+    HOME=<作ったばかりの一時ディレクトリ> は通す。判定は元のホームで続けるので、~ は厳しめに判定される。
+    """
+    for token in tokens:
+        if token.startswith("HOME+="):
+            return True
+        if token.startswith("HOME=") and not is_new_temp_dir(token[len("HOME="):], list(substitutions), home):
+            return True
     stripped = strip_prefixes(tokens)
     if stripped and os.path.basename(stripped[0]) in HOME_WRITERS and "HOME" in stripped[1:]:
         return True
@@ -575,10 +631,15 @@ class BashChecker:
             # 区切り語を解析できなかった heredoc は、ホームを指す書き方があれば止める
             if re.search(r"<<(?!<)", command) and (looks_guarded(command, self.home) or HOME_REFERENCES.search(command)):
                 return "解析できない heredoc と、ホームを指す書き方が一緒に使われています"
+        runs_code = any(INTERPRETER.match(w) for w in words)
         command, self.substitutions, unclosed = extract_substitutions(command, self.substitutions)
         if unclosed and (
                 looks_guarded(expand_variables(command, self.home), self.home) or HOME_REFERENCES.search(command)):
             return "解析できないコマンド置換と、ホームを指す書き方が一緒に使われています"
+        # インタプリタは単一引用符の中もコードとして実行しうるので、そのときは引用符の中も見る
+        variable = secret_variable(command if runs_code else expandable_text(command))
+        if variable:
+            return f"環境変数 {variable} の値を出力しうるコマンドです"
         commands = split_simple_commands(command)
         for index, (separator, tokens) in enumerate(commands):
             following = commands[index + 1] if index + 1 < len(commands) else None
@@ -607,9 +668,6 @@ class BashChecker:
                 return "secret を含みうる場所の一覧を、パイプの後段で開きうるコマンドへ渡しています"
         elif not is_pipe(separator):
             self.listed_guarded = False
-        variable = secret_variable(" ".join(tokens))
-        if variable:
-            return f"環境変数 {variable} の値を出力しうるコマンドです"
         if dumps_environment(tokens) or dumps_environment(strip_prefixes(tokens)):
             names_only = following and is_pipe(following[0]) and is_names_only_view(following[1])
             if not names_only:
@@ -618,7 +676,7 @@ class BashChecker:
         if reason:
             return reason
         # HOME へ書き込むと、~ や $HOME の展開先が判定の基準とずれるので、どの形でも止める
-        if writes_home(tokens):
+        if writes_home(tokens, self.substitutions, self.home):
             return "HOME へ書き込んでいます。判定の基準のホームとずれるので止めます"
         # 代入だけの単純コマンドは、以降のコマンドの変数として覚える。HOME は判定の基準なので上書きさせない。
         # VAR=x cmd のような前置きの代入は、bash が引数を先に展開するので、その引数の判定には使わない
