@@ -115,5 +115,62 @@ class ReadAndGrepTests(GuardSecretReadBase):
         self.assert_exit(self.run_hook("Edit", {"file_path": str(token)}), ALLOW)
 
 
+class BashTests(GuardSecretReadBase):
+    def setUp(self):
+        super().setUp()
+        self.token = self.make_file(self.home / ".config" / "app" / "token")
+        self.zshrc = self.make_file(self.home / ".zshrc.local")
+        self.starship = self.make_file(self.home / ".config" / "starship.toml", mode=0o644)
+
+    def bash(self, command):
+        return self.run_hook("Bash", {"command": command})
+
+    def test_cat_owner_only_blocked(self):
+        self.assert_exit(self.bash("cat ~/.zshrc.local"), BLOCK)
+
+    def test_cat_world_readable_allowed(self):
+        self.assert_exit(self.bash("cat ~/.config/starship.toml"), ALLOW)
+
+    def test_ls_and_stat_allowed(self):
+        self.assert_exit(self.bash("ls -l ~/.config/app/token"), ALLOW)
+        self.assert_exit(self.bash("stat ~/.config/app/token"), ALLOW)
+
+    def test_find_without_exec_allowed(self):
+        self.assert_exit(self.bash("find ~/.config -perm 600"), ALLOW)
+
+    def test_find_with_exec_blocked(self):
+        self.assert_exit(self.bash("find ~/.config -name token -exec cat {} \\;"), BLOCK)
+
+    def test_grep_recursive_on_config_blocked(self):
+        self.assert_exit(self.bash("grep -r KEY ~/.config"), BLOCK)
+
+    def test_copy_source_blocked(self):
+        self.assert_exit(self.bash("cp ~/.config/app/token /tmp/x"), BLOCK)
+
+    def test_redirect_source_blocked(self):
+        self.assert_exit(self.bash("wc -c < ~/.config/app/token"), BLOCK)
+
+    def test_pipeline_second_command_blocked(self):
+        self.assert_exit(self.bash("echo a | cat ~/.zshrc.local"), BLOCK)
+
+    def test_unresolvable_home_variable_blocked(self):
+        self.assert_exit(self.bash("cat $HOME/.config/app/$NAME"), BLOCK)
+
+    def test_glob_in_range_blocked(self):
+        self.assert_exit(self.bash("cat ~/.config/app/*"), BLOCK)
+
+    def test_show_config_structure_allowed(self):
+        self.assert_exit(self.bash("~/.claude/bin/show-config-structure ~/.zshrc.local"), ALLOW)
+
+    def test_repo_commands_allowed(self):
+        self.assert_exit(self.bash("git status && python3 tests/run.py"), ALLOW)
+
+    def test_cd_then_relative_path_blocked(self):
+        self.assert_exit(self.bash("cd ~ && cat .config/app/token"), BLOCK)
+
+    def test_wc_allowed(self):
+        self.assert_exit(self.bash("wc -l ~/.zshrc.local"), ALLOW)
+
+
 if __name__ == "__main__":
     unittest.main()
