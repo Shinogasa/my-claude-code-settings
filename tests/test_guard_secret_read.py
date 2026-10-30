@@ -377,6 +377,16 @@ class FinalReviewTests(GuardSecretReadBase):
         self.make_file(self.repo / "README.md", mode=0o644)
         self.assert_exit(self.bash("cat README.md"), ALLOW)
 
+    def test_ansi_c_quote_does_not_hide_substitution(self):
+        self.assert_exit(self.bash(f"cd {self.home} && echo $'\\'' ; cat $(cat .zshrc.local)"), BLOCK)
+
+    def test_quoted_paren_inside_substitution(self):
+        self.assert_exit(self.bash(f"cd {self.home} && cat $(echo \")\" ; cat .zshrc.local)"), BLOCK)
+
+    def test_heredoc_body_substitution_with_quoted_paren(self):
+        command = f"cat <<EOF\n$(echo \")\" ; cat {self.zshrc})\nEOF"
+        self.assert_exit(self.bash(command), BLOCK)
+
     # --- 止めすぎていたもの ---
     def test_listing_piped_to_grep_allowed(self):
         self.assert_exit(self.bash("ls -la ~/.config | grep starship"), ALLOW)
