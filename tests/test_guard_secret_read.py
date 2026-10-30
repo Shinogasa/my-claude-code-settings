@@ -234,5 +234,91 @@ class BashTests(GuardSecretReadBase):
         self.assert_exit(self.bash("python3 -c \"print(open('" + str(self.token) + "').read())\""), BLOCK)
 
 
+class FinalReviewTests(GuardSecretReadBase):
+    """最終レビュー（コードレビューと security-reviewer）の指摘を固定する。"""
+
+    setUp = BashTests.setUp
+    bash = BashTests.bash
+
+    # --- 素通りしていたもの ---
+    def test_multiline_after_cd_blocked(self):
+        self.assert_exit(self.bash("cd /tmp\ncat ~/.zshrc.local"), BLOCK)
+
+    def test_multiline_after_listing_blocked(self):
+        self.assert_exit(self.bash("ls\ncat ~/.zshrc.local"), BLOCK)
+
+    def test_hash_inside_word_not_comment(self):
+        self.assert_exit(self.bash("cat foo#bar ~/.zshrc.local"), BLOCK)
+
+    def test_heredoc_opener_line_rest_checked(self):
+        self.assert_exit(self.bash("cat <<EOF && cat ~/.zshrc.local\nbody\nEOF"), BLOCK)
+
+    def test_path_with_space_blocked(self):
+        self.make_file(self.home / ".config" / "My App" / "token")
+        self.assert_exit(self.bash("cat \"$HOME/.config/My App/token\""), BLOCK)
+
+    def test_recursive_grep_without_path_in_home_blocked(self):
+        self.assert_exit(self.bash("cd ~ && grep -rn password"), BLOCK)
+
+    def test_rg_without_path_in_home_blocked(self):
+        self.assert_exit(self.run_hook("Bash", {"command": "rg API_KEY"}, cwd=self.home), BLOCK)
+
+    def test_env_dump_blocked(self):
+        self.assert_exit(self.bash("env | grep -i token"), BLOCK)
+
+    def test_printenv_blocked(self):
+        self.assert_exit(self.bash("printenv"), BLOCK)
+
+    def test_secret_variable_reference_blocked(self):
+        self.assert_exit(self.bash("echo $ANTHROPIC_AUTH_TOKEN"), BLOCK)
+
+    def test_env_names_only_allowed(self):
+        self.assert_exit(self.bash("env | cut -d= -f1"), ALLOW)
+
+    def test_interpreter_heredoc_with_backslash_delimiter_blocked(self):
+        command = "python3 - <<\\PY\nprint(open('" + str(self.token) + "').read())\nPY"
+        self.assert_exit(self.bash(command), BLOCK)
+
+    def test_versioned_interpreter_blocked(self):
+        self.assert_exit(self.bash("python3.12 -c \"open('" + str(self.token) + "')\""), BLOCK)
+
+    def test_eval_blocked(self):
+        self.assert_exit(self.bash("eval \"cat ~/.zshrc.local\""), BLOCK)
+
+    def test_other_variable_path_blocked(self):
+        env_home = str(self.home / ".config")
+        payload = {"tool_name": "Bash", "tool_input": {"command": "cat $XDG_CONFIG_HOME/app/token"}, "cwd": str(self.repo)}
+        result = subprocess.run([sys.executable, str(GUARD)], input=json.dumps(payload), capture_output=True,
+                                text=True, cwd=str(self.repo),
+                                env={**os.environ, "HOME": str(self.home), "XDG_CONFIG_HOME": env_home})
+        self.assert_exit(result, BLOCK)
+
+    def test_parse_error_with_home_cwd_blocked(self):
+        result = self.run_hook("Bash", {"command": "cat .zshrc.local; echo $'a\\'b'"}, cwd=self.home)
+        self.assert_exit(result, BLOCK)
+
+    def test_substitution_listing_home_blocked(self):
+        self.assert_exit(self.bash("cd ~ && cat $(ls .zshrc.local)"), BLOCK)
+
+    # --- 止めすぎていたもの ---
+    def test_listing_piped_to_grep_allowed(self):
+        self.assert_exit(self.bash("ls -la ~/.config | grep starship"), ALLOW)
+
+    def test_show_config_structure_piped_allowed(self):
+        self.assert_exit(self.bash("show-config-structure ~/.zshrc.local | grep API"), ALLOW)
+
+    def test_echo_home_allowed(self):
+        self.assert_exit(self.bash("echo ~ $HOME"), ALLOW)
+
+    def test_timeout_wrapper_allowed(self):
+        self.assert_exit(self.bash("timeout 5 ls ~/.config"), ALLOW)
+
+    def test_date_substitution_with_home_script_allowed(self):
+        self.assert_exit(self.bash("python3 ~/garage/x.py status --since \"$(date +%F)\""), ALLOW)
+
+    def test_export_path_allowed(self):
+        self.assert_exit(self.bash("export PATH=\"$HOME/.local/bin:$PATH\""), ALLOW)
+
+
 if __name__ == "__main__":
     unittest.main()
