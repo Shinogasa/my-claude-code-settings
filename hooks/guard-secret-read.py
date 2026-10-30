@@ -55,8 +55,10 @@ TIGHTENING_NUMERIC_MODE = re.compile(r"^0?[0-7]?[0-7]00$")
 TIGHTENING_SYMBOLIC_CLAUSE = re.compile(r"^(?:[ugoa]*-[rwxXst]+|u[+=][rwxXst]*)$")
 # find でも、これらがあれば中身を出しうる
 FIND_OUTPUT_ACTIONS = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"})
-# 語の区切りになる文字。この直後の # はコメントの始まり
-WORD_BOUNDARY_CHARS = frozenset(" \t\n;&|()<>")
+# 語の区切りになる文字。この直後の # はコメントの始まり。( と ) は $((...)) の閉じと区別できないので入れない
+WORD_BOUNDARY_CHARS = frozenset(" \t\n;&|<>")
+# コメントに見えても、これを含むなら bash ではコメントでない（${...} の中など）おそれがあるので、除かずに判定に回す
+COMMENT_DOUBT_MARKERS = ("}", "$(", "`", "<(")
 # 単純コマンドの区切りに使う文字。; & | ( ) と改行
 SEPARATOR_CHARS = frozenset(";&|()\n")
 # 出力側のリダイレクト。直後のトークンは書き込み先なので判定しない
@@ -239,7 +241,9 @@ def strip_heredoc_bodies(command: str):
         line_end = command.find("\n", opener.end())
         if line_end < 0:
             continue
-        terminator = re.compile(r"^\t*" + re.escape(opener.group(4)) + r"[ \t]*$", re.MULTILINE)
+        # bash と同じく、終端は区切り語だけの行。<<- のときだけ先頭のタブを許す
+        leading = r"\t*" if opener.group(1) else ""
+        terminator = re.compile(r"^" + leading + re.escape(opener.group(4)) + r"$", re.MULTILINE)
         end = terminator.search(command, line_end + 1)
         if not end:
             continue
@@ -337,8 +341,10 @@ def extract_substitutions(command: str, known: list, heredoc: bool = False):
             continue
         if not heredoc and not in_double and at_word_start and char == "#":
             newline = command.find("\n", index)
-            index = len(command) if newline < 0 else newline
-            continue
+            end_of_comment = len(command) if newline < 0 else newline
+            if not any(marker in command[index:end_of_comment] for marker in COMMENT_DOUBT_MARKERS):
+                index = end_of_comment
+                continue
         if _starts_substitution(command, index, heredoc):
             end = _construct_end(command, index)
             if end is None:
