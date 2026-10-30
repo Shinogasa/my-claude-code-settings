@@ -23,7 +23,7 @@ Codex CLI向けには `agents/openai.yaml` に `policy.allow_implicit_invocation
 
 一方で、このリポジトリの運用はClaudeにPRを作らせる前提になっている。
 
-- `CLAUDE.md` は、ブランチを仕上げるときにpushしてPRを作るよう定めている（superpowersの finishing-a-development-branch）
+- `CLAUDE.md` はブランチを仕上げるときにpushしてPRを作るよう定めている（superpowersの finishing-a-development-branch）
 - PRを作る前の確認は、`gh pr create` に反応する PreToolUse フックが受け持つ
   - `hooks/require-full-tests-before-pr.py`: 全件テストの通過
   - `hooks/jp-doc-review.py`: 日本語の文書のレビュー
@@ -60,9 +60,9 @@ CLAUDE.mdの記述と食い違う。Claudeがどちらを優先するかが安�
 ## 結果
 
 - Claudeは `pr-create` を自分で呼べるようになり、`gh pr create` の直接実行で止まらなくなる
-- PRを作るタイミングを、skillの仕組みでは止めなくなる。代わりに、全件テストと日本語レビューの検査をフックに頼る。
+- skillの仕組みでは、ClaudeによるPRの作成を止めなくなる。代わりに、全件テストと日本語レビューの検査をフックに頼る。
   フックの対象は `gh pr create` だけで、GitHub APIやMCPでPRを作る経路は止めない。
-  これらの経路では、テストもレビューも通らずにPRができうる。ユーザーはこれを受け入れたリスクとし、
+  これらの経路では、テストもレビューも通らずにPRができうる。ユーザーはこれをリスクとして受け入れ、
   ほかの経路でPRを作るようになったときに対策することにした
 - Codex CLIでも暗黙の呼び出しを許す。Codex側のフックは `/hooks` の承認が無いと通知なくスキップされるので、
   Codex CLIで同じ守りが働くかは承認状態による
