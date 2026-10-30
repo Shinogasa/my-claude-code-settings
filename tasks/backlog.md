@@ -675,7 +675,7 @@ Orca がsymlink先（リポジトリ）へ書き込まないようにする方�
 - **MCP のファイル読み取りツール**（serena など）: 対象外
 - **`~/.claude/settings.json` の `ANTHROPIC_AUTH_TOKEN`**: 設定ファイルに値が残っている
 - **プロンプトインジェクションによる持ち出し**: フックは文字列からの推定なので、AIが意図して回り込むと止まらない。
-  OS のレベルで止めるには sandbox が要るが、SSH の git push や Go 製 CLI の TLS が壊れるため、2026-10-29に見送った
+  OS のレベルで止めるには sandbox が要るが、SSH の git push や Go 製 CLI の TLS 検証が失敗するため、2026-10-29に見送った
 
 - **リポジトリ配下の `.env` を `grep` で読む経路**: Read と `cat` は既存の deny が止めるが、`grep KEY .env` は止まらない（2026-10-30の最終レビュー）
 - **例外にした場所の広さ**: `.claude/projects`（会話記録）と `.claude/plugins` は丸ごと読める。過去に出た値を読み直しうる
@@ -689,7 +689,7 @@ Orca がsymlink先（リポジトリ）へ書き込まないようにする方�
 
 **決めること**: Codex を再び使い始めたら、フックを `codex/hooks.json` にも登録するか。
 `ANTHROPIC_AUTH_TOKEN` を `apiKeyHelper` などで settings.json の外へ出すか。
-フックのファイルが無いときに、secret 読み取りガードだけは止める側に倒すか。
+フックのファイルが無いときに、secret 読み取りガードだけは止めるようにするか。
 sandbox を、`excludedCommands` で git や Go 製 CLI を外に出す形で入れ直すか（入れるなら、外に出したコマンドは守られない）。
 
 PR #17 の本文にレビュー観点として書いたが、マージで参照されなくなったため移した。

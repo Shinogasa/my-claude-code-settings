@@ -8,7 +8,7 @@
 `~/.claude/settings.json` の `permissions.deny` には、すでに20件の Read 拒否がある（`~/.ssh/**`、`~/.aws/credentials`、
 `~/.npmrc`、`.env` 系など。正本は `settings.json.template`）。漏れた2つのファイルは、この一覧に無かった。
 
-調べた結果（中身は表示せず、パス・名前・権限・キー名だけを見た）:
+調べた結果は次のとおり（中身は表示せず、パス・名前・権限・キー名だけを見た）。
 
 - secret は `~/.config` 配下やホーム直下のドットディレクトリに散らばっている。値だけを書いたファイル
   （`~/.config/cw-workspace-local/asana-access-token` など）もあり、中身のパターンでは検出できない
@@ -17,7 +17,7 @@
   `~/.claude/paste-cache/*`、lockファイルなども600である
 - `~/.npmrc`、`~/.docker/config.json`、`~/.gitconfig.local` は644で、名前も規則に当たらない
 
-一次ドキュメント（code.claude.com の permissions・sandboxing、2026-10-29取得）で確かめたこと:
+一次ドキュメント（code.claude.com の permissions・sandboxing、2026-10-29取得）で確かめたことは次のとおり。
 
 - `Read(...)` の deny は、Read ツール、Bash の `cat` `head` `tail` `sed` `tee`、リダイレクトの対象に効く。
   ファイル名を書かずに読む `grep -r pattern .` や、Python などのスクリプトが自分で開く場合には効かない
@@ -32,7 +32,7 @@ AIがうっかり secret のファイルを読んで値を出力する事故を�
 1. AIのツール呼び出し（Read ツールと Bash）で、secret を含むファイルの中身が出力に出る経路を止める
 2. secret の置き場所が増えても、規約どおりの名前・権限なら、一覧を足さずに対象に入る
 3. 作業で中身の構造が要るファイルは、値を出さずに構造だけ見られる
-4. 判定できないときは止める側に倒す（fail-close）
+4. 判定できないときは止める（fail-close）
 5. 環境変数の値を一覧で出すコマンド（引数なしの `env`・`printenv`・`set`・`export -p`・`declare -p`）と、名前に TOKEN・KEY・SECRET・PASSWORD などを含む `$変数` の参照を止める。
    変数名だけを見る `env | cut -d= -f1` は通す（2026-10-30、最終レビューの指摘を受けて利用者が追加を決定）
 

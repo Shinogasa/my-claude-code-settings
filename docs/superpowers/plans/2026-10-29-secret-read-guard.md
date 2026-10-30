@@ -32,7 +32,7 @@ Read・Grep・Bash の対象パスを「場所（`~/.config` とホーム直下�
 - `cat ~/.config/x/token > /tmp/a` のように、リダイレクトや変数を含むコマンドでも判定が抜けないこと（Task 3 の `test_redirect_source_blocked`・`test_unresolvable_home_variable_blocked`）
 - フック自体の例外で全 Bash が通る（exit 1 は Claude Code では許可扱い）ことが無いこと（Task 2 の `test_internal_error_in_range_blocks`）
 - 読み口が、値の形に関係なく許可していないキーを伏せること（Task 1 の `test_plain_value_under_unknown_key_masked`）
-- `cd ~ && cat .config/app/token` のように、同じコマンドの中で移動してから相対パスで読む形（Task 3 の `test_cd_then_relative_path_blocked`）
+- `cd ~ && cat .config/app/token` のように、同じコマンドの中で移動してから相対パスで読む形を止めること（Task 3 の `test_cd_then_relative_path_blocked`）
 
 受け入れる抜け道（設計書の「既知の穴」。Task 5 で backlog にも積む）: `python3 -c` や `node -e` の中でパスを組み立てて読む経路。
 引数の文字列に対象範囲のパスがそのまま現れる場合だけ止める。
@@ -142,7 +142,7 @@ def test_internal_error_in_range_blocks(self):          # tool_input が壊れ�
 def test_other_tools_pass(self):                        # tool_name=Edit → 0
 ```
 
-ブロック時の stderr には、対象のパスと、構造を見る手段として `show-config-structure` の名前を含むことも確かめる。
+ブロック時の stderr に、対象のパスと、構造を見る手段として `show-config-structure` の名前が含まれることも確かめる。
 
 - [ ] **Step 2: 実行して失敗を確かめる**
 
@@ -255,7 +255,7 @@ Expected: PASS
 - Modify: `tasks/backlog.md`
 
 - [ ] **Step 1: ADR を書く。** 採用した3層と、採らなかった案と理由を残す: 出力側の伏せ字（外れると値が出る。2026-10-29に2回漏れた型）、
-  パスの一覧だけ（置き場所が増えるたびに足す必要がある）、sandbox（SSH の git push や Go 製 CLI の TLS が壊れる）、
+  パスの一覧だけ（置き場所が増えるたびに足す必要がある）、sandbox（SSH の git push や Go 製 CLI の TLS 検証が失敗する）、
   `guard-dangerous-bash.py` に足す（Codex と共有していて、振る舞いを変えないことを配線で保証できない）、
   層3で `hooks` の値を出す（コマンド文字列にトークンを直書きしうる）
 - [ ] **Step 2: backlog に積む。** Codex への展開。`python3 -c` などの中でパスを組み立てて読む経路（受け入れた抜け道）。ファイルが無いときにフックが止めない決まりと fail-close の食い違い。MCP のファイル読み取りツール。
