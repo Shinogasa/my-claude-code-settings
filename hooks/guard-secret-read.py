@@ -45,6 +45,24 @@ ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
 GLOB_CHARS = re.compile(r"[*?\[]")
 # パスではなくコードや文として書かれた引数（python3 -c "..." など）
 CODE_LIKE = re.compile(r"[\s()'\";]")
+HOME_VARIABLE = re.compile(r"\$\{HOME\}|\$HOME(?![A-Za-z0-9_])")
+# 前段の出力を引数にして別のコマンドを動かすもの。前段が対象範囲を指していれば読み取りになる
+ARGUMENT_FEEDERS = frozenset({"xargs", "parallel"})
+SUBSTITUTIONS = ("$(", "`", "<(")
+
+
+def expand_home_variable(text: str, home: str) -> str:
+    return HOME_VARIABLE.sub(lambda _: home, text)
+
+
+def path_candidates(arg: str) -> list:
+    """引数から、パスとして読まれうる部分を取り出す（--opt=x、KEY=x、@x、-fx の x）。"""
+    candidates = [] if arg.startswith("-") else [arg]
+    if "=" in arg:
+        candidates.append(arg.split("=", 1)[1])
+    if arg.startswith("-") and not arg.startswith("--") and len(arg) > 2 and "=" not in arg:
+        candidates.append(arg[2:])
+    return [c[1:] if c.startswith("@") else c for c in candidates if c]
 
 
 def expand(path: str, home: str, cwd: str) -> str:
@@ -144,6 +162,10 @@ def split_redirects(tokens: list):
 
 def judge_arg(arg: str, home: str, cwd, cwd_guarded: bool) -> str:
     """1つの引数を判定する。cwd が None なのは、解決できない cd の後。"""
+    arg = expand_home_variable(arg, home)
+    # ~user の形は展開先を確かめられないので止める
+    if arg.startswith("~") and arg != "~" and not arg.startswith("~/"):
+        return BLOCK
     if "$" in arg or "`" in arg or CODE_LIKE.search(arg):
         return BLOCK if looks_guarded(arg, home) else ALLOW
     if cwd is None and not (arg.startswith("/") or arg.startswith("~")):
@@ -168,7 +190,11 @@ def is_metadata_command(name: str, args: list) -> bool:
 
 def check_bash(command: str, home: str, cwd: str):
     """ブロックの理由を返す。許可なら None。同じコマンドの中の cd を追う。"""
+    if any(s in command for s in SUBSTITUTIONS) and looks_guarded(expand_home_variable(command, home), home):
+        return "コマンド置換の中で、secret を含みうる場所を指しています"
     cwd_guarded = False
+    # 中身を出さないコマンドが対象範囲を指したか。後の xargs などがその出力を読みうる
+    listed_guarded = False
     for tokens in split_simple_commands(command):
         tokens = strip_prefixes(tokens)
         if not tokens:
@@ -180,21 +206,23 @@ def check_bash(command: str, home: str, cwd: str):
             if judge_arg(source, home, cwd, cwd_guarded) == BLOCK:
                 return f"{source} を入力リダイレクトで読もうとしています"
         if name == "cd":
-            target = next((a for a in args if not a.startswith("-")), "~")
+            target = expand_home_variable(next((a for a in args if not a.startswith("-")), "~"), home)
             if "$" in target or "`" in target or GLOB_CHARS.search(target):
-                cwd, cwd_guarded = None, looks_guarded(target, home)
+                cwd, cwd_guarded = None, looks_guarded(target, home) or "HOME" in target
             elif cwd is not None or target.startswith(("/", "~")):
                 cwd = os.path.realpath(expand(target, home, cwd or "/"))
             continue
+        if name in ARGUMENT_FEEDERS and listed_guarded:
+            return f"{name} が、前段で指した secret を含みうる場所のファイルを読みうります"
+        candidates = [c for arg in args for c in path_candidates(arg)]
         if is_metadata_command(name, args):
+            listed_guarded = listed_guarded or any(
+                judge_arg(c, home, cwd, cwd_guarded) == BLOCK or guarded_area(expand(c, home, cwd or "/"), home)
+                for c in candidates)
             continue
-        for arg in args:
-            candidates = [arg.split("=", 1)[1]] if arg.startswith("-") and "=" in arg else [arg]
-            if arg.startswith("-") and "=" not in arg:
-                continue
-            for candidate in candidates:
-                if candidate and judge_arg(candidate, home, cwd, cwd_guarded) == BLOCK:
-                    return f"{name} が {candidate} を読もうとしています（secret を含みうる場所）"
+        for candidate in candidates:
+            if judge_arg(candidate, home, cwd, cwd_guarded) == BLOCK:
+                return f"{name} が {candidate} を読もうとしています（secret を含みうる場所）"
     return None
 
 
