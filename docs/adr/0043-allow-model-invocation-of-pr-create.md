@@ -8,6 +8,8 @@ status: accepted
 
 ## 背景
 
+解く問題: ClaudeにPRの作成を任せる運用なのに、`pr-create` の呼び出し制限のせいで、ClaudeがPRの手前で止まる。
+
 ADR 0040の決定5で、`pr-create` 系のskillとcommandに `disable-model-invocation: true` を付けた。
 Codex CLI向けには `agents/openai.yaml` に `policy.allow_implicit_invocation: false` を置いた。
 理由は「副作用のあるskillは、Claudeが自分の判断で呼べないようにする」という公式の勧めに合わせることだった。
@@ -32,10 +34,15 @@ ADR 0040を決めたときは、この運用との関係を検討していなか
 
 ## 決定
 
+AIが3つの案（この決定と、下の代替案2つ）を出してこの決定を勧め、ユーザーがこれを選んだ。
+
 `pr-create` 系のskillとcommandから `disable-model-invocation: true` を外し、
 Codex CLI向けの `agents/openai.yaml` も削除する。ADR 0040の決定5だけを取り消し、ほかの決定は残す。
 
 PRを作る操作の安全は、skillの呼び出し制限ではなく、`gh pr create` に掛かるフックで守る。
+
+ADR 0040の「基本はベストプラクティスに沿わせる」は見直さない。ここで決めるのは、その例外として扱う基準である。
+同じ守りをフックが受け持っているなら、公式の勧めから外れてよい。
 
 ## 検討した代替案
 
@@ -54,7 +61,9 @@ CLAUDE.mdの記述と食い違う。Claudeがどちらを優先するかが安�
 
 - Claudeは `pr-create` を自分で呼べるようになり、`gh pr create` の直接実行で止まらなくなる
 - PRを作るタイミングを、skillの仕組みでは止めなくなる。代わりに、全件テストと日本語レビューの検査をフックに頼る。
-  フックの対象は `gh pr create` だけで、GitHub APIやMCPでPRを作る経路は止めない
+  フックの対象は `gh pr create` だけで、GitHub APIやMCPでPRを作る経路は止めない。
+  これらの経路では、テストもレビューも通らずにPRができうる。ユーザーはこれを受け入れたリスクとし、
+  ほかの経路でPRを作るようになったときに対策することにした
 - Codex CLIでも暗黙の呼び出しを許す。Codex側のフックは `/hooks` の承認が無いと通知なくスキップされるので、
   Codex CLIで同じ守りが働くかは承認状態による
 

@@ -23,6 +23,7 @@ submodule `claude-code-best-practice` が追っているのは仕様（キー名
 - `settings.json.template` が `effortLevel: xhigh` を常時指定していた。公式の既定はmediumで、
   high以上は見落としやすいケースに使うものとしている
 - 副作用のあるskillに `disable-model-invocation` が無く、`.worktreeinclude` も無かった
+  （`pr-create` に付けた `disable-model-invocation` は、ADR 0043で外した）
 
 ユーザーの方針は「基本はベストプラクティスに沿わせる。公式リファレンスなので最大の効果が出るはず」。
 
