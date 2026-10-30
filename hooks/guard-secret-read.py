@@ -55,6 +55,8 @@ TIGHTENING_NUMERIC_MODE = re.compile(r"^0?[0-7]?[0-7]00$")
 TIGHTENING_SYMBOLIC_CLAUSE = re.compile(r"^(?:[ugoa]*-[rwxXst]+|u[+=][rwxXst]*)$")
 # find でも、これらがあれば中身を出しうる
 FIND_OUTPUT_ACTIONS = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"})
+# 語の区切りになる文字。この直後の # はコメントの始まり
+WORD_BOUNDARY_CHARS = frozenset(" \t\n;&|()<>")
 # 単純コマンドの区切りに使う文字。; & | ( ) と改行
 SEPARATOR_CHARS = frozenset(";&|()\n")
 # 出力側のリダイレクト。直後のトークンは書き込み先なので判定しない
@@ -319,17 +321,23 @@ def extract_substitutions(command: str, known: list, heredoc: bool = False):
     """引用符とエスケープを追いながら、外側の $(...)・`...`・<(...) を __SUBSTn__ へ置き換える。
 
     単一引用符・ANSI-C クォートの中と、エスケープした文字は置換として扱わない。
+    語の頭にある # から行末まではコメントとして除く（bash と同じく、エスケープした空白の後は語の途中とみなす）。
     heredoc=True のときは heredoc の本文として読み、引用符を特別に扱わない。
     入れ子は、本文を判定するときに同じ処理で取り出す。番号は known（外側で取り出し済みの本文）に続けて振る。
     戻り値は (置換後のコマンド, known に足した本文の一覧, 閉じていない引用・置換が残ったか)。
     """
     bodies, out = list(known), []
-    index, in_double = 0, False
+    index, in_double, at_word_start = 0, False, True
     while index < len(command):
         char = command[index]
         if char == "\\":
             out.append(command[index:index + 2])
             index += 2
+            at_word_start = False
+            continue
+        if not heredoc and not in_double and at_word_start and char == "#":
+            newline = command.find("\n", index)
+            index = len(command) if newline < 0 else newline
             continue
         if _starts_substitution(command, index, heredoc):
             end = _construct_end(command, index)
@@ -341,6 +349,7 @@ def extract_substitutions(command: str, known: list, heredoc: bool = False):
             bodies.append(command[index + opener:end - closer])
             out.append(f"__SUBST{len(bodies) - 1}__")
             index = end
+            at_word_start = False
             continue
         if not heredoc and not in_double and (char == "'" or command.startswith("$'", index)):
             end = _construct_end(command, index)
@@ -355,12 +364,13 @@ def extract_substitutions(command: str, known: list, heredoc: bool = False):
             else:
                 out.append(command[index:end])
             index = end
+            at_word_start = False
             continue
-        # コメントは除かない。# を普通の文字として残すと、コメントの中身も判定に回り、止める側に倒れる
         if not heredoc and char == '"':
             in_double = not in_double
         out.append(char)
         index += 1
+        at_word_start = not in_double and char in WORD_BOUNDARY_CHARS
     return "".join(out), bodies, in_double
 
 
