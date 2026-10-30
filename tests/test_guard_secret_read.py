@@ -400,7 +400,8 @@ class FinalReviewTests(GuardSecretReadBase):
         self.assert_exit(self.bash(f"cd {self.home} && echo $((1))#x; cat .zshrc.local"), BLOCK)
 
     def test_hash_inside_parameter_expansion_keeps_rest(self):
-        self.assert_exit(self.bash(f"echo ${{x# }}; cat {self.zshrc}"), BLOCK)
+        # ${...} の中の # はコメントではない。空白の後でも、後ろの cat を隠してはいけない
+        self.assert_exit(self.bash(f"cd {self.home} && echo ${{x:- #}}; cat .zshrc.local"), BLOCK)
 
     # --- 止めすぎていたもの ---
     def test_listing_piped_to_grep_allowed(self):
