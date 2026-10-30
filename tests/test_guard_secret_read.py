@@ -390,6 +390,12 @@ class FinalReviewTests(GuardSecretReadBase):
     def test_escaped_space_before_hash_does_not_hide_command(self):
         self.assert_exit(self.bash("echo a\\ #x; cat ~/.zshrc.local"), BLOCK)
 
+    def test_apostrophe_in_comment_does_not_hide_next_line(self):
+        self.assert_exit(self.bash(f"cd {self.home} # it's\ncat .zshrc.local"), BLOCK)
+
+    def test_comment_mentioning_path_allowed(self):
+        self.assert_exit(self.bash("# ~/.zshrc.local の件\ngit status"), ALLOW)
+
     # --- 止めすぎていたもの ---
     def test_listing_piped_to_grep_allowed(self):
         self.assert_exit(self.bash("ls -la ~/.config | grep starship"), ALLOW)
