@@ -334,6 +334,11 @@ class FinalReviewTests(GuardSecretReadBase):
     def test_declare_secret_name_blocked(self):
         self.assert_exit(self.bash("declare -p ANTHROPIC_AUTH_TOKEN"), BLOCK)
 
+    def test_reassign_home_blocked(self):
+        # HOME を代入し直すと、~ や $HOME の展開先が判定の基準とずれる
+        self.assert_exit(self.bash("HOME=/tmp; cat ~/.zshrc.local"), BLOCK)
+        self.assert_exit(self.bash("export HOME=/tmp"), BLOCK)
+
     def test_prefix_assignment_does_not_override_home(self):
         # bash は $HOME を先に展開するので、その場の HOME=... は判定に使わない
         self.assert_exit(self.bash("HOME=/tmp cat $HOME/.zshrc.local"), BLOCK)
@@ -353,6 +358,10 @@ class FinalReviewTests(GuardSecretReadBase):
 
     def test_date_substitution_with_home_script_allowed(self):
         self.assert_exit(self.bash("python3 ~/garage/x.py status --since \"$(date +%F)\""), ALLOW)
+
+    def test_mkdir_chmod_touch_allowed(self):
+        # 中身を読まない操作。実機で ~/.config に作業用のディレクトリを作ろうとして止まった
+        self.assert_exit(self.bash("mkdir -p ~/.config/newdir && touch ~/.config/newdir/a && chmod 600 ~/.config/newdir/a"), ALLOW)
 
     def test_export_path_allowed(self):
         self.assert_exit(self.bash("export PATH=\"$HOME/.local/bin:$PATH\""), ALLOW)
