@@ -41,13 +41,18 @@ BLOCK_EXIT = 2
 METADATA_COMMANDS = frozenset({
     "ls", "stat", "test", "[", "file", "wc", "du", "cd", "realpath", "readlink", "basename", "dirname",
     "echo", "printf", "export", "true", "false", "type", "which", "show-config-structure",
-    "mkdir", "touch", "chmod", "chown", "rmdir",
+    "mkdir", "touch", "rmdir",
 })
 # 中身を出さないコマンドのうち、出力が名前の一覧ではないもの。パイプの後段に渡しても読み取りにならない
 NON_LISTING_COMMANDS = frozenset({
     "show-config-structure", "echo", "printf", "export", "true", "false", "type", "which",
-    "mkdir", "touch", "chmod", "chown", "rmdir",
+    "mkdir", "touch", "rmdir",
 })
+# HOME を書き込み先に取りうる組み込みコマンド
+HOME_WRITERS = frozenset({"unset", "read", "mapfile", "readarray", "declare", "typeset", "readonly", "local", "export"})
+# 権限を絞るだけの chmod のモード（600・0700、go-rwx、u+x など）。権限を広げる変更は、権限で判定するガードをすり抜けさせる
+TIGHTENING_NUMERIC_MODE = re.compile(r"^0?[0-7]?[0-7]00$")
+TIGHTENING_SYMBOLIC_CLAUSE = re.compile(r"^(?:[ugoa]*-[rwxXst]+|u[+=][rwxXst]*)$")
 # find でも、これらがあれば中身を出しうる
 FIND_OUTPUT_ACTIONS = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"})
 # 単純コマンドの区切りに使う文字。; & | ( ) と改行
@@ -404,6 +409,25 @@ def dumps_environment(tokens: list) -> bool:
     return False
 
 
+def writes_home(tokens: list) -> bool:
+    """HOME へ書き込む形か（HOME=、HOME+=、unset HOME、declare HOME=、printf -v HOME、read HOME など）。"""
+    if any(re.match(r"^HOME\+?=", t) for t in tokens):
+        return True
+    stripped = strip_prefixes(tokens)
+    if stripped and os.path.basename(stripped[0]) in HOME_WRITERS and "HOME" in stripped[1:]:
+        return True
+    return any(t == "-v" and following == "HOME" for t, following in zip(tokens, tokens[1:]))
+
+
+def is_tightening_chmod(args: list) -> bool:
+    """chmod が権限を絞るだけか。モードを解釈できなければ、絞るだけとはみなさない。"""
+    mode = next((a for a in args if not a.startswith("-") or re.match(r"^-[rwxXst]+$", a)), "")
+    if TIGHTENING_NUMERIC_MODE.match(mode):
+        return True
+    clauses = mode.split(",") if mode else []
+    return bool(clauses) and all(TIGHTENING_SYMBOLIC_CLAUSE.match(c) for c in clauses)
+
+
 class BashChecker:
     """1つの Bash コマンドを、単純コマンドごとに判定する。同じコマンドの中の cd を追う。"""
 
@@ -478,12 +502,9 @@ class BashChecker:
         reason = self.check_substitutions(tokens)
         if reason:
             return reason
-        # HOME を代入し直すと、~ や $HOME の展開先が判定の基準とずれるので止める
-        stripped_for_export = strip_prefixes(tokens)
-        exported = stripped_for_export[1:] if stripped_for_export[:1] == ["export"] else []
-        if any(t.startswith("HOME=") for t in tokens if ASSIGNMENT.match(t)) and (
-                all(ASSIGNMENT.match(t) for t in tokens) or exported) or any(t.startswith("HOME=") for t in exported):
-            return "HOME を代入し直しています。判定の基準のホームとずれるので止めます"
+        # HOME へ書き込むと、~ や $HOME の展開先が判定の基準とずれるので、どの形でも止める
+        if writes_home(tokens):
+            return "HOME へ書き込んでいます。判定の基準のホームとずれるので止めます"
         # 代入だけの単純コマンドは、以降のコマンドの変数として覚える。HOME は判定の基準なので上書きさせない。
         # VAR=x cmd のような前置きの代入は、bash が引数を先に展開するので、その引数の判定には使わない
         if all(ASSIGNMENT.match(token) for token in tokens):
@@ -508,6 +529,8 @@ class BashChecker:
                looks_guarded(expand_variables(a, self.home, self.variables), self.home) for a in args):
             return f"{name} のオプションが、secret を含みうる場所を指しています"
         candidates = [c for arg in args for c in path_candidates(arg)]
+        if name == "chmod" and is_tightening_chmod(args):
+            return None
         if is_metadata_command(name, args):
             if name not in NON_LISTING_COMMANDS:
                 self.listed_guarded = self.listed_guarded or self.touches_guarded(candidates)
