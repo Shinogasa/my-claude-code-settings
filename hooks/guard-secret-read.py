@@ -75,7 +75,23 @@ VARIABLE_REFERENCE = re.compile(r"\$\{?([A-Za-z_]\w*)")
 # 名前にこれらの部分を含む環境変数は、値が secret でありうる
 SECRET_NAME_PARTS = frozenset({
     "TOKEN", "KEY", "SECRET", "PASSWORD", "PASSWD", "PASS", "CREDENTIAL", "CREDENTIALS", "AUTH", "PAT", "APIKEY",
+    "DSN", "WEBHOOK",
 })
+# URL・URI と一緒にあれば、資格情報を含む接続文字列とみなす部分（DATABASE_URL、REDIS_URL など）
+CONNECTION_NAME_PARTS = frozenset({
+    "DATABASE", "DB", "REDIS", "MONGO", "MONGODB", "POSTGRES", "POSTGRESQL", "MYSQL", "AMQP", "RABBITMQ", "BROKER",
+})
+# 環境変数の secret は大文字スネークで書く。小文字は、同じコマンドで代入したときだけ判定する（for key in ... は通す）
+SECRET_NAME_SHAPE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+# 語の頭にある代入（token=...、export api_key=...）。代入した名前を覚える
+ASSIGNED_NAME = re.compile(r"(?:^|[\s;&|(])([A-Za-z_]\w*)\+?=")
+# 単一引用符の中を、後で別の場所が展開しうるコマンド（インタプリタのほか）
+DEFERRED_EXPANDERS = frozenset({
+    "envsubst", "trap", "watch", "ssh", "su", "script", "parallel", "xargs", "dash", "ksh", "mksh", "csh", "tcsh",
+})
+# HOME の差し替え先として通す、作ったばかりの一時ディレクトリ（$(mktemp -d) など）
+MKTEMP_BODY = re.compile(r"^\s*mktemp(?:\s+[\w./%-]+)*\s*$")
+TEMP_ROOTS = ("/tmp", "/private/tmp")
 # 環境変数を一覧で出すコマンド。引数なしで動かすと値まで出る
 ENV_DUMPERS = frozenset({"env", "printenv"})
 SHELL_DUMPERS = frozenset({"set", "export", "declare", "typeset"})
@@ -220,13 +236,40 @@ def check_path(path: str, home: str, cwd: str):
 
 # ---- Bash ----
 
-def is_secret_name(name: str) -> bool:
-    return bool(SECRET_NAME_PARTS.intersection(name.upper().split("_")))
+def is_secret_name(name: str, assigned=frozenset()) -> bool:
+    if not SECRET_NAME_SHAPE.match(name) and name not in assigned:
+        return False
+    parts = set(name.upper().split("_"))
+    if SECRET_NAME_PARTS & parts:
+        return True
+    return bool(parts & {"URL", "URI"}) and bool(CONNECTION_NAME_PARTS & parts)
 
 
-def secret_variable(text: str):
-    """名前が secret らしい変数の参照があれば、その名前を返す。"""
-    return next((m.group(1) for m in VARIABLE_REFERENCE.finditer(text) if is_secret_name(m.group(1))), None)
+def expandable_text(command: str) -> str:
+    """bash が変数を展開する部分だけを残す。単一引用符の中と、エスケープした文字を除く。"""
+    out, index, in_double = [], 0, False
+    while index < len(command):
+        char = command[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == "'" and not in_double:
+            close = command.find("'", index + 1)
+            if close < 0:
+                out.append(command[index:])
+                break
+            index = close + 1
+            continue
+        if char == '"':
+            in_double = not in_double
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
+def secret_variable(text: str, assigned=frozenset()):
+    """名前が secret らしい変数の参照があれば、その名前を返す。assigned は同じコマンドで代入した名前。"""
+    return next((m.group(1) for m in VARIABLE_REFERENCE.finditer(text) if is_secret_name(m.group(1), assigned)), None)
 
 
 def strip_heredoc_bodies(command: str):
@@ -520,10 +563,29 @@ def dumps_environment(tokens: list) -> bool:
     return False
 
 
-def writes_home(tokens: list) -> bool:
-    """HOME へ書き込む形か（HOME=、HOME+=、unset HOME、declare HOME=、printf -v HOME、read HOME など）。"""
-    if any(re.match(r"^HOME\+?=", t) for t in tokens):
-        return True
+def is_new_temp_dir(value: str, substitutions: list, home: str) -> bool:
+    """HOME の差し替え先が、$(mktemp ...) か、/tmp・$TMPDIR の配下（そのものは除く）か。"""
+    mark = SUBSTITUTION_MARK.fullmatch(value)
+    if mark:
+        return bool(MKTEMP_BODY.match(substitutions[int(mark.group(1))]))
+    if "__SUBST" in value:
+        return False
+    path = os.path.normpath(expand_variables(value, home))
+    tmpdir = os.environ.get("TMPDIR", "").rstrip(os.sep)
+    roots = TEMP_ROOTS + ((tmpdir, os.path.realpath(tmpdir)) if tmpdir else ())
+    return any(path.startswith(root + os.sep) for root in roots)
+
+
+def writes_home(tokens: list, substitutions=(), home: str = "") -> bool:
+    """HOME へ書き込む形か（HOME=、HOME+=、unset HOME、declare HOME=、printf -v HOME、read HOME など）。
+
+    HOME=<作ったばかりの一時ディレクトリ> は通す。判定は元のホームで続けるので、~ は厳しめに判定される。
+    """
+    for token in tokens:
+        if token.startswith("HOME+="):
+            return True
+        if token.startswith("HOME=") and not is_new_temp_dir(token[len("HOME="):], list(substitutions), home):
+            return True
     stripped = strip_prefixes(tokens)
     if stripped and os.path.basename(stripped[0]) in HOME_WRITERS and "HOME" in stripped[1:]:
         return True
@@ -549,14 +611,17 @@ class BashChecker:
         self.listed_guarded = False
         self.substitutions = list(substitutions or [])
         self.variables = dict(variables or {})
+        # 同じコマンドで代入した名前。置換の中を判定する内側の BashChecker とも共有する
+        self.assigned = set()
 
     def check(self, command: str):
+        self.assigned.update(ASSIGNED_NAME.findall(command))
         command, heredocs = strip_heredoc_bodies(command)
         # 区切り語を引用しない heredoc の本文は展開されるので、変数の参照と置換を判定する
         for body, quoted in heredocs:
             if quoted:
                 continue
-            variable = secret_variable(body)
+            variable = secret_variable(body, self.assigned)
             if variable:
                 return f"heredoc の中で、環境変数 {variable} の値を展開します"
             # heredoc の本文では引用符は特別な意味を持たない。heredoc として読んで置換を取り出す
@@ -565,9 +630,10 @@ class BashChecker:
                 return "heredoc の中に、解析できない置換とホームを指す書き方があります"
             for inner_body in inner_bodies:
                 inner = BashChecker(self.home, self.cwd, [], self.variables)
+                inner.assigned = self.assigned
                 if inner.check(inner_body) or inner.listed_guarded:
                     return "heredoc の中のコマンド置換で、secret を含みうる場所を指しています"
-        words = {os.path.basename(w) for w in re.split(r"[\s;&|()]+", command) if w}
+        words = {os.path.basename(w.strip("'\"")) for w in re.split(r"[\s;&|()]+", command) if w}
         if any(INTERPRETER.match(w) for w in words):
             # インタプリタは heredoc の本文をコードとして実行するので、本文に書かれたパスを読みうる
             if any(looks_guarded(expand_variables(b, self.home), self.home) for b, _ in heredocs):
@@ -575,10 +641,15 @@ class BashChecker:
             # 区切り語を解析できなかった heredoc は、ホームを指す書き方があれば止める
             if re.search(r"<<(?!<)", command) and (looks_guarded(command, self.home) or HOME_REFERENCES.search(command)):
                 return "解析できない heredoc と、ホームを指す書き方が一緒に使われています"
+        runs_code = any(INTERPRETER.match(w) or w in DEFERRED_EXPANDERS for w in words)
         command, self.substitutions, unclosed = extract_substitutions(command, self.substitutions)
         if unclosed and (
                 looks_guarded(expand_variables(command, self.home), self.home) or HOME_REFERENCES.search(command)):
             return "解析できないコマンド置換と、ホームを指す書き方が一緒に使われています"
+        # インタプリタや envsubst・ssh などは単一引用符の中も後で展開しうるので、そのときは引用符の中も見る
+        variable = secret_variable(command if runs_code else expandable_text(command), self.assigned)
+        if variable:
+            return f"環境変数 {variable} の値を出力しうるコマンドです"
         commands = split_simple_commands(command)
         for index, (separator, tokens) in enumerate(commands):
             following = commands[index + 1] if index + 1 < len(commands) else None
@@ -594,6 +665,7 @@ class BashChecker:
                 body = self.substitutions[int(mark.group(1))]
                 inner = BashChecker(self.home, self.cwd, self.substitutions, self.variables)
                 inner.cwd_guarded = self.cwd_guarded
+                inner.assigned = self.assigned
                 reason = inner.check(body)
                 if reason or inner.listed_guarded:
                     return f"コマンド置換の中で、secret を含みうる場所を指しています（{reason or '一覧'}）"
@@ -607,9 +679,6 @@ class BashChecker:
                 return "secret を含みうる場所の一覧を、パイプの後段で開きうるコマンドへ渡しています"
         elif not is_pipe(separator):
             self.listed_guarded = False
-        variable = secret_variable(" ".join(tokens))
-        if variable:
-            return f"環境変数 {variable} の値を出力しうるコマンドです"
         if dumps_environment(tokens) or dumps_environment(strip_prefixes(tokens)):
             names_only = following and is_pipe(following[0]) and is_names_only_view(following[1])
             if not names_only:
@@ -618,7 +687,7 @@ class BashChecker:
         if reason:
             return reason
         # HOME へ書き込むと、~ や $HOME の展開先が判定の基準とずれるので、どの形でも止める
-        if writes_home(tokens):
+        if writes_home(tokens, self.substitutions, self.home):
             return "HOME へ書き込んでいます。判定の基準のホームとずれるので止めます"
         # 代入だけの単純コマンドは、以降のコマンドの変数として覚える。HOME は判定の基準なので上書きさせない。
         # VAR=x cmd のような前置きの代入は、bash が引数を先に展開するので、その引数の判定には使わない
