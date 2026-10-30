@@ -201,6 +201,11 @@ def is_metadata_command(name: str, args: list) -> bool:
 
 def check_bash(command: str, home: str, cwd: str):
     """ブロックの理由を返す。許可なら None。同じコマンドの中の cd を追う。"""
+    # インタプリタは heredoc の本文をコードとして実行するので、本文に書かれたパスを読みうる
+    words = {os.path.basename(w) for w in re.split(r"[\s;&|()]+", HEREDOC.sub("", command)) if w}
+    if words & INTERPRETERS and any(looks_guarded(expand_home_variable(m.group(0), home), home)
+                                    for m in HEREDOC.finditer(command)):
+        return "インタプリタに渡す heredoc の中で、secret を含みうる場所を指しています"
     command = HEREDOC.sub("<<heredoc", command)
     # コマンド置換の中身は1つのコマンドとして追えないので、ホームを指しうる書き方があれば止める
     if any(s in command for s in SUBSTITUTIONS) and (
