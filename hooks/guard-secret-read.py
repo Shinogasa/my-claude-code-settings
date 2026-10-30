@@ -48,6 +48,12 @@ CODE_LIKE = re.compile(r"[\s()'\";]")
 HOME_VARIABLE = re.compile(r"\$\{HOME\}|\$HOME(?![A-Za-z0-9_])")
 SUBSTITUTIONS = ("$(", "`", "<(")
 PIPES = frozenset({"|", "|&"})
+# 引数をコードとして実行するコマンド。文字列の中に書かれたパスを読みうる
+INTERPRETERS = frozenset({
+    "python", "python3", "node", "deno", "bun", "ruby", "perl", "php", "sh", "bash", "zsh", "fish", "osascript",
+})
+# heredoc の本文はコマンドの入力データで、パスとして解釈されない
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2(?=\n|$)", re.DOTALL)
 # コマンド置換と組み合わさると、置換の中でホームを指しうる書き方
 HOME_REFERENCES = re.compile(r"(?:^|[\s=@:])~(?:/|\s|$)|\bHOME\b")
 
@@ -162,13 +168,16 @@ def split_redirects(tokens: list):
     return args, sources
 
 
-def judge_arg(arg: str, home: str, cwd, cwd_guarded: bool) -> str:
+def judge_arg(arg: str, home: str, cwd, cwd_guarded: bool, interpreter: bool = False) -> str:
     """1つの引数を判定する。cwd が None なのは、解決できない cd の後。"""
     arg = expand_home_variable(arg, home)
     # ~user の形は展開先を確かめられないので止める
     if arg.startswith("~") and arg != "~" and not arg.startswith("~/"):
         return BLOCK
-    if "$" in arg or "`" in arg or CODE_LIKE.search(arg):
+    if CODE_LIKE.search(arg):
+        # コードとして実行されるときだけ、中に書かれたパスを読みうる。それ以外は文（コミットメッセージなど）
+        return BLOCK if interpreter and looks_guarded(arg, home) else ALLOW
+    if "$" in arg or "`" in arg:
         return BLOCK if looks_guarded(arg, home) else ALLOW
     if cwd is None and not (arg.startswith("/") or arg.startswith("~")):
         return BLOCK if cwd_guarded else ALLOW
@@ -192,6 +201,7 @@ def is_metadata_command(name: str, args: list) -> bool:
 
 def check_bash(command: str, home: str, cwd: str):
     """ブロックの理由を返す。許可なら None。同じコマンドの中の cd を追う。"""
+    command = HEREDOC.sub("<<heredoc", command)
     # コマンド置換の中身は1つのコマンドとして追えないので、ホームを指しうる書き方があれば止める
     if any(s in command for s in SUBSTITUTIONS) and (
             looks_guarded(expand_home_variable(command, home), home) or HOME_REFERENCES.search(command)):
@@ -234,8 +244,9 @@ def check_bash(command: str, home: str, cwd: str):
                 judge_arg(c, home, cwd, cwd_guarded) == BLOCK or guarded_area(expand(c, home, cwd or "/"), home)
                 for c in candidates)
             continue
+        interpreter = name in INTERPRETERS
         for candidate in candidates:
-            if judge_arg(candidate, home, cwd, cwd_guarded) == BLOCK:
+            if judge_arg(candidate, home, cwd, cwd_guarded, interpreter) == BLOCK:
                 return f"{name} が {candidate} を読もうとしています（secret を含みうる場所）"
     return None
 
