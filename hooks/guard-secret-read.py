@@ -11,8 +11,11 @@ permissions.deny（層1）は一覧に載せた場所しか止めない。この
 
 Claude Code にだけ登録する。Codex（codex/hooks.json）には登録しない。
 """
+import glob
 import json
 import os
+import re
+import shlex
 import stat
 import sys
 
@@ -24,6 +27,24 @@ EXEMPT_DIRS = (
 HOME_DOT_PREFIXES = ("~/.", "$HOME/.", "${HOME}/.")
 ALLOW, BLOCK, UNKNOWN = "allow", "block", "unknown"
 BLOCK_EXIT = 2
+
+# 中身を出さないコマンド。対象範囲のパスを引数に取っても通す
+METADATA_COMMANDS = frozenset({
+    "ls", "stat", "test", "[", "file", "wc", "du", "cd", "realpath", "readlink", "basename", "dirname",
+    "show-config-structure",
+})
+# find でも、これらがあれば中身を出しうる
+FIND_OUTPUT_ACTIONS = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"})
+# 単純コマンドの区切り
+SEPARATORS = frozenset({";", "&&", "||", "|", "|&", "&", "(", ")", "\n"})
+# 出力側のリダイレクト。直後のトークンは書き込み先なので判定しない
+OUTPUT_REDIRECTS = frozenset({">", ">>", ">&", "&>", ">|"})
+# 先頭にあっても本体のコマンドではないもの
+WRAPPERS = frozenset({"env", "sudo", "command", "exec", "time", "nohup", "rtk"})
+ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
+GLOB_CHARS = re.compile(r"[*?\[]")
+# パスではなくコードや文として書かれた引数（python3 -c "..." など）
+CODE_LIKE = re.compile(r"[\s()'\";]")
 
 
 def expand(path: str, home: str, cwd: str) -> str:
@@ -83,6 +104,100 @@ def check_path(path: str, home: str, cwd: str):
     return None
 
 
+def split_simple_commands(command: str) -> list:
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    commands, current = [], []
+    for token in lexer:
+        if token in SEPARATORS:
+            if current:
+                commands.append(current)
+            current = []
+        else:
+            current.append(token)
+    if current:
+        commands.append(current)
+    return commands
+
+
+def strip_prefixes(tokens: list) -> list:
+    """先頭の VAR=value と、env・sudo などの包み込むコマンドを外す。"""
+    index = 0
+    while index < len(tokens) and (ASSIGNMENT.match(tokens[index]) or os.path.basename(tokens[index]) in WRAPPERS):
+        index += 1
+    return tokens[index:]
+
+
+def split_redirects(tokens: list):
+    """(引数, 入力リダイレクトの読み取り元) に分ける。出力リダイレクトの書き込み先は捨てる。"""
+    args, sources = [], []
+    iterator = iter(tokens)
+    for token in iterator:
+        if token == "<":
+            sources.append(next(iterator, ""))
+        elif token in OUTPUT_REDIRECTS:
+            next(iterator, None)
+        else:
+            args.append(token)
+    return args, sources
+
+
+def judge_arg(arg: str, home: str, cwd, cwd_guarded: bool) -> str:
+    """1つの引数を判定する。cwd が None なのは、解決できない cd の後。"""
+    if "$" in arg or "`" in arg or CODE_LIKE.search(arg):
+        return BLOCK if looks_guarded(arg, home) else ALLOW
+    if cwd is None and not (arg.startswith("/") or arg.startswith("~")):
+        return BLOCK if cwd_guarded else ALLOW
+    base = cwd or "/"
+    if GLOB_CHARS.search(arg):
+        matches = glob.glob(expand(arg, home, base))
+        if not matches:
+            return BLOCK if looks_guarded(arg, home) or guarded_area(expand(arg, home, base), home) else ALLOW
+        return BLOCK if any(classify(m, home, base) != ALLOW for m in matches) else ALLOW
+    verdict = classify(arg, home, base)
+    if verdict == UNKNOWN:
+        return BLOCK
+    return verdict
+
+
+def is_metadata_command(name: str, args: list) -> bool:
+    if name == "find":
+        return not FIND_OUTPUT_ACTIONS.intersection(args)
+    return name in METADATA_COMMANDS
+
+
+def check_bash(command: str, home: str, cwd: str):
+    """ブロックの理由を返す。許可なら None。同じコマンドの中の cd を追う。"""
+    cwd_guarded = False
+    for tokens in split_simple_commands(command):
+        tokens = strip_prefixes(tokens)
+        if not tokens:
+            continue
+        name = os.path.basename(tokens[0])
+        args, sources = split_redirects(tokens[1:])
+        # 入力リダイレクトは、どのコマンドでも中身を読む経路になる
+        for source in sources:
+            if judge_arg(source, home, cwd, cwd_guarded) == BLOCK:
+                return f"{source} を入力リダイレクトで読もうとしています"
+        if name == "cd":
+            target = next((a for a in args if not a.startswith("-")), "~")
+            if "$" in target or "`" in target or GLOB_CHARS.search(target):
+                cwd, cwd_guarded = None, looks_guarded(target, home)
+            elif cwd is not None or target.startswith(("/", "~")):
+                cwd = os.path.realpath(expand(target, home, cwd or "/"))
+            continue
+        if is_metadata_command(name, args):
+            continue
+        for arg in args:
+            candidates = [arg.split("=", 1)[1]] if arg.startswith("-") and "=" in arg else [arg]
+            if arg.startswith("-") and "=" not in arg:
+                continue
+            for candidate in candidates:
+                if candidate and judge_arg(candidate, home, cwd, cwd_guarded) == BLOCK:
+                    return f"{name} が {candidate} を読もうとしています（secret を含みうる場所）"
+    return None
+
+
 def decide(data: dict, home: str):
     tool = data.get("tool_name")
     tool_input = data["tool_input"]
@@ -91,6 +206,8 @@ def decide(data: dict, home: str):
         return check_path(tool_input["file_path"], home, cwd)
     if tool == "Grep":
         return check_path(tool_input.get("path") or cwd, home, cwd)
+    if tool == "Bash":
+        return check_bash(tool_input["command"], home, cwd)
     return None
 
 

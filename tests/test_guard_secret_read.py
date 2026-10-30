@@ -171,6 +171,10 @@ class BashTests(GuardSecretReadBase):
     def test_wc_allowed(self):
         self.assert_exit(self.bash("wc -l ~/.zshrc.local"), ALLOW)
 
+    def test_inline_script_with_path_blocked(self):
+        # スクリプトの中にパスがそのまま書かれていれば止める。組み立てたパスは受け入れた抜け道
+        self.assert_exit(self.bash("python3 -c \"print(open('" + str(self.token) + "').read())\""), BLOCK)
+
 
 if __name__ == "__main__":
     unittest.main()
