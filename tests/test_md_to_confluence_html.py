@@ -129,6 +129,23 @@ class ConvertTests(unittest.TestCase):
         self.check("<script>x</script>", "<p>&lt;script&gt;x&lt;/script&gt;</p>")
 
 
+class WarningTests(unittest.TestCase):
+    """変換しない記法は黙って落とさず、行番号つきで知らせる。変換結果は変えない。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.warnings = staticmethod(load().unsupported_warnings)
+
+    def test_reports_unsupported_syntax_with_line_numbers(self):
+        found = self.warnings("*斜体* と ~~消し~~\n![図](a.png)\n- a\n  ```\n  x\n  ```")
+        self.assertEqual([(line, name) for line, name in found], [
+            (1, "斜体"), (1, "取り消し線"), (2, "画像"), (4, "リスト内のコードブロック"),
+        ])
+
+    def test_supported_syntax_and_code_are_not_reported(self):
+        self.assertEqual(self.warnings("**太字** と `*x*` と `~~y~~`\n* 箇条\n\n```\n*x* ~~y~~ ![a](b)\n```"), [])
+
+
 class CliTests(unittest.TestCase):
     def run_cli(self, *args):
         return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
@@ -141,6 +158,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(result.stdout.rstrip("\n").endswith("<h1>見出し</h1>"), result.stdout)
         self.assertIn('data-extension-key="toc"', result.stdout)
+
+    def test_warns_on_stderr_and_still_converts(self):
+        result = subprocess.run([sys.executable, str(SCRIPT)], input="本文\n*斜体*\n",
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("2行目", result.stderr)
+        self.assertIn("斜体", result.stderr)
+        self.assertEqual(result.stdout, "<p>本文 *斜体*</p>\n")
 
     def test_missing_file_fails_loudly(self):
         result = self.run_cli("/nonexistent/draft.md")
