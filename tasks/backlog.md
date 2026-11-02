@@ -149,6 +149,29 @@ PR作成の手順を扱うskillの側に書くか。足す前に、実際のブ�
 
 ---
 
+## Confluence ガードの残り（ADR 0046）
+
+### P3: Codex でも Markdown の上書きを止めるか
+
+2026-11-02 に、Claude Code だけに `hooks/guard-confluence-markdown.py` を入れた（ADR 0046 の決定6）。
+
+**決めること**: Codex にも登録するか。登録するなら、先に次を一次資料で確かめる。
+- Codex での Atlassian MCP のツール名と、`codex/hooks.json` の matcher の書式
+- PreToolUse の deny と、その理由がエージェントに届く形
+
+**着手条件**: 仕事用の Codex で Confluence に投稿するようになったとき。
+
+### P3: security-reviewer で見送った指摘（2026-11-02、ADR 0044 の2条件に当たらない）
+
+- フックが動かないとき（`python3` が無い、異常終了、timeout）は、Markdown の更新がそのまま送られる。直すなら、シェルのラッパーで `ask` に包む
+- `contentFormat` の判定が `markdown` との完全一致。`html` / `adf` / 省略以外の未知の値は `ask` にするかを決める
+- 止めるのは名前が `__updateConfluencePage` で終わるツールだけ。別の名前で同じ操作をするツールは対象外
+- 変換スクリプトがリンクの href のスキームを絞らない（`javascript:` もリンクになる）。`http` / `https` / `mailto` / `#` / 相対パスに絞るかを決める
+- 変換スクリプトが、引用の深い入れ子で `RecursionError`、バッククォートの多い行で遅くなる可能性がある（未実行）
+- 変換の細かい誤り: 本文の `&amp;` が二重にエスケープされる、コードフェンスの中の `</details>` 行も入れ子として数える、入力の NUL 文字が表の中で `|` に化ける
+
+---
+
 ## Codex CLI 対応の続き
 
 全量監査と判断根拠は `docs/codex-compatibility-audit.md`、設計判断は
