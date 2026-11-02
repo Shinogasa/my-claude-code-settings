@@ -40,16 +40,24 @@ DETAILS_CLOSE = "</details>"
 
 # ---- インライン ----
 
+LINK_MARK = ""  # リンクの仮置き。私用領域の文字なので、下書きの本文には現れない
+
+
 def _format_text(text: str) -> str:
-    """コードスパンの外側の文字列を、エスケープしてからリンクと太字に変える。"""
-    out, last = [], 0
-    for match in LINK.finditer(text):
-        out.append(_emphasis(text[last:match.start()]))
+    """コードスパンの外側の文字列を、エスケープしてからリンクと太字に変える。
+
+    リンクを仮置きの印に置き換えてから太字を処理し、最後に戻す。先にリンクで文字列を切ると、
+    `**[a](b)**` の ** がリンクの前後に分かれて太字にならない。
+    """
+    links: List[str] = []
+
+    def stash(match: "re.Match[str]") -> str:
         href = html.escape(match.group(2), quote=True)
-        out.append(f'<a href="{href}">{_emphasis(match.group(1))}</a>')
-        last = match.end()
-    out.append(_emphasis(text[last:]))
-    return "".join(out)
+        links.append(f'<a href="{href}">{_emphasis(match.group(1))}</a>')
+        return f"{LINK_MARK}{len(links) - 1}{LINK_MARK}"
+
+    formatted = _emphasis(LINK.sub(stash, text))
+    return re.sub(f"{LINK_MARK}(\\d+){LINK_MARK}", lambda m: links[int(m.group(1))], formatted)
 
 
 def _emphasis(text: str) -> str:
