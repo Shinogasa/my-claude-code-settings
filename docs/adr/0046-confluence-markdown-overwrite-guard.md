@@ -8,6 +8,8 @@ status: accepted
 
 ## 背景
 
+目的は、AI が既存の Confluence ページを更新するときにマクロを失わないようにしつつ、下書きは Markdown のまま書き続けられるようにすることである。
+
 2026-11-02、既存の Confluence ページを `updateConfluencePage` の `contentFormat: markdown` で全文置き換えしようとした。
 そのページには info パネル、目次マクロ、折りたたみがあった。API は 422 で拒否した
 （`Markdown body replacement would cause data loss. The existing content contains elements that cannot be represented in markdown: confluence macro (info), generic html, confluence macro (toc), confluence macro (expand)`）。
@@ -33,7 +35,21 @@ status: accepted
    info パネルは `> [!INFO]` の引用、折りたたみは `<details>`、目次は `--toc` で付ける
 6. 対象は Claude Code だけにする。Codex には登録しない
 
-決定1〜3は、作業の中で利用者が決めた。2・5（置き場所）・6は、backlog の「決めること」として利用者が選んだ。
+誰が決めたか（2026-11-02、作業の会話の中で）:
+
+| 決定 | 決めた人 | 経路 |
+|---|---|---|
+| 1 独立したフックにする | 利用者 | AI が出した3案（独立・jp-doc-review の先頭・独立にして jp-doc-review は見送る）から選んだ |
+| 2 常に止める | 利用者 | backlog の「決めること」。AI が推奨を添えて聞いた |
+| 3 理由にレビュー→変換の順を書く | 利用者 | 決定1の後に、AI が完了条件の改訂として出し、承認を得た |
+| 4 読めなければ ask | AI | ADR 0033 の決定5に合わせた |
+| 5 置き場所を `bin/` にする | 利用者 | backlog の「決めること」 |
+| 5 標準ライブラリだけで書き、対応する記法を絞る | AI | 下の「既存の Markdown ライブラリで変換する」を参照 |
+| 5 未対応の記法を警告する | 利用者 | 原則レビュー（P03a）の問いを受けて選んだ |
+| 6 Codex は対象外 | 利用者 | backlog の「決めること」 |
+
+決定2は、過去に Markdown で上書きした頻度を確かめないまま決めた（背景のとおり、会話記録では未確認）。
+根拠にしたのは、変換スクリプトがあれば、マクロの無いページで増える手間が小さいことである。
 
 ## 検討した代替案
 
@@ -101,7 +117,11 @@ jp-doc-review の Confluence 処理も Claude Code だけで動かしている�
 既知の限界:
 
 - 変換結果には、既存ページのマクロ（目次や info パネル以外の拡張要素も含む）は入らない。既存ページの HTML から戻すのは、deny の理由に書いた手順に頼る
-- 変換スクリプトは、リスト内のコードブロック、斜体、取り消し線、画像、生の HTML（`<details>` と `<summary>` 以外）に対応しない。生の HTML は文字としてエスケープする
+- 変換スクリプトは、リスト内のコードブロック、斜体、取り消し線、画像、生の HTML（`<details>` と `<summary>` 以外）に対応しない。
+  前の4つは標準エラーに行番号つきで警告し、記号はそのまま文字として残す。生の HTML は警告せず、文字としてエスケープする
+- フックが動かないとき（`python3` が無い、異常終了、timeout）は、Markdown の更新がそのまま送られる。`ask` で補えるのは、入力の JSON を読めなかったときだけである。
+  送られても、マクロを含むページなら API が 422 で拒否する
+- `contentFormat` が `markdown` 以外の未知の値（今のツール定義には無い）や、`updateConfluencePage` 以外の名前で同じ操作をするツールは止めない
 - 2つのフックが同時に deny したときに、Claude Code が両方の理由をどう表示するかは、実機で確かめていない
 - フックの動作は、Atlassian MCP がつながる仕事用のセッションでしか実機確認できない。今回はテストで契約（入力 JSON → 出力 JSON）を確かめた
 
