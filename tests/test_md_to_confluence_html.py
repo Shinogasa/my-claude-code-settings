@@ -45,6 +45,10 @@ class ConvertTests(unittest.TestCase):
             '<p><code>x&lt;y&gt;</code> と <strong>太字</strong> と <a href="https://e.com/?a=1&amp;b=2">リンク</a></p>',
         )
 
+    def test_bold_around_link(self):
+        self.check("**[リンク](https://e.com)** を見る",
+                   '<p><strong><a href="https://e.com">リンク</a></strong> を見る</p>')
+
     def test_inline_code_is_not_formatted(self):
         self.check("`**a**` と `[x](y)`", "<p><code>**a**</code> と <code>[x](y)</code></p>")
 
