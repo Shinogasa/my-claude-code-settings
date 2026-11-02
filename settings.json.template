@@ -137,6 +137,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "mcp__.*__updateConfluencePage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f ~/.claude/hooks/guard-confluence-markdown.py ]; then python3 ~/.claude/hooks/guard-confluence-markdown.py; else echo '{\"systemMessage\":\"フック（~/.claude/hooks/guard-confluence-markdown.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
