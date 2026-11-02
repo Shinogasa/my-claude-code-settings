@@ -9,7 +9,8 @@ Confluence 固有の要素は次の書き方で付ける。
 - 折りたたみ: `<details>` と `<summary>…</summary>` の行で囲む。中身は Markdown として変換する
 - 目次: `--toc` オプションで先頭に付ける
 
-それ以外の生の HTML は、文字としてエスケープする。リストの中のコードブロックには対応しない。
+それ以外の生の HTML は、文字としてエスケープする。斜体・取り消し線・画像・リストの中のコードブロックには対応せず、
+見つけたら標準エラーに行番号つきで警告する（変換結果は変えない）。
 既存ページのマクロは変換結果に含まれないので、送る前に既存ページの HTML から戻す（ADR 0046）。
 
 使い方: python3 md-to-confluence-html.py [--toc] [--toc-max-level N] [下書き.md]（省略すると標準入力）
@@ -262,6 +263,33 @@ def _render_item(text: str, children: str, is_task: bool) -> str:
     return f'<li data-type="task-item"><input type="checkbox"{checked}> {inline(match.group(2))}</li>{children}'
 
 
+# ---- 未対応の記法 ----
+
+# 変換しない記法。見つけても変換結果は変えず、記号がそのまま文字として残ることを知らせる
+UNSUPPORTED_INLINE = (
+    ("斜体", re.compile(r"(?<!\*)\*(?![\s*])[^*]+?(?<![\s*])\*(?!\*)")),
+    ("取り消し線", re.compile(r"~~.+?~~")),
+    ("画像", re.compile(r"!\[[^\]]*\]\(")),
+)
+
+
+def unsupported_warnings(markdown: str) -> List[Tuple[int, str]]:
+    """変換しない記法を (行番号, 記法の名前) で返す。コードブロックとコードスパンの中は見ない。"""
+    found: List[Tuple[int, str]] = []
+    in_fence = False
+    for number, line in enumerate(markdown.replace("\r\n", "\n").split("\n"), start=1):
+        if FENCE.match(line):
+            if not in_fence and line[:1] in (" ", "\t"):
+                found.append((number, "リスト内のコードブロック"))
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        text = CODE_SPAN.sub("", line)
+        found.extend((number, name) for name, pattern in UNSUPPORTED_INLINE if pattern.search(text))
+    return found
+
+
 # ---- 全体 ----
 
 def toc_extension(max_level: int) -> str:
@@ -291,6 +319,8 @@ def main() -> int:
     except OSError as error:
         print(f"md-to-confluence-html: {args.path} を読めない: {error}", file=sys.stderr)
         return 1
+    for number, name in unsupported_warnings(source):
+        print(f"md-to-confluence-html: {number}行目: {name}は変換しない。記号がそのまま文字として残る", file=sys.stderr)
     print(convert(source, toc=args.toc, toc_max_level=args.toc_max_level))
     return 0
 
