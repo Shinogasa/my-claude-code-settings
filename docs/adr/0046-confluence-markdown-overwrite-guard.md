@@ -31,7 +31,7 @@ status: accepted
 3. deny の理由に、送り直す手順を書く。jp-doc-review の下書きがあれば先にレビューを終える → 既存ページを HTML で取得して残すマクロを確かめる →
    `getContentFormatGuide` を読む → 変換スクリプトで HTML にする → 残すマクロを戻して `contentFormat: html` で送る
 4. 入力を読めなかったときは `ask` にする。終了コード1やタイムアウトでは、Claude Code は止めずに送ってしまうため（ADR 0033 の決定5と同じ理由）
-5. 変換スクリプト `bin/md-to-confluence-html.py` を置く。標準ライブラリだけで、`getContentFormatGuide`（2026-11-02取得）の書式に合わせる。
+5. 変換スクリプト `bin/md-to-confluence-html.py` を置く。標準ライブラリだけで書き、`getContentFormatGuide`（2026-11-02取得）の書式に合わせる。
    info パネルは `> [!INFO]` の引用、折りたたみは `<details>`、目次は `--toc` で付ける
 6. 対象は Claude Code だけにする。Codex には登録しない
 
@@ -80,7 +80,7 @@ settings の生成を分ける仕組みを足すのは釣り合わない。
 
 **jp-doc-review の pre-tool-use-confluence の先頭で検査する**
 
-採らなかった。Claude Code は、一致した PreToolUse フックを並列に実行する。そのため、settings で前に並べても、jp-doc-review より先に評価されるとは限らない。
+採らなかった。Claude Code は一致した PreToolUse フックを並列に実行する。そのため、settings で前に並べても、jp-doc-review より先に評価されるとは限らない。
 先頭に入れれば下書きも状態も作られずに止まるが、そうすると、HTML に変換した後でレビューすることになる。
 HTML の下書きでは、yomiyasu のリンターが本文を0文字と数える問題がある（ADR 0034 でラッパーを足して対処した）。
 Markdown のままレビューを先に済ませ、レビュー後の下書きを変換する順番のほうが、レビューは1回で済み、リンターもそのまま効く。
@@ -116,7 +116,7 @@ jp-doc-review の Confluence 処理も Claude Code だけで動かしている�
 
 既知の限界:
 
-- 変換結果には、既存ページのマクロ（目次や info パネル以外の拡張要素も含む）は入らない。既存ページの HTML から戻すのは、deny の理由に書いた手順に頼る
+- 変換結果には、既存ページのマクロ（目次や info パネル以外の拡張要素も含む）は入らない。既存ページの HTML からマクロを戻す作業は、deny の理由に書いた手順に頼る
 - 変換スクリプトは、リスト内のコードブロック、斜体、取り消し線、画像、生の HTML（`<details>` と `<summary>` 以外）に対応しない。
   前の4つは標準エラーに行番号つきで警告し、記号はそのまま文字として残す。生の HTML は警告せず、文字としてエスケープする
 - フックが動かないとき（`python3` が無い、異常終了、timeout）は、Markdown の更新がそのまま送られる。`ask` で補えるのは、入力の JSON を読めなかったときだけである。
