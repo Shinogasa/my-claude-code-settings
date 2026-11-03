@@ -22,6 +22,10 @@ class TestDepthQuestions(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, COMPLETION_RULE)
 
+    def test_depth_answers_that_changed_plan_leave_a_trace(self):
+        # 形だけになったことに気づけるよう、計画を変えた答えだけは跡を残す（ADR 0048、原則レビュー P03a）
+        self.assertIn("計画を変えた答えは、タスク用ファイルに1行ずつ書く", COMPLETION_RULE)
+
     def test_depth_questions_forbid_role_declaration(self):
         # ブログ: 役割を名乗らせても語彙が変わるだけで、方法は変わらない
         self.assertIn("役割を名乗らせない", COMPLETION_RULE)
