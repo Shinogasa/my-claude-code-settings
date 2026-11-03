@@ -192,7 +192,7 @@ PR作成の手順を扱うskillの側に書くか。足す前に、実際のブ�
 ### P3: セキュリティレビューで見送った指摘（2026-11-03、ADR 0044 の2条件に当たらない）
 
 - `--delete-merged --dry-run --no-dry-run` のように後ろで打ち消す形や、`--sort --dry-run` のように値を取るオプションに `--dry-run` を飲み込ませる形は、dry-run として通る（自動レビュー）
-- git の出力に UTF-8 でないバイト列が出ると、`UnicodeDecodeError` で終了コード1になり、fail-open で通る。既存の判定にも共通する構造。`errors="replace"` を付けるか、`run_checks` 全体を包んで終了コード2に倒すかを決める（security-reviewer）
+- git の出力に UTF-8 でないバイト列が出ると、`UnicodeDecodeError` で終了コード1になり、fail-open で通る。既存の判定にも共通する構造。`errors="replace"` を付けるか、`run_checks` 全体を包んで終了コード2で終わらせるかを決める（security-reviewer）
 - `/usr/bin/git` のようにパス付きで git を呼ぶと、どの判定にもかからない。既存の判定にも共通する（security-reviewer）
 - `git update-ref` の `-d` は、完全一致の場合だけ拾う（security-reviewer）
 - default ブランチが develop などのリポジトリでは、すべての削除が止まる。`refs/remotes/origin/HEAD` を最初の候補に足すかを決める（security-reviewer）
