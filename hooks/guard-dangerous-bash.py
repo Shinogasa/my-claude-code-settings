@@ -194,6 +194,9 @@ REF_DELETE_SHORT = set("d")
 # ローカルブランチの削除を表す git branch のフラグ。-D は --delete --force の別名。
 BRANCH_DELETE_LONG_FLAG = "--delete"
 BRANCH_DELETE_SHORT = set("dD")
+# upstream に取り込まれたブランチをまとめて消す（git 2.56〜）。--dry-run を付けると消さない。
+BRANCH_DELETE_MERGED_FLAG = "--delete-merged"
+BRANCH_DRY_RUN_FLAG = "--dry-run"
 # リモート追跡ブランチを対象にするフラグ。fetch で戻せるので削除判定から外す。
 BRANCH_REMOTES_LONG_FLAG = "--remotes"
 BRANCH_REMOTES_SHORT = set("r")
@@ -981,6 +984,25 @@ def branch_delete_names(args: list) -> list:
     return [a for a in options if not a.startswith("-")] + after_separator
 
 
+def is_bulk_branch_delete(tokens: list) -> bool:
+    """`git branch --delete-merged`（git 2.56〜）で、実際に消すものか判定する。--dry-run は消さない。
+
+    --delete-merged は upstream に取り込まれていれば消すため、-d と同じ穴がある。
+    消す対象は git が実行時にパターンから決めるので、フックでは列挙できない。
+    略記は --delete より長いもの（--delete-m など）だけを拾う。--delete 自体は単体の削除。
+    """
+    if not tokens or tokens[0] != "git":
+        return False
+    subcommand, args = extract_subcommand(tokens)
+    if subcommand != "branch":
+        return False
+    options = [a for a in itertools.takewhile(lambda a: a != "--", args) if a.startswith("--")]
+    bulk = any(a.split("=", 1)[0].startswith(BRANCH_DELETE_LONG_FLAG + "-")
+               and is_long_option_prefix(a, BRANCH_DELETE_MERGED_FLAG) for a in options)
+    dry_run = any(is_long_option_prefix(a, BRANCH_DRY_RUN_FLAG) for a in options)
+    return bulk and not dry_run
+
+
 def update_ref_delete_names(args: list) -> list:
     """`git update-ref -d refs/heads/<name>` なら、消すブランチ名を返す。違えば空リスト。
 
@@ -1032,6 +1054,9 @@ def unmerged_branch_deletion(tokens: list, candidates: set) -> str:
     ローカルの origin/main が古くて止まった場合は、メッセージで fetch を案内する。
     判定できないとき（対象のリポジトリ、取り込み先、ブランチを特定できない）は止める。
     """
+    if is_bulk_branch_delete(tokens):
+        return ("--delete-merged は upstream に取り込まれていれば消すうえ、"
+                "消すブランチを実行時に決めるため、origin/main に取り込まれているか判定できません")
     names = deleted_local_branches(tokens)
     if not names:
         return ""
@@ -1197,6 +1222,8 @@ def run_checks() -> int:
             print("  マージ済みなら、origin を更新してからやり直してください"
                   "（ローカルの origin/main が古いと未マージに見えます）:", file=sys.stderr)
             print("      git fetch --prune", file=sys.stderr)
+            print("  まとめて消したいときは、--dry-run で対象を確かめてから、"
+                  "git branch -d で1つずつ消してください。", file=sys.stderr)
             print("  squash / rebase マージしたブランチは origin/main の祖先にならないため、"
                   "マージ済みでも止まります。", file=sys.stderr)
             print("  それでも消す必要がある場合は、あなた自身が端末で実行してください。",
