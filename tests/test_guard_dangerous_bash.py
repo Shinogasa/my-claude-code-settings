@@ -1344,6 +1344,13 @@ class TestSlowGitFailsClosed(unittest.TestCase):
     def test_slow_branch_lookup_blocks_commit(self):
         self.assert_blocked_as_unchecked('git commit -m "x"', self.on_main, "symbolic-ref")
 
+    def test_slow_ancestor_check_blocks_branch_delete(self):
+        # 祖先判定が時間内に終わらなければ、マージ済みかどうか分からないので止める
+        head = git(self.feature, "rev-parse", "HEAD").stdout.strip()
+        git(self.feature, "update-ref", "refs/remotes/origin/main", head)
+        git(self.feature, "branch", "merged")
+        self.assert_blocked_as_unchecked("git branch -d merged", self.feature, "merge-base")
+
     def test_slow_head_lookup_blocks_commit(self):
         self.assert_blocked_as_unchecked('git commit -m "x"', self.on_main, "--verify")
 
@@ -1368,6 +1375,133 @@ class TestSlowGitFailsClosed(unittest.TestCase):
     def test_commands_without_git_lookup_are_not_slowed_or_blocked(self):
         result = self.run_slow("ls", self.on_main, " ")
         self.assertEqual(result.returncode, ALLOW, result.stderr)
+
+
+class TestUnmergedBranchDeletion(unittest.TestCase):
+    """origin/main（無ければ origin/master）に取り込まれていないローカルブランチの削除を止めること。
+
+    `git branch -d` は upstream に取り込まれていれば消せるため、main に未マージでも
+    push 済みなら通ってしまう（2026-11-03 に実際に起きた）。upstream ではなく
+    origin/main の祖先かどうかで判定する。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        (self.base / "repo").mkdir()
+        self.repo = make_repo(self.base / "repo", with_hooks=False, branch="work")
+        head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        git(self.repo, "update-ref", "refs/remotes/origin/main", head)
+        # merged は origin/main と同じコミット、merged2 も同じ。unmerged はその先に1コミット進む
+        git(self.repo, "branch", "merged")
+        git(self.repo, "branch", "merged2")
+        git(self.repo, "switch", "-q", "-c", "unmerged")
+        git(self.repo, "commit", "-q", "--allow-empty", "-m", "unmerged work")
+        git(self.repo, "switch", "-q", "work")
+
+    def assert_blocked(self, command, cwd=None):
+        result = run_guard_output(command, cwd or self.repo)
+        self.assertEqual(result.returncode, BLOCK, f"{command}: {result.stderr}")
+        return result
+
+    def assert_allowed(self, command, cwd=None):
+        result = run_guard_output(command, cwd or self.repo)
+        self.assertEqual(result.returncode, ALLOW, f"{command}: {result.stderr}")
+
+    def test_delete_flags_on_unmerged_branch_are_blocked(self):
+        for command in ("git branch -d unmerged",
+                        "git branch -D unmerged",
+                        "git branch --delete unmerged",
+                        "git branch --delete --force unmerged",
+                        "git branch -df unmerged",
+                        "git branch -fd unmerged",
+                        "git branch --del unmerged",
+                        "git branch -d -- unmerged",
+                        "rtk git branch -D unmerged"):
+            with self.subTest(command=command):
+                self.assert_blocked(command)
+
+    def test_delete_merged_branch_is_allowed(self):
+        for command in ("git branch -d merged",
+                        "git branch -D merged",
+                        "git branch -d merged merged2"):
+            with self.subTest(command=command):
+                self.assert_allowed(command)
+
+    def test_multiple_branches_block_if_any_is_unmerged(self):
+        self.assert_blocked("git branch -d merged unmerged")
+
+    def test_other_branch_commands_are_allowed(self):
+        for command in ("git branch", "git branch -v", "git branch -a",
+                        "git branch new-branch", "git branch --list 'd*'",
+                        "git branch -m unmerged renamed"):
+            with self.subTest(command=command):
+                self.assert_allowed(command)
+
+    def test_remote_tracking_branch_deletion_is_allowed(self):
+        # リモート追跡ブランチは fetch で戻せる
+        for command in ("git branch -dr origin/unmerged", "git branch -d -r origin/unmerged",
+                        "git branch --delete --remotes origin/unmerged"):
+            with self.subTest(command=command):
+                self.assert_allowed(command)
+
+    def test_other_directory_is_checked(self):
+        outside = self.base / "outside"
+        outside.mkdir()
+        for command in (f"git -C {self.repo} branch -d unmerged",
+                        f"cd {self.repo} && git branch -d unmerged"):
+            with self.subTest(command=command):
+                self.assert_blocked(command, outside)
+        self.assert_allowed(f"git -C {self.repo} branch -d merged", outside)
+
+    def test_unresolved_directory_is_blocked(self):
+        self.assert_blocked('cd "$REPO" && git branch -d merged')
+
+    def test_falls_back_to_origin_master(self):
+        head = git(self.repo, "rev-parse", "origin/main").stdout.strip()
+        git(self.repo, "update-ref", "-d", "refs/remotes/origin/main")
+        git(self.repo, "update-ref", "refs/remotes/origin/master", head)
+        self.assert_allowed("git branch -d merged")
+        self.assert_blocked("git branch -d unmerged")
+
+    def test_missing_origin_main_and_master_is_blocked(self):
+        git(self.repo, "update-ref", "-d", "refs/remotes/origin/main")
+        result = self.assert_blocked("git branch -d merged")
+        self.assertIn("origin/main", result.stderr)
+
+    def test_unknown_branch_is_blocked(self):
+        self.assert_blocked("git branch -d no-such-branch")
+
+    def test_outside_git_repository_is_blocked(self):
+        outside = self.base / "outside"
+        outside.mkdir()
+        self.assert_blocked("git branch -d merged", outside)
+
+    def test_update_ref_delete_of_local_branch_is_checked(self):
+        self.assert_blocked("git update-ref -d refs/heads/unmerged")
+        self.assert_allowed("git update-ref -d refs/heads/merged")
+        # ローカルブランチ以外の ref は対象外
+        self.assert_allowed("git update-ref -d refs/remotes/origin/unmerged")
+
+    def test_delete_merged_is_blocked(self):
+        # git 2.56 の --delete-merged は upstream に取り込まれていれば消す。-d と同じ穴で、
+        # 消す対象は git が実行時にパターンから決めるため、フックでは列挙できない
+        for command in ("git branch --delete-merged 'origin/*'",
+                        "git branch --delete-merged=origin/main",
+                        "git branch --delete-m origin 'topic-*'"):
+            with self.subTest(command=command):
+                result = self.assert_blocked(command)
+                self.assertIn("--dry-run", result.stderr)
+
+    def test_delete_merged_dry_run_is_allowed(self):
+        self.assert_allowed("git branch --dry-run --delete-merged 'origin/*'")
+
+    def test_message_explains_how_to_check(self):
+        result = self.assert_blocked("git branch -d unmerged")
+        for expected in ("unmerged", "gh pr view", "git fetch --prune", "端末"):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, result.stderr)
 
 
 if __name__ == "__main__":

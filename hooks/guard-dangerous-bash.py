@@ -6,7 +6,8 @@
   1. 状況に依存せず常にNG (rm -r / , git reset --hard)
   2. 実行環境を見れば確定的に有害と判定できるもの
      (git の --no-verify, 保護ブランチへの直接コミット,
-      保護ブランチへの force push と削除)
+      保護ブランチへの force push と削除,
+      origin/main に取り込まれていないローカルブランチの削除)
   3. 操作自体は正当だが、エージェントが自律的に行ってよいものではないもの
      (terraform state の書き換え、state の中身を平文で出す操作)
 
@@ -74,6 +75,7 @@ cd を信じすぎると、実際のコミット先ではない場所で判定�
 テストデータの中に"rm -rf /"のような文字列が引用符付きで
 含まれているだけのケースを誤検知しない。
 """
+import itertools
 import json
 import os
 import posixpath
@@ -189,6 +191,18 @@ GIT_PUSH_BROADCAST_FLAGS = {"--all", "--branches", "--mirror"}
 # 長い形は略記 (--del) も拾う。削除も refspec 側に別経路がある (`git push origin :main`)。
 REF_DELETE_LONG_FLAG = "--delete"
 REF_DELETE_SHORT = set("d")
+# ローカルブランチの削除を表す git branch のフラグ。-D は --delete --force の別名。
+BRANCH_DELETE_LONG_FLAG = "--delete"
+BRANCH_DELETE_SHORT = set("dD")
+# upstream に取り込まれたブランチをまとめて消す（git 2.56〜）。--dry-run を付けると消さない。
+BRANCH_DELETE_MERGED_FLAG = "--delete-merged"
+BRANCH_DRY_RUN_FLAG = "--dry-run"
+# リモート追跡ブランチを対象にするフラグ。fetch で戻せるので削除判定から外す。
+BRANCH_REMOTES_LONG_FLAG = "--remotes"
+BRANCH_REMOTES_SHORT = set("r")
+LOCAL_BRANCH_PREFIX = "refs/heads/"
+# ブランチの取り込み先として見る ref。先にあるものを使う。
+MERGE_TARGET_REFS = ("refs/remotes/origin/main", "refs/remotes/origin/master")
 # commit の短いフラグのうち、続く文字を値にするもの。-mn の n は値で、--no-verify ではない。
 # S と u は値を省略できるが、付けるときは続けて書くので同じ扱いになる。
 COMMIT_SHORT_OPTS_WITH_VALUE = set("FmcCtUSu")
@@ -719,6 +733,17 @@ class GitQueryFailed(Exception):
     """git の照会が時間内に終わらなかった、または git を起動できなかった。"""
 
 
+def run_git_process(cwd: str, *args: str) -> subprocess.CompletedProcess:
+    """git を実行する。タイムアウトと起動の失敗は答えが無いので GitQueryFailed を投げる。"""
+    try:
+        return subprocess.run(
+            ["git", "-C", cwd, *args],
+            capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise GitQueryFailed(" ".join(args)) from None
+
+
 def run_git(cwd: str, *args: str) -> str:
     """git コマンドの標準出力を返す。git が0以外で終わったときは空文字列。
 
@@ -726,13 +751,7 @@ def run_git(cwd: str, *args: str) -> str:
     タイムアウトと起動の失敗は答えが無いので、空文字列に畳まず GitQueryFailed を投げる。
     畳むと「検査できなかった」が「保護ブランチではない」になり、コミットを通してしまう。
     """
-    try:
-        result = subprocess.run(
-            ["git", "-C", cwd, *args],
-            capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC,
-        )
-    except (OSError, subprocess.SubprocessError):
-        raise GitQueryFailed(" ".join(args)) from None
+    result = run_git_process(cwd, *args)
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
@@ -945,6 +964,123 @@ def destructive_push(tokens: list, candidates: set) -> tuple:
     return "", ""
 
 
+def branch_delete_names(args: list) -> list:
+    """`git branch` の引数がローカルブランチの削除なら、消すブランチ名を返す。違えば空リスト。
+
+    -D は --delete --force の別名なので、短いフラグは d / D をまとめ書き (-df) からも拾う。
+    -r / --remotes はリモート追跡ブランチの削除で、fetch で戻せるため対象外にする。
+    値を取るオプション (--format など) は削除と組み合わせないので読み飛ばさない。
+    値をブランチ名と取り違えても、解決できずに止まる側へ倒れる。
+    """
+    options = list(itertools.takewhile(lambda a: a != "--", args))
+    flags = [a for a in options if a.startswith("-")]
+    is_delete = any(is_long_option_prefix(a, BRANCH_DELETE_LONG_FLAG)
+                    or short_cluster_has(a, BRANCH_DELETE_SHORT) for a in flags)
+    is_remote = any(is_long_option_prefix(a, BRANCH_REMOTES_LONG_FLAG)
+                    or short_cluster_has(a, BRANCH_REMOTES_SHORT) for a in flags)
+    if not is_delete or is_remote:
+        return []
+    after_separator = args[len(options) + 1:]
+    return [a for a in options if not a.startswith("-")] + after_separator
+
+
+def is_bulk_branch_delete(tokens: list) -> bool:
+    """`git branch --delete-merged`（git 2.56〜）で、実際に消すものか判定する。--dry-run は消さない。
+
+    --delete-merged は upstream に取り込まれていれば消すため、-d と同じ穴がある。
+    消す対象は git が実行時にパターンから決めるので、フックでは列挙できない。
+    略記は --delete より長いもの（--delete-m など）だけを拾う。--delete 自体は単体の削除。
+    """
+    if not tokens or tokens[0] != "git":
+        return False
+    subcommand, args = extract_subcommand(tokens)
+    if subcommand != "branch":
+        return False
+    options = [a for a in itertools.takewhile(lambda a: a != "--", args) if a.startswith("--")]
+    bulk = any(a.split("=", 1)[0].startswith(BRANCH_DELETE_LONG_FLAG + "-")
+               and is_long_option_prefix(a, BRANCH_DELETE_MERGED_FLAG) for a in options)
+    dry_run = any(is_long_option_prefix(a, BRANCH_DRY_RUN_FLAG) for a in options)
+    return bulk and not dry_run
+
+
+def update_ref_delete_names(args: list) -> list:
+    """`git update-ref -d refs/heads/<name>` なら、消すブランチ名を返す。違えば空リスト。
+
+    update-ref は略記を補わず、ref 名をそのまま使うため、refs/heads/ で始まるものだけを見る。
+    """
+    if "-d" not in args:
+        return []
+    positional = []
+    i = 0
+    while i < len(args):
+        if args[i] == "-m":
+            i += 2
+            continue
+        if not args[i].startswith("-"):
+            positional.append(args[i])
+        i += 1
+    if positional and positional[0].startswith(LOCAL_BRANCH_PREFIX):
+        return [positional[0][len(LOCAL_BRANCH_PREFIX):]]
+    return []
+
+
+def deleted_local_branches(tokens: list) -> list:
+    """ローカルブランチを消す git コマンドなら、消すブランチ名を返す。違えば空リスト。"""
+    if not tokens or tokens[0] != "git":
+        return []
+    subcommand, args = extract_subcommand(tokens)
+    if subcommand == "branch":
+        return branch_delete_names(args)
+    if subcommand == "update-ref":
+        return update_ref_delete_names(args)
+    return []
+
+
+def merge_target_ref(directory: str) -> str:
+    """取り込み先として見る ref（origin/main、無ければ origin/master）を返す。無ければ空文字列。"""
+    for ref in MERGE_TARGET_REFS:
+        if run_git(directory, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"):
+            return ref
+    return ""
+
+
+def unmerged_branch_deletion(tokens: list, candidates: set) -> str:
+    """取り込まれていない（か、取り込まれたと確かめられない）ブランチを消すなら理由を返す。
+
+    upstream ではなく origin/main の祖先かどうかで見る。`git branch -d` は upstream に
+    取り込まれていれば消せるため、push 済みの未マージブランチを通してしまう。
+    フックの中では fetch しない。PreToolUse の同期経路にネットワーク待ちを入れると、
+    認証待ちやオフラインで毎回タイムアウトして止まるうえ、判定のついでに ref を書き換える。
+    ローカルの origin/main が古くて止まった場合は、メッセージで fetch を案内する。
+    判定できないとき（対象のリポジトリ、取り込み先、ブランチを特定できない）は止める。
+    """
+    if is_bulk_branch_delete(tokens):
+        return ("--delete-merged は upstream に取り込まれていれば消すうえ、"
+                "消すブランチを実行時に決めるため、origin/main に取り込まれているか判定できません")
+    names = deleted_local_branches(tokens)
+    if not names:
+        return ""
+    directories = git_target_dirs(tokens, candidates)
+    if UNRESOLVED in directories:
+        return "対象のリポジトリを特定できません"
+    for directory in sorted(directories):
+        target = merge_target_ref(directory)
+        if not target:
+            return "origin/main も origin/master も見つからないため、取り込み済みか判定できません"
+        short_target = target[len("refs/remotes/"):]
+        for name in names:
+            ref = LOCAL_BRANCH_PREFIX + name
+            if not run_git(directory, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"):
+                return f"ブランチ {name} を解決できません"
+            # 終了コードで答える: 0=祖先、1=祖先でない、それ以外=判定できない
+            code = run_git_process(directory, "merge-base", "--is-ancestor", ref, target).returncode
+            if code == 1:
+                return f"ブランチ {name} は {short_target} に取り込まれていません"
+            if code != 0:
+                return f"ブランチ {name} が {short_target} に取り込まれているか判定できません"
+    return ""
+
+
 def verification_hooks_active(cwd: str) -> bool:
     """cwd の git リポジトリに、実際にスキップ対象となる検証フックがあるか。
 
@@ -981,7 +1117,7 @@ def main() -> int:
     except GitQueryFailed as error:
         print(f"ブロック: git の照会（git {error}）が{GIT_TIMEOUT_SEC}秒以内に終わらないか、起動できなかったため、",
               file=sys.stderr)
-        print("  保護ブランチと検証フックを判定できません。", file=sys.stderr)
+        print("  保護ブランチ・検証フック・ブランチの取り込み状態を判定できません。", file=sys.stderr)
         print("  マシンが重いときに起きます。少し待ってから実行し直してください。", file=sys.stderr)
         print("  続く場合は、あなた自身が端末で実行してください。", file=sys.stderr)
         return 2
@@ -1075,6 +1211,23 @@ def run_checks() -> int:
                       file=sys.stderr)
             print(f"  保護ブランチを対象にする必要がある場合は、"
                   "あなた自身が端末で実行してください。", file=sys.stderr)
+            return 2
+        unmerged = unmerged_branch_deletion(simple_command, candidates)
+        if unmerged:
+            print(f"ブロック: ローカルブランチの削除です。{unmerged}。", file=sys.stderr)
+            print("  git branch -d は upstream に取り込まれていれば消せるため、"
+                  "main に未マージでも push 済みなら通ります。", file=sys.stderr)
+            print("  PR がマージ済みかを確かめてください:", file=sys.stderr)
+            print("      gh pr view <branch> --json state", file=sys.stderr)
+            print("  マージ済みなら、origin を更新してからやり直してください"
+                  "（ローカルの origin/main が古いと未マージに見えます）:", file=sys.stderr)
+            print("      git fetch --prune", file=sys.stderr)
+            print("  まとめて消したいときは、--dry-run で対象を確かめてから、"
+                  "git branch -d で1つずつ消してください。", file=sys.stderr)
+            print("  squash / rebase マージしたブランチは origin/main の祖先にならないため、"
+                  "マージ済みでも止まります。", file=sys.stderr)
+            print("  それでも消す必要がある場合は、あなた自身が端末で実行してください。",
+                  file=sys.stderr)
             return 2
         if is_verification_bypass(simple_command):
             bypass_dirs |= git_target_dirs(simple_command, candidates)
