@@ -8,7 +8,7 @@ status: accepted
 
 ## 背景
 
-ユーザーが Felix Rieseberg のブログ「How to be more ambitious」（2026-10-13）を読み、ルールやスキルに役立てられる部分が無いかを依頼した。
+ユーザーが Felix Rieseberg のブログ「How to be more ambitious」（2026-10-13）を読み、ルールやスキルに役立てられる部分が無いかを調べるよう依頼した。
 ユーザーが特に有効だと考えたのは、Depth の「Insist on the same instruments used by the best in the industry」だった。
 記事はこれを、専門家のように振る舞えと頼んでも語彙が変わるだけで方法は変わらない、という観察から導いている。
 
@@ -47,7 +47,7 @@ status: accepted
 
 ### 4問をskillにする
 
-最初にAIが出した案。ユーザーの起動時だけ動くので、既存ruleとはぶつからない。
+最初にAIが出した案。ユーザーが起動したときだけ動くので、既存ruleとはぶつからない。
 しかし、skillはdescriptionとの一致で発火するので、「深くして」と言わない限り、ほぼ手動の呼び出しになる。
 ユーザーがこの点を指摘した。毎セッション読み込まれ、計画を書くタスクだけで効く既存ruleに相乗りする方を採った。
 
