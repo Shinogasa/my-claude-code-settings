@@ -1484,6 +1484,19 @@ class TestUnmergedBranchDeletion(unittest.TestCase):
         # ローカルブランチ以外の ref は対象外
         self.assert_allowed("git update-ref -d refs/remotes/origin/unmerged")
 
+    def test_delete_merged_is_blocked(self):
+        # git 2.56 の --delete-merged は upstream に取り込まれていれば消す。-d と同じ穴で、
+        # 消す対象は git が実行時にパターンから決めるため、フックでは列挙できない
+        for command in ("git branch --delete-merged 'origin/*'",
+                        "git branch --delete-merged=origin/main",
+                        "git branch --delete-m origin 'topic-*'"):
+            with self.subTest(command=command):
+                result = self.assert_blocked(command)
+                self.assertIn("--dry-run", result.stderr)
+
+    def test_delete_merged_dry_run_is_allowed(self):
+        self.assert_allowed("git branch --dry-run --delete-merged 'origin/*'")
+
     def test_message_explains_how_to_check(self):
         result = self.assert_blocked("git branch -d unmerged")
         for expected in ("unmerged", "gh pr view", "git fetch --prune", "端末"):
