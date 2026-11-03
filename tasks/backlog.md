@@ -172,6 +172,33 @@ PR作成の手順を扱うskillの側に書くか。足す前に、実際のブ�
 
 ---
 
+## 未マージブランチの削除ガードの残り（ADR 0047）
+
+### P3: ガードが拾わない、ローカルブランチを消す・上書きする経路
+
+2026-11-03 に `git branch -d/-D/--delete-merged` と `git update-ref -d refs/heads/*` を止めた。
+次の経路は、AI がブランチを片付けるときにふだん書く形ではないので、見送った（ADR 0044 の条件1に当たらない）。
+
+- ファイル操作: `rm .git/refs/heads/<name>`、packed-refs の直接編集
+- `git update-ref --stdin` の delete 指示、`git push . :refs/heads/<name>`（ローカルへの push）
+- `--git-dir` / `--work-tree` / `--namespace` との組み合わせ（照会は `-C` のディレクトリだけで行う）
+- git alias（`git config alias.bd 'branch -D'` など）
+- 上書き: `git branch -M` / `-C` / `-f`、`git checkout -B`、`git switch -C`
+- `xargs git branch -D` や `bash -c '...'` の中の git（入れ子のシェルは、フック全体の既知の限界）
+
+**決めること**: どれかを止めるか。止めるなら、上書きは「上書きされるブランチの今の先端」を同じ祖先判定にかける形にするか。
+**着手条件**: AI がこのどれかでブランチを失った事例が出たとき。
+
+### P3: セキュリティレビューで見送った指摘（2026-11-03、ADR 0044 の2条件に当たらない）
+
+- `--delete-merged --dry-run --no-dry-run` のように後ろで打ち消す形や、`--sort --dry-run` のように値を取るオプションに `--dry-run` を飲み込ませる形は、dry-run として通る（自動レビュー）
+- git の出力に UTF-8 でないバイト列が出ると、`UnicodeDecodeError` で終了コード1になり、fail-open で通る。既存の判定にも共通する構造。`errors="replace"` を付けるか、`run_checks` 全体を包んで終了コード2に倒すかを決める（security-reviewer）
+- `/usr/bin/git` のようにパス付きで git を呼ぶと、どの判定にもかからない。既存の判定にも共通する（security-reviewer）
+- `git update-ref` の `-d` は、完全一致の場合だけ拾う（security-reviewer）
+- default ブランチが develop などのリポジトリでは、すべての削除が止まる。`refs/remotes/origin/HEAD` を最初の候補に足すかを決める（security-reviewer）
+
+---
+
 ## Codex CLI 対応の続き
 
 全量監査と判断根拠は `docs/codex-compatibility-audit.md`、設計判断は
