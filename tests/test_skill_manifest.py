@@ -265,5 +265,31 @@ class TestAwsSkillSubmodule(unittest.TestCase):
         self.assertEqual(unresolved_skill_links(SKILLS_DIR), set())
 
 
+MATT_SUBMODULE = "mattpocock-skills"
+# grill-meは「grillingを呼ぶ」だけの入口なので、本体のgrillingも一緒に配る
+MATT_SKILLS = {
+    "grill-me": "skills/productivity/grill-me",
+    "grilling": "skills/productivity/grilling",
+}
+
+
+class TestMattPocockSkillSubmodule(unittest.TestCase):
+    """mattpocock/skillsの公式版を上流submodule内へのsymlinkとして共有配布しているか。"""
+
+    def test_submodule_is_declared(self):
+        gitmodules = (REPO_ROOT / ".gitmodules").read_text(encoding="utf-8")
+        self.assertIn(f"path = {MATT_SUBMODULE}", gitmodules)
+        self.assertIn("url = https://github.com/mattpocock/skills.git", gitmodules)
+
+    def test_selected_skills_are_relative_links_listed_as_shared(self):
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        for name, upstream in MATT_SKILLS.items():
+            with self.subTest(name=name):
+                link = SKILLS_DIR / name
+                self.assertTrue(link.is_symlink())
+                self.assertEqual(os.readlink(link), f"../{MATT_SUBMODULE}/{upstream}")
+                self.assertIn(name, manifest["shared"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
