@@ -446,7 +446,7 @@ persona polite     # 切り替える。反映されるのは次に始めるセ�
 │   ├── codex-cli-best-practice/ #   Codex設定の補助資料の参照（Codex CLI）
 │   ├── code-learning/           #   実作業でのコード理解・変更・レビュー演習
 │   ├── coding-standards/        #   コーディング規約
-│   ├── grill-me, grilling       #   計画や設計を質問で詰める（mattpocock-skills内へのsymlink）
+│   ├── grilling                 #   計画や設計を質問で詰める（mattpocock-skills内へのsymlink）
 │   ├── handoff                  #   別のエージェントへの引き継ぎ文書を作る（同上）
 │   ├── retro, writing-for-agents  # セッションを振り返り、エージェントの環境の改善候補を挙げる（同上）
 │   ├── learning-mode/           #   学習モードの手順と書式
@@ -669,9 +669,10 @@ git -C agent-toolkit-for-aws checkout origin/main
 ## mattpocock-skills（submodule）
 
 [mattpocock/skills](https://github.com/mattpocock/skills) をgit submoduleとして内包している。
-配布するのは次の5つだけ。
+配布するのは次の4つだけ。
 
-- `grill-me`・`grilling`: 計画を質問で詰める。`grill-me` は「`grilling` を呼ぶ」だけの入口なので、2つを一緒に配る
+- `grilling`: 計画を質問で詰める。`/grilling` と打てば手動でも起動できる。
+  上流の `grill-me` は「`grilling` を呼ぶ」だけの入口で、手動起動の別名にすぎないので配らない
 - `handoff`: 会話を、別のエージェント向けの引き継ぎ文書にまとめる。保存先は `$TMPDIR`
 - `retro`・`writing-for-agents`: セッションを振り返り、エージェントの環境の改善候補を挙げる。`retro` が最初に `writing-for-agents` を呼ぶので、2つを一緒に配る。
   `writing-for-agents` は自動で起動し、スキルや CLAUDE.md を直すたびに読まれる。このリポジトリの作業はほとんどがそれに当たるので、承知のうえで入れている
