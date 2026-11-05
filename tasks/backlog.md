@@ -1458,6 +1458,28 @@ submoduleとプラグインの更新を洗い出したとき、次は版を比�
 
 **決めること**: 写したスキルを上流と比べるか、比べるなら写したcommitを記録する仕組み（READMEか、スキルの先頭のコメント）を作るか。
 
+### P3: ECC由来の資産を、上流submoduleへのsymlinkに置き換えるか決める
+
+2026-11-05、`skills/grill-me` を公式 `mattpocock/skills` のsubmoduleへのsymlinkに移した（PR #131、ADR 0035と同じ方式）。
+同じ扱いを、`0ca0337`（2026-04-07）で [affaan-m/ECC](https://github.com/affaan-m/ECC)（旧 everything-claude-code）から写した資産にも広げたい。
+2026-11-05に上流mainと比べた結果は次のとおり（類似度は `difflib.SequenceMatcher` の値）。
+
+- ほぼそのままのコピー: `skills/backend-patterns`（0.93）、`skills/coding-standards`（0.90）。差の大半は、上流が後から更新した分（description、`metadata: origin: ECC` など）
+- frontmatterだけ変えたもの: `agents/` の `build-error-resolver`・`code-architect`・`code-explorer`・`code-simplifier`・`refactor-cleaner`・`silent-failure-hunter`。
+  ローカルの差は `tools:` の書き方と `color:` だけ。上流は後から「Prompt Defense Baseline」の節を足した
+- 作り変えたもの（自前の資産として残す想定）: `agents/security-reviewer`（読み取り専用・`permissionMode: plan`。`rules/security-review-policy.md` が前提にしている）、
+  `agents/planner`（`effort: high` と手順の追加）、`rules/ecc-development-workflow.md`（superpowersとの分担に書き換え）、`rules/ecc-coding-style.md`（ADR 0040で `paths:` を追加）
+
+気をつける点:
+
+- ECCは6,449ファイルある。2〜8ファイルのために丸ごとsubmoduleにすると、cloneと `submodule update` が重くなる
+- エージェントをsymlinkにすると、`color:` などのローカルの変更は消える。`setup.sh` が `agents/` をファイル単位でリンクできるかは未確認
+- 上流のスキルはdescriptionが変わっているので、置き換えると発火のしかたが変わりうる
+- ADR 0003 に「ECC由来資産の競合は未監査」とある。置き換える前に、そもそも使っているかを会話記録で確かめる方が先かもしれない
+
+**決めること**: (1) 使っていない資産を消すか。(2) 残すものをsubmodule化するか、自前のコピーのまま上流の版だけ記録するか。
+(3) submodule化するなら、対象をスキル2つに絞るか、frontmatterだけ変えたエージェント6つまで含めるか。
+
 ---
 
 ## リンク先のディレクトリへの混入
