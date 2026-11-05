@@ -64,6 +64,23 @@ READMEは番号を再利用しないとしている。また `docs/adr/README.md
 
 **着手条件**: Codexのサンドボックス内で全テストを回す必要が出たとき。恒久的な権限設定の変更は別途判断する。
 
+### P3: 全件テストがたまに1件だけ落ちる原因を調べる
+
+2026-11-06、ブランチ `docs/backlog-ecc-submodule`（`5f7855a`、`tasks/backlog.md` だけを変更）で `bash tests/run.sh --all` を流すと、
+`1 failed, 1324 passed` になった。直後に同じコミットで流し直すと、`bash tests/run.sh`（遅いテストを除く）も `--all` も全件通った。
+変更は backlog だけなので、変更が原因とは考えにくい。並列実行（pytest-xdist）での干渉か、時間に依存するテストが疑わしい。
+
+どのテストが落ちたかは分からない。出力の最後の1行だけを見ていて、失敗したテスト名を残していなかったため。
+同じ現象は、PR #131 でも1回起きている（`test_jp_doc_review_hook.py` の失敗。こちらは原因が個人の git 除外設定で、修正済み）。
+
+調べ方の案は次のとおり。
+
+- 次に落ちたら、`FAILED` の行とトレースバックを残す。`tests/run.sh` が失敗したテストの一覧を必ず表示するようにしてもよい
+- `--all` を何回か流し、落ちるテストが毎回同じか、別のものかを見る
+- 同じテストだけを `-p no:xdist`（直列）で流し、並列のときだけ落ちるのかを確かめる
+
+**決めること**: 落ちたテストが分かったあと、直すか、並列から外すか、再実行で吸収するか。
+
 ### CIで全件テストを流す
 
 - 利点: 毎回まっさらな環境で流すので、コピー以外から入る環境依存（HOME、グローバルなgit設定、ツールのバージョン）も捕まえられる。
@@ -1457,6 +1474,39 @@ submoduleとプラグインの更新を洗い出したとき、次は版を比�
 - `claude-md-management`・`learning-output-style`・`gopls-lsp`・`swift-lsp`: 1.0.0でSHAが無く、marketplaceの版と突き合わせられない
 
 **決めること**: 写したスキルを上流と比べるか、比べるなら写したcommitを記録する仕組み（READMEか、スキルの先頭のコメント）を作るか。
+
+### P3: ECC由来の資産を、上流submoduleへのsymlinkに置き換えるか決める
+
+2026-11-05、自作に近いコピーだった `skills/grill-me` を削除し、公式 `mattpocock/skills` のsubmoduleへのsymlink（`grilling` ほか）に置き換えた（PR #131、ADR 0035と同じ方式）。
+同じ扱いを、`0ca0337`（2026-04-07）で [affaan-m/ECC](https://github.com/affaan-m/ECC)（旧 everything-claude-code）から写した資産にも広げたい。
+2026-11-05に上流mainと比べた結果は次のとおり（類似度は `difflib.SequenceMatcher` の値）。
+
+- ほぼそのままのコピー: `skills/backend-patterns`（0.93）、`skills/coding-standards`（0.90）。差の大半は、上流が後から更新した分（description、`metadata: origin: ECC` など）
+- frontmatterだけ変えたもの: `agents/` の `build-error-resolver`・`code-architect`・`code-explorer`・`code-simplifier`・`refactor-cleaner`・`silent-failure-hunter`。
+  ローカルの差は `tools:` の書き方と `color:` だけ。上流は後から「Prompt Defense Baseline」の節を足した
+- 作り変えたもの（自前の資産として残す想定）: `agents/security-reviewer`（読み取り専用・`permissionMode: plan`。`rules/security-review-policy.md` が前提にしている）、
+  `agents/planner`（`effort: high` と手順の追加）、`rules/ecc-development-workflow.md`（superpowersとの分担に書き換え）、`rules/ecc-coding-style.md`（ADR 0040で `paths:` を追加）
+
+気をつける点は次のとおり。
+
+- ECCは6,449ファイルある。2〜8ファイルのために丸ごとsubmoduleにすると、cloneと `submodule update` が重くなる
+- エージェントをsymlinkにすると、`color:` などのローカルの変更は消える。`setup.sh` が `agents/` をファイル単位でリンクできるかは未確認
+- 上流のスキルはdescriptionが変わっているので、置き換えると発火のしかたが変わりうる
+- ADR 0003 に「ECC由来資産の競合は未監査」とある。置き換える前に、そもそも使っているかを会話記録で確かめる方が先かもしれない
+
+**決めること**: (1) 使っていない資産を消すか。(2) 残すものをsubmodule化するか、自前のコピーのまま上流の版だけ記録するか。
+(3) submodule化するなら、対象をスキル2つに絞るか、frontmatterだけ変えたエージェント6つまで含めるか。
+
+ECCから新しい資産は導入しない（ADR 0049）。ここで決めるのは、導入済みの資産の扱いだけである。
+
+### P3: 各言語の公式資料から、ベストプラクティスを導入する
+
+ECCの言語スキルは、古さと誤りがあるので入れない（ADR 0049）。代わりに、一次資料からベストプラクティスを取り込む。候補は Effective Go、Go Code Review Comments、
+Google Go Style Guide、Goのリリースノート（1.21〜1.27）、Kotlinの Coding conventions、KotestとKtorの公式ドキュメント。
+
+**決めること**: (1) どの資料を対象にするか。(2) 置き場所をグローバルのスキルにするか、各プロジェクトの CLAUDE.md・docs にするか
+（プロジェクトの独自規約、たとえば Arrow の `Either` や `cockroachdb/errors` との優先順位も決める）。
+(3) Goは重点学習中なので、学習モードとどう両立させるか（答え合わせのとき一次資料の該当箇所を示す、など）。
 
 ---
 

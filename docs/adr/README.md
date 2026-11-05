@@ -109,3 +109,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0037](0037-persona-switch-by-copy.md) | ペルソナの版を `personas/` に置き、使う版を `rules/persona.md` へ書き写して切り替える | 2026-10-22 | accepted |
 | [0038](0038-yomiyasu-v2-review-report.md) | yomiyasu v2をsymlinkで配り、差分の検査をラッパー経由で記録なしに使う | 2026-10-22 | accepted |
 | [0039](0039-fix-completion-criteria-rule.md) | 作業のぶれを、並列化ではなく完了条件の固定と仕分けで防ぐ | 2026-10-22 | accepted |
+| [0049](0049-no-new-assets-from-ecc.md) | ECC（affaan-m/ECC）からは、新しい資産を導入しない | 2026-11-06 | accepted |
