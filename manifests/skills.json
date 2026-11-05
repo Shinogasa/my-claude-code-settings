@@ -17,10 +17,13 @@
         "coding-standards",
         "grill-me",
         "grilling",
+        "handoff",
         "learning-mode",
+        "retro",
         "signing-in-to-aws",
         "source-command-explain",
         "source-command-pr-create",
+        "writing-for-agents",
         "yomiyasu"
     ],
     "claude": [
