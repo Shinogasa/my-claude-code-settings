@@ -93,7 +93,6 @@ async function buildUsageLine(data) {
   const ctx = data.context_window || {};
   const cost = data.cost || {};
   const rl = data.rate_limits;
-  const exceeds200k = data.exceeds_200k_tokens;
   const outputStyle = data.output_style?.name;
 
   const parts = [];
@@ -101,7 +100,7 @@ async function buildUsageLine(data) {
   // コンテキスト使用率 + プログレスバー
   const usedPct = ctx.used_percentage;
   if (typeof usedPct === 'number') {
-    parts.push(formatProgressBar(usedPct, exceeds200k));
+    parts.push(formatProgressBar(usedPct));
   } else {
     parts.push(`${C.dim}[░░░░░░░░░░] --%${C.reset}`);
   }
@@ -247,7 +246,7 @@ async function updateLitellmBudgetCache() {
   }
 }
 
-function formatProgressBar(pct, exceeds200k) {
+function formatProgressBar(pct) {
   const width = 10;
   const clamped = Math.max(0, Math.min(100, pct));
   const filled = Math.round((clamped * width) / 100);
@@ -260,8 +259,7 @@ function formatProgressBar(pct, exceeds200k) {
 
   const bar = `${color}${'▓'.repeat(filled)}${C.reset}${C.dim}${'░'.repeat(empty)}${C.reset}`;
   const pctStr = `${color}${Math.round(clamped)}%${C.reset}`;
-  const warn = exceeds200k ? ` ${C.red}${C.bold}⚠200k${C.reset}` : '';
-  return `[${bar}] ${pctStr}${warn}`;
+  return `[${bar}] ${pctStr}`;
 }
 
 function formatTokens(n) {
