@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""statusline.js の1行目で、worktree の中でも元リポジトリ名が分かることを検証する。
+"""statusline.js の表示を検証する（worktree 内の元リポジトリ名、200k 警告を出さないこと）。
 
 入力 JSON の形は、実際のセッションで採取した値に合わせている（2026-11-05）。
 - worktree のディレクトリで直接起動: workspace.git_worktree だけがあり、worktree は null
@@ -40,7 +40,7 @@ def make_repo(base, name):
     return repo
 
 
-class StatuslineWorktreeTest(unittest.TestCase):
+class StatuslineTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="statusline-test-"))
         self.repo = make_repo(self.tmp, "origin_repo")
@@ -85,9 +85,10 @@ class StatuslineWorktreeTest(unittest.TestCase):
             ["node", str(STATUSLINE)], input=json.dumps(data), env=environment,
             capture_output=True, text=True, timeout=10, check=True,
         )
-        line1 = ANSI.sub("", result.stdout.splitlines()[0])
+        lines = [ANSI.sub("", line) for line in result.stdout.splitlines()]
+        self.lines = lines
         calls = self.git_log.read_text().splitlines() if self.git_log.exists() else []
-        return line1, calls
+        return lines[0], calls
 
     def workspace(self, directory, **extra):
         return {"current_dir": str(directory), "project_dir": str(directory), **extra}
@@ -142,6 +143,16 @@ class StatuslineWorktreeTest(unittest.TestCase):
         line, _ = self.run_statusline({"cwd": str(self.outside)})
         self.assertIn("📁 not_a_repo", line)
         self.assertNotIn("🌲", line)
+
+    def test_200kを超えても警告を出さない(self):
+        # 1Mコンテキストのモデルでは200k超えが常態で、料金も変わらないため表示しない
+        self.run_statusline({
+            "cwd": str(self.outside),
+            "context_window": {"used_percentage": 25},
+            "exceeds_200k_tokens": True,
+        })
+        self.assertIn("25%", self.lines[1])
+        self.assertNotIn("200k", self.lines[1])
 
 
 if __name__ == "__main__":
