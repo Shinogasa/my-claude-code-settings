@@ -1480,26 +1480,15 @@ submoduleとプラグインの更新を洗い出したとき、次は版を比�
 **決めること**: (1) 使っていない資産を消すか。(2) 残すものをsubmodule化するか、自前のコピーのまま上流の版だけ記録するか。
 (3) submodule化するなら、対象をスキル2つに絞るか、frontmatterだけ変えたエージェント6つまで含めるか。
 
-#### ECCの言語スキルは入れない（2026-11-06に決定）
-
-ECCの未導入スキル（全314）から、Go・Kotlinと設定改善に関わるものを読んで検討し、どれも入れないと決めた。
-次にECCを見直すときは、この評価をやり直さない。
-
-- `golang-patterns`・`golang-testing`: Go 1.18〜1.20 前提で止まっている。対象リポジトリ（Go 1.27、`cockroachdb/errors`・testify・go.uber.org/mock・go-cmp・`t.Context()`）の書き方と方針が違う
-- `kotlin-testing`・`kotlin-ktor-patterns`: Kotest 6・Ktor 3 前提。対象のBFFは Kotest 5.9・Ktor 2.3。テストの書き方も、BFFの `DescribeSpec` ではなく `FunSpec` が中心
-- `kotlin-patterns`: エラー処理が `Result` と例外。BFFの標準は Arrow の `Either`
-- `error-handling`: Goの節は約45行しかない。コード例（`QueryRow` から `(user, err)` を受け取る）は、そのままではコンパイルが通らない
-- `skill-stocktake`（結果をsymlink先のsubmoduleへ書く）、`config-gc`（`setup.sh` の管理とぶつかる）、`security-scan`（実体は外部npmパッケージ `ecc-agentshield`）も合わない
-
-言語スキルは、その言語のエキスパートが手入れしているものに見えなかった。
+ECCから新しい資産は導入しない（ADR 0049）。ここで決めるのは、導入済みの資産の扱いだけである。
 
 ### P3: 各言語の公式資料から、ベストプラクティスを導入する
 
-ECCの言語スキルの代わりに、一次資料からベストプラクティスを取り込む。候補は Effective Go、Go Code Review Comments、
+ECCの言語スキルは、古さと誤りがあるので入れない（ADR 0049）。代わりに、一次資料からベストプラクティスを取り込む。候補は Effective Go、Go Code Review Comments、
 Google Go Style Guide、Goのリリースノート（1.21〜1.27）、Kotlinの Coding conventions、KotestとKtorの公式ドキュメント。
 
 **決めること**: (1) どの資料を対象にするか。(2) 置き場所をグローバルのスキルにするか、各プロジェクトの CLAUDE.md・docs にするか
-（プロジェクトの独自規約、たとえばBFFの Arrow `Either` やGoの `cockroachdb/errors` との優先順位も決める）。
+（プロジェクトの独自規約、たとえば Arrow の `Either` や `cockroachdb/errors` との優先順位も決める）。
 (3) Goは重点学習中なので、学習モードとどう両立させるか（答え合わせのとき一次資料の該当箇所を示す、など）。
 
 ---
