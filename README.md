@@ -447,6 +447,8 @@ persona polite     # 切り替える。反映されるのは次に始めるセ�
 │   ├── code-learning/           #   実作業でのコード理解・変更・レビュー演習
 │   ├── coding-standards/        #   コーディング規約
 │   ├── grill-me, grilling       #   計画や設計を質問で詰める（mattpocock-skills内へのsymlink）
+│   ├── handoff                  #   別のエージェントへの引き継ぎ文書を作る（同上）
+│   ├── retro, writing-for-agents  # セッションを振り返り、エージェントの環境の改善候補を挙げる（同上）
 │   ├── learning-mode/           #   学習モードの手順と書式
 │   ├── source-command-*/        #   commands/ をCodexのskillとして共有する
 │   ├── work-principles/         #   仕事の原則で助言する（principles.json は生成物）
@@ -667,7 +669,12 @@ git -C agent-toolkit-for-aws checkout origin/main
 ## mattpocock-skills（submodule）
 
 [mattpocock/skills](https://github.com/mattpocock/skills) をgit submoduleとして内包している。
-配布するのは `grill-me` と `grilling` だけ。`grill-me` は「`grilling` を呼ぶ」だけの入口なので、2つを一緒に配る。
+配布するのは次の5つだけ。
+
+- `grill-me`・`grilling`: 計画を質問で詰める。`grill-me` は「`grilling` を呼ぶ」だけの入口なので、2つを一緒に配る
+- `handoff`: 会話を、別のエージェント向けの引き継ぎ文書にまとめる。保存先は `$TMPDIR`
+- `retro`・`writing-for-agents`: セッションを振り返り、エージェントの環境の改善候補を挙げる。`retro` が最初に `writing-for-agents` を呼ぶので、2つを一緒に配る。
+  `writing-for-agents` は自動で起動し、スキルや CLAUDE.md を直すたびに読まれる。このリポジトリの作業はほとんどがそれに当たるので、承知のうえで入れている
 配り方は agent-toolkit-for-aws と同じ（ADR 0035）。公式のプラグイン（`mattpocock-skills@claude-plugins-official`）は
 全スキルが一括で入り、superpowers や `code-review` と役割が重なるため使わない。両方入れると同じスキルが二重になる。
 

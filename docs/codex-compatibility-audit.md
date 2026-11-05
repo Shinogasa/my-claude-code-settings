@@ -111,6 +111,9 @@ execpolicy としてはロードされない。現在のリンクは `~/.codex/A
 | `database-migrations` | 共有可 | ホスト非依存の知識 |
 | `deployment-patterns` | 共有可 | ホスト非依存の知識 |
 | `grill-me` | 共有可 | 対話方式だけを規定し、特定ツールに依存しない。2026-11-05に公式submoduleへのsymlinkへ移行し、本体は `grilling` へ移った |
+| `handoff` | 共有可 | mattpocock-skills内へのsymlink。`$TMPDIR` に書くだけで、特定ツールに依存しない |
+| `retro` | 共有可 | mattpocock-skills内へのsymlink。セッションログの探し方はホストごとに違うが、本文は場所を決め打ちしていない |
+| `writing-for-agents` | 共有可 | mattpocock-skills内へのsymlink。AGENTS.md と CLAUDE.md の両方を対象にしている |
 | `grilling` | 共有可 | `grill-me` の本体（mattpocock-skills内へのsymlink）。事実の確認にサブエージェントを使う指示はあるが、特定ツールの名前には依存しない |
 | `hexagonal-architecture` | 共有可 | ホスト非依存の知識 |
 | `security-review` | 共有可 | `security-guidance` を Codex で止める間の明示的レビュー手段にもなる |
