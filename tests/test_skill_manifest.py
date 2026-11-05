@@ -266,9 +266,7 @@ class TestAwsSkillSubmodule(unittest.TestCase):
 
 
 MATT_SUBMODULE = "mattpocock-skills"
-# grill-meは「grillingを呼ぶ」だけの入口なので、本体のgrillingも一緒に配る
 MATT_SKILLS = {
-    "grill-me": "skills/productivity/grill-me",
     "grilling": "skills/productivity/grilling",
     "handoff": "skills/productivity/handoff",
     # retroは最初にwriting-for-agentsを呼ぶので、一緒に配る
@@ -293,6 +291,14 @@ class TestMattPocockSkillSubmodule(unittest.TestCase):
                 self.assertTrue(link.is_symlink())
                 self.assertEqual(os.readlink(link), f"../{MATT_SUBMODULE}/{upstream}")
                 self.assertIn(name, manifest["shared"])
+
+    def test_grill_me_is_not_distributed(self):
+        """上流のgrill-meは「grillingを呼ぶ」だけの入口。/grillingで足りるので配らない。"""
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        link = SKILLS_DIR / "grill-me"
+        self.assertFalse(link.is_symlink() or link.exists())
+        for host in HOST_KEYS:
+            self.assertNotIn("grill-me", manifest[host])
 
 
 if __name__ == "__main__":
