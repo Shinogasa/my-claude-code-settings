@@ -1460,7 +1460,7 @@ submoduleとプラグインの更新を洗い出したとき、次は版を比�
 
 ### P3: ECC由来の資産を、上流submoduleへのsymlinkに置き換えるか決める
 
-2026-11-05、`skills/grill-me` を公式 `mattpocock/skills` のsubmoduleへのsymlinkに移した（PR #131、ADR 0035と同じ方式）。
+2026-11-05、自作に近いコピーだった `skills/grill-me` を削除し、公式 `mattpocock/skills` のsubmoduleへのsymlink（`grilling` ほか）に置き換えた（PR #131、ADR 0035と同じ方式）。
 同じ扱いを、`0ca0337`（2026-04-07）で [affaan-m/ECC](https://github.com/affaan-m/ECC)（旧 everything-claude-code）から写した資産にも広げたい。
 2026-11-05に上流mainと比べた結果は次のとおり（類似度は `difflib.SequenceMatcher` の値）。
 
@@ -1470,7 +1470,7 @@ submoduleとプラグインの更新を洗い出したとき、次は版を比�
 - 作り変えたもの（自前の資産として残す想定）: `agents/security-reviewer`（読み取り専用・`permissionMode: plan`。`rules/security-review-policy.md` が前提にしている）、
   `agents/planner`（`effort: high` と手順の追加）、`rules/ecc-development-workflow.md`（superpowersとの分担に書き換え）、`rules/ecc-coding-style.md`（ADR 0040で `paths:` を追加）
 
-気をつける点:
+気をつける点は次のとおり。
 
 - ECCは6,449ファイルある。2〜8ファイルのために丸ごとsubmoduleにすると、cloneと `submodule update` が重くなる
 - エージェントをsymlinkにすると、`color:` などのローカルの変更は消える。`setup.sh` が `agents/` をファイル単位でリンクできるかは未確認
