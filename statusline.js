@@ -7,6 +7,8 @@ const { execFileSync } = require('child_process');
 
 const LITELLM_CACHE_PATH = path.join(os.homedir(), '.claude', 'cache', 'litellm-budget.json');
 const LITELLM_CACHE_TTL_MS = 60_000;
+// statusline は頻繁に描画されるので git は短く打ち切る。テストでは負荷で落ちないよう延ばす
+const GIT_TIMEOUT_MS = Number(process.env.STATUSLINE_GIT_TIMEOUT_MS) || 500;
 
 // ANSI カラー
 const C = {
@@ -45,7 +47,7 @@ async function buildStatusLines(data) {
 // ───── Line 1: 環境・コンテキスト情報 ─────
 function buildEnvLine(data) {
   const model = data.model?.display_name || 'Claude';
-  const currentDir = path.basename(data.workspace?.current_dir || data.cwd || '.');
+  const currentDirPath = data.workspace?.current_dir || data.cwd || '.';
   const projectDir = data.workspace?.project_dir;
   const outputStyle = data.output_style?.name;
   const effort = data.effort?.level;
@@ -53,6 +55,8 @@ function buildEnvLine(data) {
   const agent = data.agent?.name;
   const sessionName = data.session_name;
   const worktree = data.worktree?.name || data.workspace?.git_worktree;
+  // worktree の中では basename が worktree 名になり 🌲 と重複するので、元リポジトリ名を出す
+  const currentDir = (worktree && getMainRepoName(currentDirPath)) || path.basename(currentDirPath);
 
   const parts = [];
 
@@ -89,7 +93,6 @@ async function buildUsageLine(data) {
   const ctx = data.context_window || {};
   const cost = data.cost || {};
   const rl = data.rate_limits;
-  const exceeds200k = data.exceeds_200k_tokens;
   const outputStyle = data.output_style?.name;
 
   const parts = [];
@@ -97,7 +100,7 @@ async function buildUsageLine(data) {
   // コンテキスト使用率 + プログレスバー
   const usedPct = ctx.used_percentage;
   if (typeof usedPct === 'number') {
-    parts.push(formatProgressBar(usedPct, exceeds200k));
+    parts.push(formatProgressBar(usedPct));
   } else {
     parts.push(`${C.dim}[░░░░░░░░░░] --%${C.reset}`);
   }
@@ -158,7 +161,7 @@ function getGitInfo(projectDir) {
     const branch = execFileSync('git', ['branch', '--show-current'], {
       cwd: projectDir,
       encoding: 'utf8',
-      timeout: 500,
+      timeout: GIT_TIMEOUT_MS,
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
     if (!branch) return null;
@@ -166,12 +169,31 @@ function getGitInfo(projectDir) {
     const status = execFileSync('git', ['status', '--porcelain'], {
       cwd: projectDir,
       encoding: 'utf8',
-      timeout: 500,
+      timeout: GIT_TIMEOUT_MS,
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
 
     const dirty = status ? ` ${C.yellow}●${C.reset}` : ` ${C.green}✓${C.reset}`;
     return `${C.magenta}⎇ ${branch}${C.reset}${dirty}`;
+  } catch {
+    return null;
+  }
+}
+
+// linked worktree でも共通の .git を返す --git-common-dir から、元リポジトリ名を求める
+function getMainRepoName(dir) {
+  try {
+    const commonDir = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+      cwd: dir,
+      encoding: 'utf8',
+      timeout: GIT_TIMEOUT_MS,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (!commonDir) return null;
+    // 通常は <repo>/.git、bare リポジトリでは <repo>.git が返る
+    return path.basename(commonDir) === '.git'
+      ? path.basename(path.dirname(commonDir))
+      : path.basename(commonDir, '.git');
   } catch {
     return null;
   }
@@ -224,7 +246,7 @@ async function updateLitellmBudgetCache() {
   }
 }
 
-function formatProgressBar(pct, exceeds200k) {
+function formatProgressBar(pct) {
   const width = 10;
   const clamped = Math.max(0, Math.min(100, pct));
   const filled = Math.round((clamped * width) / 100);
@@ -237,8 +259,7 @@ function formatProgressBar(pct, exceeds200k) {
 
   const bar = `${color}${'▓'.repeat(filled)}${C.reset}${C.dim}${'░'.repeat(empty)}${C.reset}`;
   const pctStr = `${color}${Math.round(clamped)}%${C.reset}`;
-  const warn = exceeds200k ? ` ${C.red}${C.bold}⚠200k${C.reset}` : '';
-  return `[${bar}] ${pctStr}${warn}`;
+  return `[${bar}] ${pctStr}`;
 }
 
 function formatTokens(n) {
