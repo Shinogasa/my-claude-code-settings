@@ -45,7 +45,7 @@ async function buildStatusLines(data) {
 // ───── Line 1: 環境・コンテキスト情報 ─────
 function buildEnvLine(data) {
   const model = data.model?.display_name || 'Claude';
-  const currentDir = path.basename(data.workspace?.current_dir || data.cwd || '.');
+  const currentDirPath = data.workspace?.current_dir || data.cwd || '.';
   const projectDir = data.workspace?.project_dir;
   const outputStyle = data.output_style?.name;
   const effort = data.effort?.level;
@@ -53,6 +53,8 @@ function buildEnvLine(data) {
   const agent = data.agent?.name;
   const sessionName = data.session_name;
   const worktree = data.worktree?.name || data.workspace?.git_worktree;
+  // worktree の中では basename が worktree 名になり 🌲 と重複するので、元リポジトリ名を出す
+  const currentDir = (worktree && getMainRepoName(currentDirPath)) || path.basename(currentDirPath);
 
   const parts = [];
 
@@ -172,6 +174,25 @@ function getGitInfo(projectDir) {
 
     const dirty = status ? ` ${C.yellow}●${C.reset}` : ` ${C.green}✓${C.reset}`;
     return `${C.magenta}⎇ ${branch}${C.reset}${dirty}`;
+  } catch {
+    return null;
+  }
+}
+
+// linked worktree でも共通の .git を返す --git-common-dir から、元リポジトリ名を求める
+function getMainRepoName(dir) {
+  try {
+    const commonDir = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+      cwd: dir,
+      encoding: 'utf8',
+      timeout: 500,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (!commonDir) return null;
+    // 通常は <repo>/.git、bare リポジトリでは <repo>.git が返る
+    return path.basename(commonDir) === '.git'
+      ? path.basename(path.dirname(commonDir))
+      : path.basename(commonDir, '.git');
   } catch {
     return null;
   }
