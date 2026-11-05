@@ -270,6 +270,10 @@ MATT_SUBMODULE = "mattpocock-skills"
 MATT_SKILLS = {
     "grill-me": "skills/productivity/grill-me",
     "grilling": "skills/productivity/grilling",
+    "handoff": "skills/productivity/handoff",
+    # retroは最初にwriting-for-agentsを呼ぶので、一緒に配る
+    "retro": "skills/engineering/retro",
+    "writing-for-agents": "skills/productivity/writing-for-agents",
 }
 
 
