@@ -10,3 +10,6 @@
 [submodule "agent-toolkit-for-aws"]
 	path = agent-toolkit-for-aws
 	url = https://github.com/aws/agent-toolkit-for-aws.git
+[submodule "mattpocock-skills"]
+	path = mattpocock-skills
+	url = https://github.com/mattpocock/skills.git
