@@ -137,7 +137,15 @@ class HookCase(unittest.TestCase):
         return root
 
 
-GIT_ISOLATION = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+# GIT_CONFIG_GLOBALを外しても、core.excludesFileの既定（~/.config/git/ignore）は読まれる。
+# 個人の除外設定（例: **/tasks/todo/）でfixtureのgit addが拒否されないよう、明示的に空にする。
+GIT_ISOLATION = {
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_KEY_0": "core.excludesFile",
+    "GIT_CONFIG_VALUE_0": os.devnull,
+}
 CLAUDE_TRAILER = "\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 

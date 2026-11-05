@@ -1452,7 +1452,7 @@ ADR 0042 で、ReviewAndDesignスタイルを廃止し、完了報告に3つの�
 
 submoduleとプラグインの更新を洗い出したとき、次は版を比べられなかった。「更新なし」ではなく「未確認」である。
 
-- `skills/backend-patterns`・`skills/coding-standards`（everything-claude-code 由来）、`skills/grill-me`: 上流から写したときのcommitを記録していない
+- `skills/backend-patterns`・`skills/coding-standards`（everything-claude-code 由来）: 上流から写したときのcommitを記録していない（`skills/grill-me` は2026-11-05に削除し、公式submoduleの `grilling` へ置き換えた）
 - Codexの `superpowers@openai-api-curated`（`codex/plugin-policy.json`）: 版を見ていない
 - `claude-md-management`・`learning-output-style`・`gopls-lsp`・`swift-lsp`: 1.0.0でSHAが無く、marketplaceの版と突き合わせられない
 

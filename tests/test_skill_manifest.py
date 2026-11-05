@@ -265,5 +265,41 @@ class TestAwsSkillSubmodule(unittest.TestCase):
         self.assertEqual(unresolved_skill_links(SKILLS_DIR), set())
 
 
+MATT_SUBMODULE = "mattpocock-skills"
+MATT_SKILLS = {
+    "grilling": "skills/productivity/grilling",
+    "handoff": "skills/productivity/handoff",
+    # retroは最初にwriting-for-agentsを呼ぶので、一緒に配る
+    "retro": "skills/engineering/retro",
+    "writing-for-agents": "skills/productivity/writing-for-agents",
+}
+
+
+class TestMattPocockSkillSubmodule(unittest.TestCase):
+    """mattpocock/skillsの公式版を上流submodule内へのsymlinkとして共有配布しているか。"""
+
+    def test_submodule_is_declared(self):
+        gitmodules = (REPO_ROOT / ".gitmodules").read_text(encoding="utf-8")
+        self.assertIn(f"path = {MATT_SUBMODULE}", gitmodules)
+        self.assertIn("url = https://github.com/mattpocock/skills.git", gitmodules)
+
+    def test_selected_skills_are_relative_links_listed_as_shared(self):
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        for name, upstream in MATT_SKILLS.items():
+            with self.subTest(name=name):
+                link = SKILLS_DIR / name
+                self.assertTrue(link.is_symlink())
+                self.assertEqual(os.readlink(link), f"../{MATT_SUBMODULE}/{upstream}")
+                self.assertIn(name, manifest["shared"])
+
+    def test_grill_me_is_not_distributed(self):
+        """上流のgrill-meは「grillingを呼ぶ」だけの入口。/grillingで足りるので配らない。"""
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        link = SKILLS_DIR / "grill-me"
+        self.assertFalse(link.is_symlink() or link.exists())
+        for host in HOST_KEYS:
+            self.assertNotIn("grill-me", manifest[host])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
