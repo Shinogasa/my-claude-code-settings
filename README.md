@@ -436,6 +436,7 @@ persona polite     # 切り替える。反映されるのは次に始めるセ�
 ├── codex-cli-best-practice/     # Codexベストプラクティス（git submodule、補助資料）
 ├── agent-toolkit-for-aws/       # AWS公式のスキル集（git submodule。skills/ のsymlinkから一部だけ配布）
 ├── vendor/yomiyasu/             # yomiyasu（git submodule。skills/yomiyasu のsymlinkから本体だけ配布）
+├── mattpocock-skills/           # mattpocock/skills（git submodule。skills/ のsymlinkから一部だけ配布）
 ├── manifests/
 │   └── skills.json              # ホストごとに配布するskillの一覧
 ├── skills/                      # カスタムスキル（配布するものは manifests/skills.json で決める）
@@ -445,7 +446,7 @@ persona polite     # 切り替える。反映されるのは次に始めるセ�
 │   ├── codex-cli-best-practice/ #   Codex設定の補助資料の参照（Codex CLI）
 │   ├── code-learning/           #   実作業でのコード理解・変更・レビュー演習
 │   ├── coding-standards/        #   コーディング規約
-│   ├── grill-me/                #   計画や設計を質問で詰める
+│   ├── grill-me, grilling       #   計画や設計を質問で詰める（mattpocock-skills内へのsymlink）
 │   ├── learning-mode/           #   学習モードの手順と書式
 │   ├── source-command-*/        #   commands/ をCodexのskillとして共有する
 │   ├── work-principles/         #   仕事の原則で助言する（principles.json は生成物）
@@ -662,6 +663,23 @@ git -C agent-toolkit-for-aws checkout origin/main
 （2026-10-14に一時的な `HOME` で確かめた）。
 誤って実行した場合は、`git status` にsubmoduleの未コミットの変更（`modified: agent-toolkit-for-aws (modified content, untracked content)`）として出る。
 `git -C agent-toolkit-for-aws checkout . && git -C agent-toolkit-for-aws clean -fd` で戻す。
+
+## mattpocock-skills（submodule）
+
+[mattpocock/skills](https://github.com/mattpocock/skills) をgit submoduleとして内包している。
+配布するのは `grill-me` と `grilling` だけ。`grill-me` は「`grilling` を呼ぶ」だけの入口なので、2つを一緒に配る。
+配り方は agent-toolkit-for-aws と同じ（ADR 0035）。公式のプラグイン（`mattpocock-skills@claude-plugins-official`）は
+全スキルが一括で入り、superpowers や `code-review` と役割が重なるため使わない。両方入れると同じスキルが二重になる。
+
+スキルを増やす:
+
+```bash
+ln -s ../mattpocock-skills/skills/<分類>/<名前> skills/<名前>
+# manifests/skills.json の shared に <名前> を足して、bash setup.sh --all を実行する
+```
+
+上流の更新は、agent-toolkit-for-aws と同じ手順で差分を読んでから取り込む（パスを `mattpocock-skills` に読み替える）。
+上流では `skills/<分類>/` の分類やスキル名がよく変わる。symlinkの先が消えると `tests/test_skill_manifest.py` が失敗するので、そこで気づける。
 
 ## CLAUDE.md と rules/ の使い分け
 
