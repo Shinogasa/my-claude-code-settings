@@ -78,6 +78,8 @@ class StatuslineWorktreeTest(unittest.TestCase):
             "HOME": str(self.tmp),
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_NOSYSTEM": "1",
+            # 並列実行の負荷で既定の500msを超え、git の情報が消えて揺れるのを防ぐ
+            "STATUSLINE_GIT_TIMEOUT_MS": "10000",
         })
         result = subprocess.run(
             ["node", str(STATUSLINE)], input=json.dumps(data), env=environment,

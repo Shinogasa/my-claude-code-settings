@@ -7,6 +7,8 @@ const { execFileSync } = require('child_process');
 
 const LITELLM_CACHE_PATH = path.join(os.homedir(), '.claude', 'cache', 'litellm-budget.json');
 const LITELLM_CACHE_TTL_MS = 60_000;
+// statusline は頻繁に描画されるので git は短く打ち切る。テストでは負荷で落ちないよう延ばす
+const GIT_TIMEOUT_MS = Number(process.env.STATUSLINE_GIT_TIMEOUT_MS) || 500;
 
 // ANSI カラー
 const C = {
@@ -160,7 +162,7 @@ function getGitInfo(projectDir) {
     const branch = execFileSync('git', ['branch', '--show-current'], {
       cwd: projectDir,
       encoding: 'utf8',
-      timeout: 500,
+      timeout: GIT_TIMEOUT_MS,
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
     if (!branch) return null;
@@ -168,7 +170,7 @@ function getGitInfo(projectDir) {
     const status = execFileSync('git', ['status', '--porcelain'], {
       cwd: projectDir,
       encoding: 'utf8',
-      timeout: 500,
+      timeout: GIT_TIMEOUT_MS,
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
 
@@ -185,7 +187,7 @@ function getMainRepoName(dir) {
     const commonDir = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
       cwd: dir,
       encoding: 'utf8',
-      timeout: 500,
+      timeout: GIT_TIMEOUT_MS,
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
     if (!commonDir) return null;
