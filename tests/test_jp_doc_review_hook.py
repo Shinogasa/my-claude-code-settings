@@ -1168,6 +1168,92 @@ class ConfluenceTests(HookCase):
         self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
 
 
+class ConfluenceV2Tests(HookCase):
+    """公式 Atlassian MCP v2 の入力の形（body: {format, value}、edits、executeWrite 経由のコメント）。"""
+    CREATE = "mcp__atlassian__createConfluenceContent"
+    UPDATE = "mcp__atlassian__updateConfluenceContent"
+    EXECUTE = "mcp__atlassian__executeWrite"
+
+    def payload(self, tool, tool_input):
+        return {"session_id": "s1", "tool_name": tool, "tool_input": tool_input}
+
+    def pre(self, tool, tool_input):
+        return self.run_hook("pre-tool-use-confluence", self.payload(tool, tool_input))
+
+    def post(self, tool, tool_input):
+        payload = {**self.payload(tool, tool_input), "tool_response": [{"type": "text", "text": "{}"}]}
+        return self.run_hook("post-tool-use-confluence", payload)
+
+    def comment(self, name, **inputs):
+        return {"cloudId": "c", "name": name, "inputs": {"body": {"format": "markdown", "value": JP_LONG}, **inputs}}
+
+    def drafts(self):
+        directory = self.state / "drafts"
+        return sorted(directory.iterdir()) if directory.exists() else []
+
+    def state_keys(self):
+        path = self.state / "s1.confluence.json"
+        return list(json.loads(path.read_text(encoding="utf-8"))) if path.exists() else []
+
+    def test_create_content_with_body_object_is_denied_with_draft(self):
+        code, output, _ = self.pre(self.CREATE, {"cloudId": "c", "parent": {"spaceId": "1"}, "contentType": "page",
+                                                 "title": "t", "body": {"format": "html", "value": f"<p>{JP_LONG}</p>"}})
+        self.assertEqual((code, decision_of((code, output, ""))), (0, "deny"))
+        [draft] = self.drafts()
+        self.assertEqual((draft.suffix, draft.read_text(encoding="utf-8")), (".html", f"<p>{JP_LONG}</p>"))
+
+    def test_update_content_uses_content_id_as_target(self):
+        self.pre(self.UPDATE, {"cloudId": "c", "contentId": "42", "body": {"format": "markdown", "value": JP_LONG}})
+        self.assertEqual(self.state_keys(), [f"{self.UPDATE}:contentId:42"])
+        self.assertEqual([path.suffix for path in self.drafts()], [".md"])
+
+    def test_update_content_by_url_uses_url_as_target(self):
+        self.pre(self.UPDATE, {"cloudId": "c", "contentUrl": "https://x/pages/7",
+                               "body": {"format": "html", "value": JP_LONG}})
+        self.assertEqual(self.state_keys(), [f"{self.UPDATE}:contentUrl:https://x/pages/7"])
+
+    def test_update_content_with_edits_is_reviewed_as_json(self):
+        edits = [{"name": "replaceNode", "localId": "a1", "value": f"<p>{JP_LONG}</p>"}]
+        result = self.pre(self.UPDATE, {"cloudId": "c", "contentId": "42", "edits": edits})
+        self.assertEqual(decision_of(result), "deny")
+        [draft] = self.drafts()
+        self.assertEqual(draft.suffix, ".json")
+        self.assertEqual(json.loads(draft.read_text(encoding="utf-8")), edits)
+
+    def test_short_body_object_passes(self):
+        self.assertEqual(self.pre(self.UPDATE, {"cloudId": "c", "contentId": "1",
+                                                "body": {"format": "html", "value": "短い"}}), (0, {}, ""))
+
+    def test_comment_via_execute_write_is_denied(self):
+        for name, inputs, key in (
+            ("createConfluenceComment", {"contentId": "5", "commentType": "footer"}, "contentId:5"),
+            ("createConfluenceComment", {"parentCommentId": "6"}, "parentCommentId:6"),
+            ("updateConfluenceComment", {"commentId": "8"}, "commentId:8"),
+        ):
+            with self.subTest(name=name, key=key):
+                shutil.rmtree(self.state, ignore_errors=True)
+                self.assertEqual(decision_of(self.pre(self.EXECUTE, self.comment(name, **inputs))), "deny")
+                self.assertEqual(self.state_keys(), [f"{self.EXECUTE}:{name}:{key}"])
+                self.assertEqual([path.suffix for path in self.drafts()], [".md"])
+
+    def test_other_execute_write_operations_pass(self):
+        # Jira など Confluence コメント以外の書き込みは、日本語レビューの対象にしない
+        tool_input = {"cloudId": "c", "name": "createJiraIssue", "inputs": {"description": JP_LONG}}
+        self.assertEqual(self.pre(self.EXECUTE, tool_input), (0, {}, ""))
+        self.assertEqual(self.drafts(), [])
+
+    def test_successful_post_removes_state_and_draft(self):
+        for tool, tool_input in (
+            (self.UPDATE, {"cloudId": "c", "contentId": "42", "body": {"format": "html", "value": JP_LONG}}),
+            (self.EXECUTE, self.comment("createConfluenceComment", contentId="5", commentType="footer")),
+        ):
+            with self.subTest(tool=tool):
+                self.pre(tool, tool_input)
+                self.assertEqual(len(self.drafts()), 1)
+                self.post(tool, tool_input)
+                self.assertEqual((self.state_keys(), self.drafts()), ([], []))
+
+
 class StateFileTests(HookCase):
     CONFLUENCE_TOOL = "mcp__atlassian-http__createConfluencePage"
 

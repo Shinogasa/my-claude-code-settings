@@ -19,7 +19,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Set, Tuple
+from typing import Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
 
 HOOK_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOK_DIR))
@@ -47,6 +47,11 @@ def guard():
 
 MIN_JP_CHARS = 100
 DRAFT_SUFFIXES = {"markdown": ".md", "adf": ".json"}  # それ以外（html、指定なし）は .html
+# 公式 Atlassian MCP v2 では、コメントは専用のツールではなく executeWrite の操作名で呼ぶ
+EXECUTE_WRITE_SUFFIX = "__executeWrite"
+CONFLUENCE_COMMENT_OPERATIONS = frozenset({"createConfluenceComment", "updateConfluenceComment"})
+# 投稿先を見分けるキー。前にあるものを優先する（旧形式の pageId → parentCommentId → title の順は変えない）
+CONFLUENCE_TARGET_FIELDS = ("pageId", "contentId", "contentUrl", "commentId", "parentCommentId", "title")
 TARGET_SUFFIXES = {".md", ".toml", ".yaml", ".yml", ".json"}
 STATE_RETENTION_DAYS = 7
 CLEANUP_INTERVAL_SECONDS = 3600  # 掃除の走査は、この間隔に1回に抑える
@@ -723,12 +728,44 @@ def _confluence_path(key: str) -> Path:
     return state_dir() / f"{key}.confluence.json"
 
 
-def _confluence_target(tool_name: str, tool_input: dict) -> str:
-    for field in ("pageId", "parentCommentId", "title"):
-        value = tool_input.get(field)
+class ConfluencePost(NamedTuple):
+    """投稿1件。旧 atlassian-http と公式 Atlassian MCP v2 の入力の形の違いを、ここで吸収する。"""
+    label: str  # 投稿先のキーの接頭辞。executeWrite では操作名も含める
+    fields: dict  # 投稿先を表すキー（pageId、contentId など）を含む入力
+    body: str
+    content_format: object
+
+
+def _confluence_post(tool_name: str, tool_input: dict) -> Optional[ConfluencePost]:
+    """Confluence への投稿でなければ None を返す。v2 では、コメントを executeWrite の操作名で見分ける。"""
+    label, fields = tool_name, tool_input
+    if tool_name.endswith(EXECUTE_WRITE_SUFFIX):
+        name = tool_input.get("name")
+        if not isinstance(name, str) or name not in CONFLUENCE_COMMENT_OPERATIONS:
+            return None
+        inputs = tool_input.get("inputs")
+        label, fields = f"{tool_name}:{name}", inputs if isinstance(inputs, dict) else {}
+    body, content_format = _confluence_body(fields)
+    return ConfluencePost(label, fields, body, content_format)
+
+
+def _confluence_body(fields: dict) -> Tuple[str, object]:
+    """本文と形式を返す。旧形式は body が文字列で、形式は contentFormat。v2 は body: {format, value} か edits。"""
+    body = fields.get("body")
+    if isinstance(body, dict):
+        return str(body.get("value") or ""), body.get("format")
+    if body is None and isinstance(fields.get("edits"), list):
+        # 部分編集は JSON のまま下書きにする。レビュワーは文字列だけを直し、構造は変えない
+        return json.dumps(fields["edits"], ensure_ascii=False, sort_keys=True), "adf"
+    return str(body or ""), fields.get("contentFormat")
+
+
+def _confluence_target(post: ConfluencePost) -> str:
+    for field in CONFLUENCE_TARGET_FIELDS:
+        value = post.fields.get(field)
         if value:
-            return f"{tool_name}:{field}:{value}"
-    return f"{tool_name}:none"
+            return f"{post.label}:{field}:{value}"
+    return f"{post.label}:none"
 
 
 def _write_draft(key: str, digest: str, body: str, content_format: object) -> Path:
@@ -762,17 +799,19 @@ def _confluence_reason(draft: Path) -> str:
 def handle_pre_tool_use_confluence(payload: dict) -> None:
     tool_name = str(payload.get("tool_name", ""))
     tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
-    body = str(tool_input.get("body") or "")
-    title = str(tool_input.get("title") or "")
     cleanup_old_state()
-    if count_jp_chars(f"{title}\n{body}") < MIN_JP_CHARS:
+    post = _confluence_post(tool_name, tool_input)
+    if post is None:
+        return
+    title = str(post.fields.get("title") or "")
+    if count_jp_chars(f"{title}\n{post.body}") < MIN_JP_CHARS:
         return
     global _deadline
     _deadline = STARTED + time_budget(CONFLUENCE_TIME_BUDGET_SECONDS)
     try:
         key = session_key(payload)
         with session_lock(key):
-            _handle_confluence(key, payload, tool_name, tool_input, body)
+            _handle_confluence(key, payload, tool_name, post)
     except Exception as error:  # 終了コード1やタイムアウトでは止まらず投稿される。検査できなかったときはユーザーに確かめる
         print(f"jp-doc-review pre-tool-use-confluence: {type(error).__name__}: {error}", file=sys.stderr)
         _decide("ask", (
@@ -781,18 +820,18 @@ def handle_pre_tool_use_confluence(payload: dict) -> None:
         ))
 
 
-def _handle_confluence(key: str, payload: dict, tool_name: str, tool_input: dict, body: str) -> None:
+def _handle_confluence(key: str, payload: dict, tool_name: str, post: ConfluencePost) -> None:
     """1回目は止める。2回目はレビュワーの完了を確かめて通し、通した本文を記録する。
 
     状態は、投稿が成功したとき（PostToolUse）に消す。投稿先のAPIが失敗したときは状態が残るので、
     同じ本文の再送はレビューをやり直さずに通す。本文が変わっていたら、ユーザーに確かめる。
     """
-    target = _confluence_target(tool_name, tool_input)
-    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    target = _confluence_target(post)
+    digest = hashlib.sha256(post.body.encode("utf-8")).hexdigest()
     state = read_json(_confluence_path(key))
     entry = state.get(target)
     if entry is None:
-        draft = _write_draft(key, digest, body, tool_input.get("contentFormat"))
+        draft = _write_draft(key, digest, post.body, post.content_format)
         write_json(_confluence_path(key), {
             **state, target: {"digest": digest, "transcript_offset": _transcript_size(payload), "draft": str(draft)},
         })
@@ -836,10 +875,11 @@ def handle_post_tool_use_confluence(payload: dict) -> None:
     """投稿が成功したら、その投稿先の状態と下書きを消す。失敗したときはこのフックが呼ばれないので、状態が残る。"""
     tool_name = str(payload.get("tool_name", ""))
     tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    post = _confluence_post(tool_name, tool_input)
     key = session_key(payload)
-    if not _confluence_path(key).exists():
+    if post is None or not _confluence_path(key).exists():
         return
-    target = _confluence_target(tool_name, tool_input)
+    target = _confluence_target(post)
     with session_lock(key):
         state = read_json(_confluence_path(key))
         if target not in state:
