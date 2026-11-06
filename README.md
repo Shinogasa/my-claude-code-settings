@@ -158,6 +158,31 @@ git log --show-signature --format='%G?' -n 5
 
 導入内容は次回の Claude Code 起動時から有効になる。
 
+### Claude Code の MCP サーバ
+
+MCP サーバの定義は `~/.claude.json` に入る。このファイルには OAuth の状態やプロジェクト履歴も入るので、
+このリポジトリでは管理しない。新しいマシンでは、次のコマンドで手作業で入れる。
+
+**`-s user` を必ず付ける。** 付けないと既定の local スコープになり、コマンドを実行したディレクトリでしか使えない。
+
+```bash
+claude mcp add -s user --transport http atlassian https://mcp.atlassian.com/v2/mcp
+claude mcp add -s user --transport http asana-v2 https://mcp.asana.com/v2/mcp   # OAuth アプリの準備は /asana:asana-setup
+claude mcp add -s user --transport http newrelic https://mcp.newrelic.com/mcp/
+claude mcp add -s user aws-mcp -- uvx mcp-proxy-for-aws@latest https://aws-mcp.us-east-1.api.aws/mcp --profile <profile> --read-only
+```
+
+- 認証の方法はサーバごとに違う。追加した後に `/mcp` を開いて、未認証のサーバを認証する
+- `context7` と `serena` はプラグインに同梱されているので、上の手順は要らない（[Claude Code 向けプラグイン](#claude-code-向けプラグイン)）
+- 確認は `claude mcp list` で行う。読み込めなかった設定は、末尾の `MCP config diagnostics` に出る。
+  `"type"` の無いリモート定義は、エラーにならず黙ってスキップされるので、ここで見つける
+- `~/.mcp.json` には書かない。ホーム直下の project スコープとして、ホーム配下のすべてのリポジトリで読み込まれるため、
+  どこに効いているのか追いにくい
+- claude.ai のディレクトリにあるコネクタは、`ANTHROPIC_API_KEY` などの認証が設定されている環境では読み込まれない。
+  LiteLLM 経由の `claude` では使えないので、上の `claude mcp add` で直接つなぐ
+- フックの matcher は `mcp__.*__updateConfluencePage` のように、サーバ名をワイルドカードで受けている。
+  サーバ名を変えてもフックは効く。ただし、ツール名が変わると効かなくなる
+
 ### Codex CLI 向けプラグイン
 
 `setup.sh --codex` は Codex プラグインの導入・更新・削除・有効化を行わない。
