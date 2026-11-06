@@ -12,7 +12,8 @@ jp-doc-review の pre-tool-use-confluence と同じ呼び出しで並列に動�
 import json
 import sys
 
-UPDATE_TOOL_SUFFIX = "__updateConfluencePage"
+# 旧 atlassian-http は updateConfluencePage、公式 Atlassian MCP v2 は updateConfluenceContent
+UPDATE_TOOL_SUFFIXES = ("__updateConfluencePage", "__updateConfluenceContent")
 BLOCKED_FORMAT = "markdown"
 CONVERTER = "~/.claude/bin/md-to-confluence-html.py"
 
@@ -21,11 +22,14 @@ REASON = (
     "Markdown ではページにある info パネル・目次・折りたたみなどのマクロを表せず、API が 422 で拒否するか、内容が失われる。\n"
     "次の順で、HTML で送り直して。\n"
     "1. jp-doc-review が同時に下書きを書き出していたら、先にそのレビューを終える。以降は、レビュー後の下書きを使う\n"
-    "2. getConfluencePage で既存ページを contentFormat: html で取得し、残すべきマクロや拡張要素（data-type=\"extension\" など）を確かめる\n"
+    "2. 既存ページを HTML で取得し、残すべきマクロや拡張要素（data-type=\"extension\" など）を確かめる。"
+    "旧 MCP は getConfluencePage を contentFormat: html で、公式 MCP v2 は getConfluenceContent を draft=true・detail=full で呼ぶ"
+    "（v2 は返った snapshotToken を更新に渡す）\n"
     "3. getContentFormatGuide（toolName: updateConfluencePage）を読み、書式を確かめる\n"
     f"4. Markdown の下書きを `python3 {CONVERTER} <下書き.md>` で HTML に変換する。"
     "info パネル・目次・折りたたみは、変換スクリプトのオプション（--help を参照）で付けられる\n"
-    "5. 既存ページから残すマクロを変換結果に戻し、updateConfluencePage を contentFormat: html で呼び直す"
+    "5. 既存ページから残すマクロを変換結果に戻し、同じツールを HTML で呼び直す。"
+    "旧 MCP は contentFormat: html、公式 MCP v2 は body の format: html にする"
 )
 
 
@@ -35,6 +39,15 @@ def decide(decision: str, reason: str) -> None:
         "permissionDecision": decision,
         "permissionDecisionReason": reason,
     }}, ensure_ascii=False))
+
+
+def content_format_of(tool_input: dict) -> str:
+    """全文を置き換える本文の形式。v2 は body: {format, value}、旧形式は contentFormat。
+    v2 の edits（部分編集）は全文を置き換えないので、空文字列を返して対象外にする。"""
+    body = tool_input.get("body")
+    if isinstance(body, dict):
+        return str(body.get("format") or "")
+    return str(tool_input.get("contentFormat") or "")
 
 
 def main() -> None:
@@ -49,10 +62,9 @@ def main() -> None:
         decide("ask", f"Confluence へ送る本文の形式を検査できなかった（{type(error).__name__}: {error}）。"
                       "このまま送ってよいかを確かめて。")
         return
-    if not tool_name.endswith(UPDATE_TOOL_SUFFIX):
+    if not tool_name.endswith(UPDATE_TOOL_SUFFIXES):
         return
-    content_format = str(tool_input.get("contentFormat") or "").strip().lower()
-    if content_format == BLOCKED_FORMAT:
+    if content_format_of(tool_input).strip().lower() == BLOCKED_FORMAT:
         decide("deny", REASON)
 
 

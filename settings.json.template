@@ -129,7 +129,7 @@
         ]
       },
       {
-        "matcher": "mcp__.*__(create|update)Confluence(Page|FooterComment|InlineComment)",
+        "matcher": "mcp__.*__((create|update)Confluence(Page|FooterComment|InlineComment|Content)|executeWrite)",
         "hooks": [
           {
             "type": "command",
@@ -139,7 +139,7 @@
         ]
       },
       {
-        "matcher": "mcp__.*__updateConfluencePage",
+        "matcher": "mcp__.*__update(ConfluencePage|ConfluenceContent)",
         "hooks": [
           {
             "type": "command",
@@ -151,7 +151,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__.*__(create|update)Confluence(Page|FooterComment|InlineComment)",
+        "matcher": "mcp__.*__((create|update)Confluence(Page|FooterComment|InlineComment|Content)|executeWrite)",
         "hooks": [
           {
             "type": "command",
