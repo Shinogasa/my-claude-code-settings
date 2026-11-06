@@ -20,7 +20,8 @@ GUARD = REPO_ROOT / "hooks" / "guard-confluence-markdown.py"
 SETTINGS = json.loads((REPO_ROOT / "settings.json.template").read_text(encoding="utf-8"))
 CODEX_HOOKS = (REPO_ROOT / "codex" / "hooks.json").read_text(encoding="utf-8")
 UPDATE = "mcp__atlassian-http__updateConfluencePage"
-MATCHER = "mcp__.*__updateConfluencePage"
+UPDATE_V2 = "mcp__atlassian__updateConfluenceContent"
+MATCHER = "mcp__.*__update(ConfluencePage|ConfluenceContent)"
 CONVERTER = "~/.claude/bin/md-to-confluence-html.py"
 
 
@@ -86,6 +87,38 @@ class GuardConfluenceMarkdownTests(unittest.TestCase):
                              {"cloudId": "c", "spaceId": "1", "body": "# x", "contentFormat": "markdown"})
         self.assertEqual(output, {})
 
+    # 公式 Atlassian MCP v2（updateConfluenceContent、body: {format, value}）
+
+    def v2_update(self, **fields):
+        return {"cloudId": "c", "contentId": "123", "snapshotToken": "t", **fields}
+
+    def test_v2_markdown_update_is_denied(self):
+        for fmt in ("markdown", " Markdown "):
+            with self.subTest(fmt=fmt):
+                _, output = run_hook(UPDATE_V2, self.v2_update(body={"format": fmt, "value": "# 見出し"}))
+                self.assertEqual(decision_of(output), "deny", output)
+
+    def test_v2_html_update_and_edits_pass(self):
+        # edits は既存ページへの部分的な編集で、全文を置き換えないので、マクロは失われない
+        for fields in ({"body": {"format": "html", "value": "<p>x</p>"}},
+                       {"edits": [{"name": "replaceNode", "localId": "a", "value": "x"}]}):
+            with self.subTest(fields=fields):
+                result, output = run_hook(UPDATE_V2, self.v2_update(**fields))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output, {})
+
+    def test_v2_create_with_markdown_passes(self):
+        _, output = run_hook("mcp__atlassian__createConfluenceContent",
+                             {"cloudId": "c", "contentType": "page", "body": {"format": "markdown", "value": "# x"}})
+        self.assertEqual(output, {})
+
+    def test_reason_explains_v2_steps(self):
+        _, output = run_hook(UPDATE_V2, self.v2_update(body={"format": "markdown", "value": "# x"}))
+        reason = reason_of(output)
+        for marker in ("getConfluenceContent", "format: html", "getContentFormatGuide", CONVERTER):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, reason)
+
     def test_unreadable_input_asks(self):
         # 検査できなかったときは通さず、ユーザーに確かめる（終了コード1では止まらず送られる）
         for stdin in ("not json", json.dumps({"tool_name": UPDATE, "tool_input": "markdown"})):
@@ -113,7 +146,9 @@ class GuardConfluenceMarkdownWiringTests(unittest.TestCase):
     def test_matcher_catches_only_page_updates(self):
         pattern = re.compile(f"^(?:{MATCHER})$")
         self.assertTrue(pattern.match(UPDATE))
-        for name in ("createConfluencePage", "getConfluencePage", "updateConfluencePageX"):
+        self.assertTrue(pattern.match(UPDATE_V2))
+        for name in ("createConfluencePage", "getConfluencePage", "updateConfluencePageX",
+                     "createConfluenceContent", "getConfluenceContent", "executeWrite"):
             with self.subTest(name=name):
                 self.assertFalse(pattern.match(f"mcp__atlassian-http__{name}"))
 

@@ -115,7 +115,7 @@ def guarded(script, args=""):
             "見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi")
 
 
-CONFLUENCE_MATCHER = "mcp__.*__(create|update)Confluence(Page|FooterComment|InlineComment)"
+CONFLUENCE_MATCHER = "mcp__.*__((create|update)Confluence(Page|FooterComment|InlineComment|Content)|executeWrite)"
 
 
 def commands(event, matcher=None):
@@ -148,6 +148,13 @@ class WiringTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue(pattern.match(f"mcp__atlassian-http__{name}"))
         self.assertFalse(pattern.match("mcp__atlassian-http__getConfluencePage"))
+        # 公式 Atlassian MCP v2。コメントは executeWrite 経由なので、フックの中で操作名を見て振り分ける
+        for name in ("createConfluenceContent", "updateConfluenceContent", "executeWrite"):
+            with self.subTest(name=name):
+                self.assertTrue(pattern.match(f"mcp__atlassian__{name}"))
+        for name in ("getConfluenceContent", "executeRead", "executeDestructive", "updateConfluenceContentX"):
+            with self.subTest(name=name):
+                self.assertFalse(pattern.match(f"mcp__atlassian__{name}"))
 
     def test_bash_group_asks_for_review_before_pr_and_keeps_existing_hooks(self):
         self.assertEqual(commands("PreToolUse", "Bash"), [
