@@ -180,8 +180,9 @@ claude mcp add -s user aws-mcp -- uvx mcp-proxy-for-aws@latest https://aws-mcp.u
   どこに効いているのか追いにくい
 - claude.ai のディレクトリにあるコネクタは、`ANTHROPIC_API_KEY` などの認証が設定されている環境では読み込まれない。
   LiteLLM 経由の `claude` では使えないので、上の `claude mcp add` で直接つなぐ
-- フックの matcher は `mcp__.*__updateConfluencePage` のように、サーバ名の部分をワイルドカードにしている。
-  サーバ名を変えてもフックは効く。ただし、ツール名が変わると効かなくなる
+- Confluence 用のフックの matcher は、サーバ名の部分をワイルドカードにしている。サーバ名を変えてもフックは効く。
+  旧 `atlassian-http` と公式 MCP v2 のツール名には、両方とも対応している（ADR 0046 の追記）。
+  ただし、ツール名がまた変わると、フックは何も言わずに効かなくなる。MCP を入れ替えたら `/mcp` でツール名を確かめる
 
 ### Codex CLI 向けプラグイン
 

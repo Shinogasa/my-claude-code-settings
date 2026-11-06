@@ -122,6 +122,7 @@ jp-doc-review の Confluence 処理も Claude Code だけで動かしている�
 - フックが動かないとき（`python3` が無い、異常終了、timeout）は、Markdown の更新がそのまま送られる。`ask` で補えるのは、入力の JSON を読めなかったときだけである。
   送られても、マクロを含むページなら API が 422 で拒否する
 - `contentFormat` が `markdown` 以外の未知の値（今のツール定義には無い）や、`updateConfluencePage` 以外の名前で同じ操作をするツールは止めない
+  （2026-11-06 に公式 MCP v2 の `updateConfluenceContent` を足した。末尾の追記を参照）
 - 2つのフックが同時に deny したときに、Claude Code が両方の理由をどう表示するかは、実機で確かめていない
 - フックの動作は、Atlassian MCP がつながる仕事用のセッションでしか実機確認できない。今回はテストで契約（入力 JSON → 出力 JSON）を確かめた
 
@@ -134,3 +135,28 @@ jp-doc-review の Confluence 処理も Claude Code だけで動かしている�
   "When an event fires, its matching hooks run in parallel." 異なるフックの間の順序の保証は書かれていない。
   複数のフックが deny したときに、それぞれの `permissionDecisionReason` が Claude に届くかも書かれていない
 - ADR 0024・0033・0034（jp-doc-review の Confluence 処理と、HTML のリンター）
+
+## 追記（2026-11-06）: 公式 Atlassian MCP v2 への対応
+
+旧 `atlassian-http` を、公式 MCP v2（`https://mcp.atlassian.com/v2/mcp`）に替えた。v2 ではツール名と入力の形が変わり、
+このガードと jp-doc-review の Confluence 処理は、どちらも発火しなくなっていた。matcher はサーバ名をワイルドカードにしていたが、
+ツール名が変わる場合には対応できなかった。
+
+| 操作 | 旧 | v2 |
+|---|---|---|
+| ページ作成 | `createConfluencePage`、`body` は文字列、形式は `contentFormat` | `createConfluenceContent`、`body: {format, value}` |
+| ページ更新 | `updateConfluencePage`、`pageId` | `updateConfluenceContent`、`contentId` か `contentUrl`、`body: {format, value}` か `edits`（部分編集） |
+| コメント | `createConfluenceFooterComment` / `createConfluenceInlineComment` | `executeWrite` の `name` に `createConfluenceComment` / `updateConfluenceComment` |
+
+対応:
+
+- このガードは、`updateConfluenceContent` の `body.format` も検査する。`edits` は全文を置き換えないので止めない
+- jp-doc-review は、入力を1つの形にそろえてから扱う。`edits` は JSON のまま下書きにし、レビュワーは文字列だけを直す。
+  `executeWrite` では操作名を見て、Confluence のコメント以外（Jira など）は素通しする
+- 旧ツール名の matcher は残す。どちらの MCP がつながっていても効くようにするため
+
+既知の限界: ツール名がまた変わると、フックは何も言わずに発火しなくなる。今回それに気づけたのは、MCP を入れ替えた後に
+ツール名を人が確かめたからである。ツール名が変わったことを検出する仕組みは無い。
+
+根拠: このセッションで読み込んだ v2 のツール定義（`createConfluenceContent`、`updateConfluenceContent`、`executeWrite`）と、
+`discover` が返したコメント操作の入力（2026-11-06確認）。
