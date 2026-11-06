@@ -26,7 +26,8 @@ status: accepted
 
 1. PreToolUse フック `hooks/guard-confluence-markdown.py` を、matcher `mcp__.*__updateConfluencePage` の独立したエントリとして
    `settings.json.template` に登録する。`contentFormat` が `markdown`（前後の空白と大文字小文字は無視）なら deny する。
-   `createConfluencePage` と、`html` / `adf` / 省略（既定は HTML）の更新は止めない
+   `createConfluencePage` と、`html` / `adf` / 省略（既定は HTML）の更新は止めない。
+   公式 MCP v2 の `updateConfluenceContent` も対象に加えた（末尾の追記を参照）
 2. 既存ページにマクロがあるかどうかは見ず、Markdown の更新は**常に**止める。ページの取得はしない
 3. deny の理由に、送り直す手順を書く。jp-doc-review の下書きがあれば先にレビューを終える → 既存ページを HTML で取得して残すマクロを確かめる →
    `getContentFormatGuide` を読む → 変換スクリプトで HTML にする → 残すマクロを戻して `contentFormat: html` で送る
@@ -148,11 +149,12 @@ jp-doc-review の Confluence 処理も Claude Code だけで動かしている�
 | ページ更新 | `updateConfluencePage`、`pageId` | `updateConfluenceContent`、`contentId` か `contentUrl`、`body: {format, value}` か `edits`（部分編集） |
 | コメント | `createConfluenceFooterComment` / `createConfluenceInlineComment` | `executeWrite` の `name` に `createConfluenceComment` / `updateConfluenceComment` |
 
-対応:
+対応（3つともAIが決め、利用者は計画の承認で了承した）:
 
-- このガードは、`updateConfluenceContent` の `body.format` も検査する。`edits` は全文を置き換えないので止めない
-- jp-doc-review は、入力を1つの形にそろえてから扱う。`edits` は JSON のまま下書きにし、レビュワーは文字列だけを直す。
-  `executeWrite` では操作名を見て、Confluence のコメント以外（Jira など）は素通しする
+- このガードは、`updateConfluenceContent` の `body.format` も検査する。`edits` は全文を置き換えないので止めない。
+  ただし、部分編集で既存のマクロが残ることは**未確認**である。根拠は、`edits` がノード単位の操作（`replaceNode` など）であることと、
+  ツールの説明にある "Re-read existing rich content as HTML before editing and preserve its content and embeds." だけである
+- jp-doc-review も同じ移行で発火しなくなっていたので、同じ変更で直した（詳細はコミットとテストにある。日本語レビューの判断は ADR 0024 系で扱う）
 - 旧ツール名の matcher は残す。どちらの MCP がつながっていても効くようにするため
 
 既知の限界: ツール名がまた変わると、フックは何も言わずに発火しなくなる。今回それに気づけたのは、MCP を入れ替えた後に
