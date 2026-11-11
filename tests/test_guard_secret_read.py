@@ -8,6 +8,7 @@ HOME を一時ディレクトリへ差し替え、本物のホームにあるフ
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,9 @@ BLOCK = 2
 
 
 class GuardSecretReadBase(unittest.TestCase):
+    # 実行するフックの場所。配置を変えるテストが差し替える
+    guard = GUARD
+
     def setUp(self):
         home = tempfile.TemporaryDirectory(prefix="secret-guard-home-")
         repo = tempfile.TemporaryDirectory(prefix="secret-guard-repo-")
@@ -43,7 +47,7 @@ class GuardSecretReadBase(unittest.TestCase):
 
     def run_raw(self, stdin):
         env = {**os.environ, "HOME": str(self.home)}
-        return subprocess.run([sys.executable, str(GUARD)], input=stdin, capture_output=True, text=True,
+        return subprocess.run([sys.executable, str(self.guard)], input=stdin, capture_output=True, text=True,
                               cwd=str(self.repo), env=env)
 
     def assert_exit(self, result, expected):
@@ -487,6 +491,46 @@ class FinalReviewTests(GuardSecretReadBase):
 
     def test_export_path_allowed(self):
         self.assert_exit(self.bash("export PATH=\"$HOME/.local/bin:$PATH\""), ALLOW)
+
+
+class UndeterminedMessageTests(GuardSecretReadBase):
+    """判定できずに止めるとき、原因の対象をメッセージに出す。"""
+
+    def use_copied_hook_without_template(self):
+        # フックだけを実体コピーした配置。2つ上に settings.json.template（deny の正本）が無い。
+        # 設定を実体コピーで配る環境（コンテナ）で、配布からテンプレートが漏れたときの形
+        layout = tempfile.TemporaryDirectory(prefix="secret-guard-copied-")
+        self.addCleanup(layout.cleanup)
+        root = Path(os.path.realpath(layout.name))
+        self.guard = root / "hooks" / "guard-secret-read.py"
+        self.guard.parent.mkdir()
+        shutil.copy(GUARD, self.guard)
+        return root / "settings.json.template"
+
+    def test_missing_deny_list_blocks_and_names_the_missing_path(self):
+        missing_template = self.use_copied_hook_without_template()
+        token = self.make_file(self.home / ".config" / "app" / "token")
+        result = self.run_hook("Read", {"file_path": str(token)})
+        # deny の一覧を読めなくても、secret のファイルは止める（fail-close）
+        self.assert_exit(result, BLOCK)
+        self.assertIn("FileNotFoundError", result.stderr)
+        self.assertIn(str(missing_template), result.stderr)
+
+    def test_missing_deny_list_message_names_where_it_failed(self):
+        self.use_copied_hook_without_template()
+        token = self.make_file(self.home / ".config" / "app" / "token")
+        result = self.run_hook("Read", {"file_path": str(token)})
+        self.assert_exit(result, BLOCK)
+        self.assertIn("deny_patterns", result.stderr)
+
+    def test_internal_error_message_omits_exception_text(self):
+        # 例外の文言は入力の断片を含みうる。型と発生箇所だけを出し、文言は出さない
+        payload = json.dumps({"tool_name": "Read", "tool_input": [str(self.home / ".config" / "x")], "cwd": "/"})
+        result = self.run_raw(payload)
+        self.assert_exit(result, BLOCK)
+        self.assertIn("TypeError", result.stderr)
+        self.assertIn("decide", result.stderr)
+        self.assertNotIn("indices", result.stderr)
 
 
 if __name__ == "__main__":
