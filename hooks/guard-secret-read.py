@@ -21,6 +21,7 @@ import re
 import shlex
 import stat
 import sys
+import traceback
 from pathlib import Path
 
 # permissions.deny の正本。実機で、deny が Read ツールにしか効かず Bash の cat には効かないと分かった（2026-10-30）。
@@ -783,6 +784,20 @@ def suspicious_after_error(raw: str, data, home: str) -> bool:
     return real == os.path.realpath(home) or guarded_area(real, home)
 
 
+def describe_error(error: Exception) -> str:
+    """例外の型、見つからなかったパス、このフックの中の発生箇所を返す。
+
+    例外の文言（str(error)）は入力の断片を含みうるので出さない。パスは OSError が持つものだけを出す。
+    """
+    parts = [type(error).__name__]
+    if isinstance(error, OSError) and error.filename is not None:
+        parts.append(f"対象: {error.filename}")
+    own_frames = [frame for frame in traceback.extract_tb(error.__traceback__) if frame.filename == __file__]
+    if own_frames:
+        parts.append(f"発生箇所: {own_frames[-1].name}:{own_frames[-1].lineno}")
+    return "、".join(parts)
+
+
 def main() -> int:
     raw = sys.stdin.read()
     home = resolve_home()
@@ -792,7 +807,7 @@ def main() -> int:
         reason = decide(data, home)
     except Exception as error:
         if suspicious_after_error(raw, data, home):
-            return block(f"入力を判定できませんでした（{type(error).__name__}）。対象範囲を指しうるので止めます")
+            return block(f"入力を判定できませんでした（{describe_error(error)}）。対象範囲を指しうるので止めます")
         return 0
     return block(reason) if reason else 0
 
