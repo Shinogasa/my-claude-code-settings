@@ -864,7 +864,7 @@ Orca がsymlink先（リポジトリ）へ書き込まないようにする方�
 - **判定できないときのメッセージに出すパス**: `describe_error` は `OSError.filename` をそのまま出す。実際に入るのは deny 一覧の正本（`settings.json.template`）のパスだけと見ているが、
   `expandvars` で展開した値が入る経路が理論上ある。パスを出すのは、正本のパスと一致するときだけにするか（2026-11-11 の security-reviewer F1、Low。読んだだけで測っていない）
 - **`describe_error` 自身の例外**: `except` の中で `describe_error` が例外を投げると、python3 が exit 1 で終わり、ブロックにならずに通る。例外を投げる要因は見当たらない。
-  try で囲み、型名だけに戻すか。`suspicious_after_error` の `realpath` も同じ形（2026-11-11 の security-reviewer F2、Low）
+  try で囲み、失敗したらメッセージに出すものを例外の型名だけに戻すか。`suspicious_after_error` の `realpath` も同じ形（2026-11-11 の security-reviewer F2、Low）
 - **deny 一覧を読めないときに入力の見た目で通る経路**: 例外が出ても、入力に `~/.` などが無く cwd も対象範囲外なら exit 0 で通る。
   一覧を読めないなら、リポジトリ配下の `.env` のような deny 対象も判定できていない。一覧を読めないときだけは、入力に関係なく止めるか
   （2026-11-11、コンテナで `settings.json.template` が配られずに起きた不具合の調査で見つけた。同日の security-reviewer F3 も同じ指摘）
