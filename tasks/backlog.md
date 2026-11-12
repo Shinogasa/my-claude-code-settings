@@ -210,6 +210,24 @@ PR作成の手順を扱うskillの側に書くか。足す前に、実際のブ�
 
 ---
 
+## MCP サーバ
+
+### P3: aws-mcp が接続できない原因を調べる
+
+2026-11-11 の `claude mcp list` で、ユーザースコープの `aws-mcp` が
+`✘ Failed to connect — -32602: Invalid request parameters` になっていた。ほかの MCP は接続できている。
+登録は README の手順どおり（`uvx mcp-proxy-for-aws@latest ... --profile <profile> --read-only`）。
+
+`-32602` は JSON-RPC の「パラメータ不正」で、初期化のやりとりで弾かれている可能性がある。
+原因の候補（どれも未確認）:
+- `@latest` で版が上がり、プロキシとクライアントのプロトコルが合わなくなった
+- `<profile>` の認証情報が切れている
+
+**最初に確かめること**: `aws sts get-caller-identity --profile <profile>` で、認証が生きているかを見る。
+生きていれば、`mcp-proxy-for-aws` の版を固定して接続を比べる。
+
+**決めること**: 原因が `@latest` なら、README の登録手順で版を固定するか。
+
 ## Confluence ガードの残り（ADR 0046）
 
 ### P3: Codex でも Markdown の上書きを止めるか
