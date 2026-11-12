@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -599,6 +600,57 @@ class LearningStoreCliTests(unittest.TestCase):
         self.assertTrue(response["path"].endswith(f"-{response['id']}.md"))
         saved = (self.store / response["path"]).read_text(encoding="utf-8")
         self.assertIn(f'event_id: "{response["event_id"]}"', saved)
+
+    def assert_observed_now(self, value, before, after):
+        # 手書きの時刻ではなく、保存した瞬間のUTC時刻が入っていること
+        observed = datetime.fromisoformat(value)
+        self.assertEqual(observed.utcoffset(), timedelta(0))
+        self.assertLessEqual(before, observed)
+        self.assertLessEqual(observed, after)
+
+    def test_record_fills_observed_at_when_omitted(self):
+        self.make_active_store()
+        value = self.record_payload()
+        del value["id"], value["event_id"], value["observed_at"]
+
+        before = datetime.now(timezone.utc).replace(microsecond=0)
+        result = self.cli_with_json(value)
+        after = datetime.now(timezone.utc)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        response = json.loads(result.stdout)
+        self.assert_observed_now(response["observed_at"], before, after)
+        saved = (self.store / response["path"]).read_text(encoding="utf-8")
+        self.assertIn(f'observed_at: "{response["observed_at"]}"', saved)
+
+    def test_operation_fills_observed_at_when_omitted(self):
+        self.make_active_store()
+        operation = self.operation_payload()
+        del operation["id"], operation["event_id"], operation["observed_at"]
+
+        before = datetime.now(timezone.utc).replace(microsecond=0)
+        result = self.cli_with_json(operation)
+        after = datetime.now(timezone.utc)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        response = json.loads(result.stdout)
+        self.assert_observed_now(response["observed_at"], before, after)
+        saved = json.loads((self.store / response["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(saved["observed_at"], response["observed_at"])
+
+    def test_record_rejects_future_observed_at(self):
+        self.make_active_store()
+        future = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+        record = dict(self.record_payload(), observed_at=future)
+        operation = dict(self.operation_payload(), observed_at=future)
+
+        within = (datetime.now(timezone.utc) + timedelta(minutes=4)).isoformat()
+        accepted = self.cli_with_json(dict(self.record_payload(), observed_at=within))
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)  # 許容幅の中の時計のずれは受け入れる
+        self.assertEqual(self.error_code(self.cli_with_json(record)), "FUTURE_OBSERVED_AT")
+        self.assertEqual(self.error_code(self.cli_with_json(operation)), "FUTURE_OBSERVED_AT")
+        self.assertEqual(len(list(self.store.glob("records/**/*.md"))), 1)  # 許容幅の中の1件だけ
+        self.assertEqual(list(self.store.glob("operations/**/*.json")), [])
 
     def test_record_keeps_supplied_event_id_when_only_id_is_omitted(self):
         self.make_active_store()

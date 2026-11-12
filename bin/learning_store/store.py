@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import json
@@ -19,6 +20,7 @@ _GIT_EXECUTABLE = shutil.which("git", path=os.defpath)
 MAX_JSON_BYTES = 1024 * 1024
 MAX_RECORD_BYTES = 1024 * 1024
 MAX_LEGACY_BYTES = 8 * 1024 * 1024
+FUTURE_TOLERANCE = timedelta(minutes=5)  # 端末間の時計のずれとして許す幅
 
 
 class StoreError(Exception):
@@ -555,6 +557,12 @@ def _idempotent_existing(store: Store, relative: Path, payload: bytes) -> Option
     }
 
 
+def _reject_future(observed_at: str) -> None:
+    # 時計のずれは許すが、推測で書いた先の時刻は保存しない
+    if datetime.fromisoformat(observed_at) > datetime.now(timezone.utc) + FUTURE_TOLERANCE:
+        raise StoreError("FUTURE_OBSERVED_AT", "observed_atが現在時刻より先です。省略すれば保存時刻が入ります")
+
+
 def save_record(store: Store, value: Dict[str, object], resolve_conflict: bool = False) -> Dict[str, object]:
     from learning_store.schema import (
         analyze_history,
@@ -567,14 +575,19 @@ def save_record(store: Store, value: Dict[str, object], resolve_conflict: bool =
 
     if store.state != "active":
         raise StoreError("STORE_NOT_ACTIVE", "prepared storeには新規記録を保存できません")
-    # IDの手書きを防ぐため、省略されたIDだけをここで生成する。渡されたIDは再送の冪等性のためそのまま使う。
-    value = {**{field: str(uuid.uuid4()) for field in ("id", "event_id") if field not in value}, **value}
+    # IDと時刻の手書きを防ぐため、省略された項目だけをここで生成する。
+    # 渡された値は再送の冪等性のためそのまま使う（再送時は応答のobserved_atを写す）。
+    generated = {field: str(uuid.uuid4()) for field in ("id", "event_id") if field not in value}
+    if "observed_at" not in value:
+        generated["observed_at"] = datetime.now(timezone.utc).isoformat()
+    value = {**generated, **value}
     if value.get("kind") == "operation":
         normalized = validate_operation(value)
         payload = serialize_operation(normalized)
     else:
         normalized = validate_input(value)
         payload = serialize_record(normalized)
+    _reject_future(str(normalized["observed_at"]))
     payload_limit = MAX_JSON_BYTES if normalized["kind"] == "operation" else MAX_RECORD_BYTES
     if len(payload) > payload_limit:
         raise StoreError("INVALID_INPUT", "serialize後のrecordがsize上限を超えています")
@@ -628,6 +641,7 @@ def save_record(store: Store, value: Dict[str, object], resolve_conflict: bool =
             "ok": True,
             "id": normalized["id"],
             "event_id": normalized["event_id"],
+            "observed_at": normalized["observed_at"],
             "path": str(relative),
             "created": True,
         }

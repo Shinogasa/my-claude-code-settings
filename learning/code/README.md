@@ -25,7 +25,7 @@ Investigate、Review、Modify、Writeから選ぶ。Explainだけなら能力rec
 | `schema_version` | `1` |
 | `id` | record固有のUUID。省略する（下記） |
 | `event_id` | 初回・再試行・訂正で共有するUUID。イベントの最初の保存では省略する（下記） |
-| `observed_at` | UTC ISO 8601 |
+| `observed_at` | timezone付きISO 8601。省略する（下記） |
 | `kind` | `code`。設計判断は `decision` |
 | `mode` | `investigate` / `review` / `modify` / `write` |
 | `capability_id` | 公開可能で安定した能力ID |
@@ -43,6 +43,14 @@ Investigate、Review、Modify、Writeから選ぶ。Explainだけなら能力rec
 IDを渡した場合はそのまま使い、同じIDと同じ内容の再送は `created: false` で既存のrecordを返す。
 IDを省略したまま再送すると別のrecordとして保存されるので、保存結果が分からないときは再送せず、`list` で確かめる。
 operationは `list` に出ないので、store内の `operations/` を確かめる。
+
+`observed_at` も手書きしない。省略すると保存した時点のUTC時刻が入り、結果のJSONに返る。
+現在時刻より5分を超えて先の値は `FUTURE_OBSERVED_AT` で拒否される。IDを渡して再送するときは、
+最初の保存結果に返った `observed_at` も写す（写さないと保存時刻が変わり、`RECORD_ID_CONFLICT` になる）。
+
+入力JSONは、ファイルを書くツールで一時ファイルに書き、`learning-store.py record --input <path>` を
+単独のコマンドとして実行する。heredocやパイプと一つのコマンドにまとめない。worktreeに隔離された
+Claude Codeのsessionでは、複合コマンドを「worktreeの外に出ないか検査できない」として本体が拒否する。
 
 `capability_id` が同じでも、`scope` が異なれば同じ能力として集計しない。初版と訂正版は
 同じeventの履歴であり、別の成功回に数えない。

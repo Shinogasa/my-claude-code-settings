@@ -173,8 +173,10 @@ class WiringTests(unittest.TestCase):
         self.assertIn(guarded("jp-doc-review.py", " pre-tool-use-bash"), commands("PreToolUse", "Bash"))
         self.assertEqual(len(commands("PreToolUse", CONFLUENCE_MATCHER)), 1)
 
-    def test_stop_runs_only_read_check(self):
-        self.assertEqual(commands("Stop"), [guarded("skill-read-check.py", " stop")])
+    def test_stop_runs_read_check_and_code_learning_check(self):
+        # コード学習の判定の一行の確認（ADR 0050）はStopだけに置く。サブエージェントはユーザーに問いを出せない
+        self.assertEqual(commands("Stop"), [guarded("skill-read-check.py", " stop"),
+                                            guarded("code-learning-check.py", " stop")])
 
     def test_subagent_stop_runs_read_check(self):
         self.assertEqual(commands("SubagentStop"), [guarded("skill-read-check.py", " subagent-stop")])

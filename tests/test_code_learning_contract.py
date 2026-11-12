@@ -80,6 +80,21 @@ class CodeLearningSkillContract(unittest.TestCase):
         self.assertIn("~/.codex/bin/learning-store.py status", text)
         self.assertIn("symlink", text)
 
+    def test_router_judges_before_disclosing_findings_in_any_phase(self):
+        # 2026-11-12: 調査・説明の応答で、AIが見つけたテストの穴を判定せずに説明した事例への対策
+        text = ROUTER.read_text(encoding="utf-8")
+        self.assertIn("調査・説明・レビュー", text)
+        self.assertIn("書き出す前", text)
+        self.assertIn("「詳しく」", text)
+        self.assertIn("判定の代わりにならない", text)
+
+    def test_router_defines_one_line_judgment_format(self):
+        text = ROUTER.read_text(encoding="utf-8")
+        self.assertIn("`コード学習: <能力と対象> → <状態>（<根拠>）`", text)
+        for state in ("出題", "継続中", "見送り", "候補なし", "OFF"):
+            self.assertIn(f"`{state}`", text)
+        self.assertIn("hooks/code-learning-check.py", text)
+
     def test_router_reloads_skill_for_active_learning_event(self):
         text = ROUTER.read_text(encoding="utf-8")
         self.assertIn("継続中の学習イベント", text)
