@@ -644,9 +644,12 @@ class LearningStoreCliTests(unittest.TestCase):
         record = dict(self.record_payload(), observed_at=future)
         operation = dict(self.operation_payload(), observed_at=future)
 
+        within = (datetime.now(timezone.utc) + timedelta(minutes=4)).isoformat()
+        accepted = self.cli_with_json(dict(self.record_payload(), observed_at=within))
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)  # 許容幅の中の時計のずれは受け入れる
         self.assertEqual(self.error_code(self.cli_with_json(record)), "FUTURE_OBSERVED_AT")
         self.assertEqual(self.error_code(self.cli_with_json(operation)), "FUTURE_OBSERVED_AT")
-        self.assertEqual(list(self.store.glob("records/**/*.md")), [])
+        self.assertEqual(len(list(self.store.glob("records/**/*.md"))), 1)  # 許容幅の中の1件だけ
         self.assertEqual(list(self.store.glob("operations/**/*.json")), [])
 
     def test_record_keeps_supplied_event_id_when_only_id_is_omitted(self):

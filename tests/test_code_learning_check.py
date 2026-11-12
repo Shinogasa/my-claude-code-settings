@@ -67,6 +67,36 @@ class CodeLearningCheckTests(unittest.TestCase):
                    say("`integration_series_test.go:29` は、426行目を消しても通るはずだよ")]
         self.assertEqual(self.run_hook(entries).get("decision"), "block")
 
+    def test_ignores_go_strings_that_are_not_go_code(self):
+        # レビュー指摘: Pythonのフックやテストを編集すると、中身の文字列や正規表現で誤検出していた
+        cases = {
+            "edit_content": [call("Edit", file_path="/repo/hooks/check.py",
+                                  old_string="x", new_string='pattern = r"\\.go\\b"  # series.go を扱う')],
+            "tld_in_text": [call("Read", file_path="/repo/README.md"), say("https://example.go.jp を見た")],
+            "escaped_regex_in_text": [say("正規表現は `\\.go\\b` にした")],
+        }
+        for name, entries in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(self.run_hook([prompt(), *entries, say("ok")]), {})
+
+    def test_detects_other_go_tooling(self):
+        cases = {
+            "go_mod": call("Bash", command="go mod tidy"),
+            "gofmt": call("Bash", command="gofmt -l ."),
+            "go_dash_c": call("Bash", command="go -C sub test ./..."),
+            "grep_type": call("Grep", pattern="func New", type="go"),
+            "glob": call("Glob", pattern="pkg/**/*.go"),
+        }
+        for name, entry in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(self.run_hook([prompt(), entry, say("ok")]).get("decision"), "block")
+
+    def test_judgment_line_accepts_width_variants(self):
+        for line in ("コード学習：何か → 出題(Review)", "- コード学習: 何か → 見送り(上限)"):
+            with self.subTest(line=line):
+                entries = [prompt(), call("Read", file_path="/repo/a.go"), say(line)]
+                self.assertEqual(self.run_hook(entries), {})
+
     def test_passes_when_judgment_line_is_written(self):
         for state in ("出題（Review）", "継続中（理由の回答）", "見送り（上限）", "候補なし（読んだのは定数だけ）", "OFF（学習なし）"):
             with self.subTest(state=state):
