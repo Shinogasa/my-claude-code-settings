@@ -168,6 +168,11 @@
             "type": "command",
             "command": "if [ -f ~/.claude/hooks/skill-read-check.py ]; then python3 ~/.claude/hooks/skill-read-check.py stop; else echo '{\"systemMessage\":\"フック（~/.claude/hooks/skill-read-check.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "if [ -f ~/.claude/hooks/code-learning-check.py ]; then python3 ~/.claude/hooks/code-learning-check.py stop; else echo '{\"systemMessage\":\"フック（~/.claude/hooks/code-learning-check.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
+            "timeout": 10
           }
         ]
       }
