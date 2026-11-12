@@ -348,7 +348,9 @@ _GUARDING_TOP_LEVEL_KEYS = (
 )
 # 消しても守りが緩まない設定。守りの一覧に無いキーは消える側に倒れるので、
 # テンプレートのキーは守りか、ここのどちらかに必ず分類する（テストで強制する）
-_REMOVABLE_TOP_LEVEL_KEYS = ("$schema", "statusLine", "outputStyle", "theme", "effortLevel")
+_REMOVABLE_TOP_LEVEL_KEYS = (
+    "$schema", "statusLine", "outputStyle", "theme", "effortLevel", "askUserQuestionTimeout", "autoCompactEnabled",
+)
 _REMOVABLE_PERMISSION_KEYS = ("allow",)
 
 
