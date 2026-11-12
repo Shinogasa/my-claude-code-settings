@@ -61,7 +61,9 @@ def assistant_texts(entries: List[dict]) -> List[str]:
 
 
 def touched(window: List[dict], pattern: "re.Pattern[str]") -> bool:
-    return any(pattern.search(json.dumps(tool_input, ensure_ascii=False)) for _name, tool_input in tool_uses(window))
+    """ツールで扱ったか、本文で引用したか。前のターンで読んだコードを記憶から説明する応答も対象にする。"""
+    inputs = [json.dumps(tool_input, ensure_ascii=False) for _name, tool_input in tool_uses(window)]
+    return any(pattern.search(text) for text in inputs + assistant_texts(window))
 
 
 def check(payload: dict) -> Optional[dict]:
