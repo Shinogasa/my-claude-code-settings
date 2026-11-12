@@ -61,6 +61,12 @@ class CodeLearningCheckTests(unittest.TestCase):
         output = self.run_hook([prompt(), call("Bash", command="go test ./pkg/... -count=1"), say("通った")])
         self.assertEqual(output.get("decision"), "block")
 
+    def test_blocks_explanation_that_cites_focus_code_without_tools(self):
+        # 2026-11-12: ツールを使わず、前のターンで読んだGoのコードを記憶から説明したターンが素通りした
+        entries = [prompt("2これ詳しく"), call("Read", file_path="/skills/code-learning/SKILL.md"),
+                   say("`integration_series_test.go:29` は、426行目を消しても通るはずだよ")]
+        self.assertEqual(self.run_hook(entries).get("decision"), "block")
+
     def test_passes_when_judgment_line_is_written(self):
         for state in ("出題（Review）", "継続中（理由の回答）", "見送り（上限）", "候補なし（読んだのは定数だけ）", "OFF（学習なし）"):
             with self.subTest(state=state):
