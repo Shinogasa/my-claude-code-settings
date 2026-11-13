@@ -60,12 +60,15 @@
     "claude-md-management@claude-plugins-official": true,
     "asana@claude-plugins-official": true,
     "superpowers@claude-plugins-official": true,
-    "swift-lsp@claude-plugins-official": true
+    "swift-lsp@claude-plugins-official": true,
+    "gopls-lsp@claude-plugins-official": true
   },
   "env": {
     "CLAUDE_PROFILE": "default"
   },
   "theme": "dark-daltonized",
+  "askUserQuestionTimeout": "never",
+  "autoCompactEnabled": true,
   "hooks": {
     "PreToolUse": [
       {
