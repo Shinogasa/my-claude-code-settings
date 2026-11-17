@@ -239,6 +239,8 @@ class ReadFormContract(unittest.TestCase):
             "生成した時点",
             "落ち着いてから",
             "完了報告",
+            "伏せた意図を開示",
+            "コピーの作成と実行はAIが行い",
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, section)
