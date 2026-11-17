@@ -14,6 +14,7 @@ ROUTER = ROOT / "rules" / "code-learning.md"
 OUTPUT_RULE = ROOT / "rules" / "output-formatting.md"
 RECORD_SCHEMA = ROOT / "learning" / "code" / "README.md"
 HOST_FIXTURE = ROOT / "tests" / "fixtures" / "code-learning-host-probe"
+GO_CATALOG = ROOT / "skills" / "code-learning" / "references" / "go-patterns.md"
 
 
 class CodeLearningSkillContract(unittest.TestCase):
@@ -56,7 +57,7 @@ class CodeLearningSkillContract(unittest.TestCase):
                 self.assertIn(marker, text)
         modes = [
             text.index(f"| {mode} |")
-            for mode in ("Investigate", "Review", "Modify", "Write", "Explain")
+            for mode in ("Investigate", "Review", "Modify", "Write", "Read", "Explain")
         ]
         self.assertEqual(modes, sorted(modes))
 
@@ -211,6 +212,62 @@ class CodeLearningSkillContract(unittest.TestCase):
         self.assertIn("test_cancelled_work_does_not_publish_a_late_result", result.stderr)
         self.assertIn("FAILED (failures=1)", result.stderr)
         self.assertNotIn("ERROR", result.stderr)
+
+
+class ReadFormContract(unittest.TestCase):
+    """読解はExplainではなくRead形式で扱い、予測と実行の照合だけを証拠にする（ADR 0052）。"""
+
+    def test_explain_keeps_its_original_definition(self):
+        text = SKILL.read_text(encoding="utf-8")
+        row = next(line for line in text.splitlines() if line.startswith("| Explain |"))
+        self.assertNotIn("読解", row)
+        self.assertNotIn("Explain の第二の発火", text)
+
+    def test_read_section_defines_evidence_hints_and_timing(self):
+        text = SKILL.read_text(encoding="utf-8")
+        self.assertIn("## Read（読解）", text)
+        section = text.split("## Read（読解）", 1)[1].split("\n## ", 1)[0]
+        for marker in (
+            "外れうる予測",
+            "使い捨てのコピー",
+            "実行で確かめられない",
+            "本人が答えを求めるまで",
+            "「分からない」",
+            "採点の観点",
+            "1タスク1回",
+            "手を動かす形式",
+            "生成した時点",
+            "落ち着いてから",
+            "完了報告",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, section)
+
+    def test_go_catalog_hides_grading_points_and_drops_style_items(self):
+        text = GO_CATALOG.read_text(encoding="utf-8")
+        self.assertIn("採点の観点", text)
+        self.assertIn("本人に見せない", text)
+        self.assertNotIn("問う範囲", text)
+        for removed in ("早期 return", "レシーバと命名", "interface の置き場所"):
+            with self.subTest(removed=removed):
+                self.assertNotIn(removed, text)
+        for added in ("予測できる変更", "goleak", "WithContext", "Go 1.22"):
+            with self.subTest(added=added):
+                self.assertIn(added, text)
+
+    def test_router_points_to_installed_catalog_paths_for_both_hosts(self):
+        text = ROUTER.read_text(encoding="utf-8")
+        self.assertIn("~/.claude/skills/code-learning/references/", text)
+        self.assertIn("~/.agents/skills/code-learning/references/", text)
+
+    def test_common_policy_and_record_contract_name_read(self):
+        common = (ROOT / "rules" / "learning-mode.md").read_text(encoding="utf-8")
+        self.assertIn("Predict、Write、Modify、Review、Investigate、Read", common)
+        self.assertIn("Readは別枠", common)
+        record = RECORD_SCHEMA.read_text(encoding="utf-8")
+        self.assertIn("Investigate、Review、Modify、Write、Read", record)
+        self.assertIn("`investigate` / `review` / `modify` / `write` / `read`", record)
+        self.assertIn("予測と実行結果の照合", record)
 
 
 if __name__ == "__main__":
