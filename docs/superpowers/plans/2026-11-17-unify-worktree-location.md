@@ -23,7 +23,7 @@
 1. 子repoの中で作業するとき、エージェントがWSのルートを `<repo>` と取り違える → ruleに `git rev-parse --show-toplevel` を明記する（Task 1のテストで固定）
 2. Codexのエージェントが、superpowersの「ネイティブ優先」に従って `create_worktree` を使う → ruleにネイティブ機能を使わないと明記する（Task 1のテストで固定）
 3. dotfilesを入れていない環境（コンテナなど）で、worktreeが `??` で出る → ruleに `check-ignore` と `.git/info/exclude` の手順を書く（Task 1のテストで固定）
-4. 設定repoの節に古い置き場所の記述が残り、共通の宣言と食い違う → 設定repoの節は共通の宣言を参照するだけにする（Task 1のレビューで確かめる）
+4. 設定repoの節に古い置き場所の記述が残り、共通の宣言と食い違う → 設定repoの節は共通の宣言を参照するだけにする（Task 1のテストで固定。原則レビューP07aを受けて追加）
 5. グローバルignoreのパターンにアンカーが付き、ネストした子repoで効かない → Task 3で子repo相当のパスでも `check-ignore` を確かめる
 
 ---
@@ -47,6 +47,7 @@
 - `test_repo_root_is_toplevel`: `"git rev-parse --show-toplevel"` を含む
 - `test_ignore_check_before_create`: `"git check-ignore"` と `".git/info/exclude"` を含む
 - `test_no_unspecified_path`: `"git worktree add <path> -b <branch>"` を含まない
+- `test_config_repo_section_has_no_own_location`: 見出し `## エージェント設定リポジトリ` 以降に `".claude/worktrees/"` を含まない（置き場所は共通の節だけで宣言する）
 
 - [ ] **Step 2: REDを確かめる**
 
@@ -73,7 +74,7 @@ Run: `bash tests/run.sh` → 失敗0（`test_instruction_graph` などruleを読
 - Create: `docs/adr/0051-unify-worktree-location.md`
 - Modify: `docs/adr/README.md`（一覧の表に0051の行を足す）
 
-- [ ] **Step 1: ADRを書く**。背景（WSの散らばりと3つの困りごと、原因）、決定（日付とユーザーが選んだ経緯）、却下案と理由（`.worktrees/`＋`WorktreeCreate` フック、repoごとに任せる、Codexをネイティブに合わせる、Codexはネイティブ＋手作業で分ける、各repoの `.gitignore`、子repoのworktreeをWS側に集める）、結果（諦めたこと: Codexのホスト管理の掃除と `.worktreeinclude` が効かない。未確認: CodexのCLIでの置き場所、Codexで実際に作ったときの挙動）。書式は `docs/adr/README.md`
+- [ ] **Step 1: ADRを書く**。背景（WSの散らばりと3つの困りごと、原因）、決定（日付とユーザーが選んだ経緯）、却下案と理由（`.worktrees/`＋`WorktreeCreate` フック、repoごとに任せる、Codexをネイティブに合わせる、Codexはネイティブ＋手作業で分ける、各repoの `.gitignore`、子repoのworktreeをWS側に集める）、結果（諦めたこと: Codexのホスト管理の掃除と `.worktreeinclude` が効かない。補い方は、未追跡ファイルはruleの「分離した後にやること」、掃除は仕上げ時の `git worktree remove`。Codexでの実地確認は、確かめられないのではなく、手間との兼ね合いでユーザーが完了条件から外した。未確認: CodexのCLIでの置き場所、Codexで実際に作ったときの挙動）。書式は `docs/adr/README.md`
 - [ ] **Step 2: コミット**（原則レビューのフックが止めたら、principle-reviewerを回し、問いをユーザーに見せてから再実行）
 
 ### Task 3: dotfilesのグローバルignore（別repo・別PR）
@@ -90,6 +91,6 @@ Run: `bash tests/run.sh` → 失敗0（`test_instruction_graph` などruleを読
 
 ### Task 4: このrepoのPR
 
-- [ ] **Step 1:** `bash tests/run.sh` が失敗0
+- [ ] **Step 1:** `bash tests/run.sh` が失敗0。マージ順はどちらが先でもよい（dotfilesの反映前は、ruleの `check-ignore` と `.git/info/exclude` の手順が補う。原則レビューP17aへの回答）
 - [ ] **Step 2:** push、PR作成。本文にdotfilesのPRへのリンクと、未確認事項（Codexでの実地確認）を書く
 - [ ] **Step 3:** 本体をmainに戻すのはマージ後。`setup.sh` を実行して初めて効くファイルは触らないので、`setup.sh` の再実行は不要
