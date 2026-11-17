@@ -257,6 +257,19 @@ class ReadFormContract(unittest.TestCase):
             with self.subTest(added=added):
                 self.assertIn(added, text)
 
+    def test_go_catalog_items_cite_primary_sources_and_record_checks(self):
+        # 選定と主張の根拠を項目ごとに辿れるようにする（ADR 0052）
+        text = GO_CATALOG.read_text(encoding="utf-8")
+        self.assertIn("## 選定の基準", text)
+        items = text.split("\n### ")[1:]
+        self.assertGreaterEqual(len(items), 1)
+        for item in items:
+            title = item.splitlines()[0]
+            with self.subTest(item=title):
+                self.assertIn("- 出典: ", item)
+                self.assertIn("https://", item)
+                self.assertIn("- 確認: ", item)
+
     def test_router_points_to_installed_catalog_paths_for_both_hosts(self):
         text = ROUTER.read_text(encoding="utf-8")
         self.assertIn("~/.claude/skills/code-learning/references/", text)
