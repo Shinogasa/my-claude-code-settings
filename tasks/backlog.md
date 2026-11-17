@@ -1634,3 +1634,19 @@ Google Go Style Guide、Goのリリースノート（1.21〜1.27）、Kotlinの 
 `~/.kube/config` は kubernetes を使っていないので見送った（ユーザーが決めた）。
 
 **着手条件**: kubernetes を使い始めたとき。`Read(~/.kube/config)` を足す。
+
+---
+
+## worktreeの置き場所（ADR 0051）の残り
+
+### P3: 最終レビューで見送った Minor 3件
+
+PR #140 の最終レビュー（Opus）で Minor とされ、直さなかったもの。
+
+- ADR 0051 の決定節は「`.git/info/exclude` に足す」とだけ書いている。rule は `git rev-parse --git-path info/exclude` が指すファイルとしていて、ADR のほうが粗い
+- 契約テスト（`tests/test_worktree_location_contract.py`）は、rule の「エージェント設定リポジトリ」節に `.codex/worktrees/` が書き足された場合も、`--git-path` が消えた場合も検出しない
+- dotfiles の `config/git/ignore` のコメントは「ネストした子repoにも効かせるため `**/` を付ける」としている。パターン自体は正しいが、理由が少し不正確。グローバルignoreは子repoでもその子repoのルートから当てはまるので、子repoだけなら `**/` が無くても効く。`**/` が要るのは、repo の中のサブディレクトリでも当てはめたい場合
+
+**決めること**: 3件をまとめて直すか、捨てるか。どれも、今の動作には影響しない。
+
+**着手条件**: rule か ADR 0051 を次に触るとき。
