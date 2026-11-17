@@ -23,7 +23,7 @@ AIが生成・提示した Go コードから、コード学習の Read（読解
 - 採点の観点: 本人の予測と説明を採点するときにAIが見る観点
 - 検証: 予測を実行で確かめる道具
 - 出典: 主張の根拠にした一次資料
-- 確認: 主張を何で確かめたか。「原文」はページの本文を読んで確かめたもの、「要約経由」はページの要約でしか確かめていないもの、「実行」は手元で動かして観測したもの（Go 1.27.3、2026-11-17）
+- 確認: 主張を何で確かめたか。「原文」はページの本文を読んで確かめたもの、「要約経由」はページの要約でしか確かめていないもの、「原文（GOROOT）」は手元の Go 1.27.3 に同梱された `doc/go_spec.html` や標準ライブラリのソースのコメントで確かめたもの、「実行」は手元で動かして観測したもの（Go 1.27.3、2026-11-17）
 
 **「予測できる変更の例」と「採点の観点」は本人に見せない。** 最初の依頼にも添えない。
 見せると注目箇所を渡したことになり、ヒントなしの成功に数えられなくなる。
@@ -47,7 +47,7 @@ AIが生成・提示した Go コードから、コード学習の Read（読解
 - 採点の観点: 誰が close するか。close されないと `range` している側は止まる。バッファが 0 だと、送信側と受信側が揃うまで送信は進まない。close 済みの channel に送ると panic する
 - 検証: `go test -timeout` を短くして、止まるかどうかを観測する。すべての goroutine が止まれば `fatal error: all goroutines are asleep - deadlock!` で落ちる
 - 出典: https://go.dev/ref/spec （Channel types、Close）、https://go.dev/blog/pipelines
-- 確認: 原文（nil channel は通信できない、容量がバッファの大きさ）。要約経由（送受信が揃ったときだけ進むこと、close 済みへの送信で panic）。実行（close しない `range` で deadlock、close 済みへの送信で `send on closed channel` の panic）
+- 確認: 原文（nil channel は通信できない、容量がバッファの大きさ）。原文（GOROOT）（送受信が揃ったときだけ進むこと、close 済みへの送信や close で panic）。実行（close しない `range` で deadlock、close 済みへの送信で `send on closed channel` の panic）
 
 ### select とキャンセル
 
@@ -74,7 +74,7 @@ AIが生成・提示した Go コードから、コード学習の Read（読解
 - 採点の観点: 一つ失敗したとき、残りはどうなるか。`WithContext` が取り消すのは派生 ctx だけで、残りの goroutine が止まるのは ctx を見ている場合に限る。`Wait` が返すのは最初のエラーだけ
 - 検証: 一つをエラーにして、他の goroutine が ctx を見て早く戻ることを確かめるテスト
 - 出典: https://pkg.go.dev/golang.org/x/sync/errgroup
-- 確認: 原文（最初のエラーで派生 ctx が取り消される、`Wait` は最初のエラーを返す）。「ctx を見ていない goroutine は止まらない」は、上の仕様からの推論で、実行では確かめていない
+- 確認: 原文（最初のエラーで派生 ctx が取り消される、`Wait` は最初のエラーを返す）。実行（一つがエラーを返したとき、ctx を見る goroutine はすぐ戻り、ctx を見ない goroutine は 500ms の処理を最後まで続けた。`Wait` はどちらも最初のエラーを返した）
 
 ### ロックと値のコピー
 
@@ -92,7 +92,7 @@ AIが生成・提示した Go コードから、コード学習の Read（読解
 - 採点の観点: どの goroutine がいつ触るか。同期はどこで取られているか。競合は、map・slice・文字列ではメモリの破壊につながりうる
 - 検証: `go test -race`
 - 出典: https://go.dev/ref/mem （Advice、Implementation Restrictions for Programs Containing Data Races）、https://go.dev/doc/articles/race_detector
-- 確認: 原文（複数の goroutine が同時に触るデータの変更は直列化する、map などの競合はメモリ破壊につながりうる）。実行（同期なしの並行書き込みで `fatal error: concurrent map writes` が出た。1回の実行で観測しただけで、毎回出るとは限らない）
+- 確認: 原文（複数の goroutine が同時に触るデータの変更は直列化する、map などの競合はメモリ破壊につながりうる）。実行（同期なしの並行書き込みで `fatal error: concurrent map writes` が出た。8つの goroutine が多く書き込む形では30回中30回落ちたが、2つの goroutine が1回ずつ書き込む形では30回中2回しか落ちなかった。後者も `-race` では検出した）。原文（GOROOT）（`internal/runtime/maps/map.go` のコメントによると、書き込み中の印は競合を検出する確率を上げるもので、必ず検出するものではない）。検出には `-race` を使う
 
 ### worker pool と pipeline
 
@@ -112,7 +112,7 @@ AIが生成・提示した Go コードから、コード学習の Read（読解
 - 採点の観点: Go 1.22 以降はループ変数が反復ごとに新しく作られ、それより前は全反復で共有される。挙動は `go.mod` の `go` のバージョンで決まる
 - 検証: 両方のバージョン指定で実行する。`go vet`（loopclosure）は、ループ本体の最後の文（`go`・`defer`・errgroup の `Go` など）での参照しか報告しない。slice にためたクロージャの捕捉は報告しない
 - 出典: https://go.dev/blog/loopvar-preview （Fixing For Loops in Go 1.22）、https://go.dev/ref/spec （For statements）、https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/loopclosure
-- 確認: 原文（blog の題名、loopclosure は 1.21 以前だけの問題で、最後の文だけを見る）。要約経由（spec の反復ごとの変数）。実行（`go 1.21` で `3 3 3`、`go 1.22` で `0 1 2`。vet は `go` 文の捕捉だけを報告し、slice にためたクロージャは報告しなかった）
+- 確認: 原文（blog の題名、loopclosure は 1.21 以前だけの問題で、最後の文だけを見る）。原文（GOROOT）（spec: 反復ごとに別の変数が宣言される）。実行（`go 1.21` で `3 3 3`、`go 1.22` で `0 1 2`。vet は `go` 文の捕捉だけを報告し、slice にためたクロージャは報告しなかった）
 
 ### エラーのラップ
 
@@ -148,7 +148,7 @@ AIが生成・提示した Go コードから、コード学習の Read（読解
 - 採点の観点: 引数は defer 文の時点で評価される。defer は積んだ逆順に、関数を抜けるときに実行される。ループ内で積んだ defer は関数を抜けるまで実行されない
 - 検証: 実行順と値を出力する小さな再現
 - 出典: https://go.dev/doc/effective_go （Defer）、https://go.dev/ref/spec （Defer statements）
-- 確認: 原文（Effective Go: 引数は defer の実行時に評価される）。要約経由（spec の逆順）。実行（引数で渡すと変更前の値、クロージャで参照すると変更後の値。逆順で実行された）
+- 確認: 原文（Effective Go: 引数は defer の実行時に評価される）。原文（GOROOT）（spec: 引数は評価して保存され、関数を抜ける直前に逆順で呼ばれる）。実行（引数で渡すと変更前の値、クロージャで参照すると変更後の値。逆順で実行された）
 
 ### slice の共有と append
 
@@ -157,7 +157,7 @@ AIが生成・提示した Go コードから、コード学習の Read（読解
 - 採点の観点: 部分スライスは元の配列を共有する。容量の内側の `append` は元の配列を上書きし、容量を超えると新しい配列になる。大きな配列の一部を持ち続けると、配列全体がメモリに残る
 - 検証: len / cap と要素を確かめる再現テスト
 - 出典: https://go.dev/doc/effective_go （Slices、Append）、https://go.dev/blog/slices-intro 、https://go.dev/ref/spec （Appending to and copying slices）
-- 確認: 原文（Effective Go: 配列が変わりうるので結果を受け直す、blog: スライスはデータをコピーしない、配列全体が残る）。要約経由（spec: 容量が足りなければ新しい配列）。実行（容量内の `append` が元の配列を上書きし、容量を超えた `append` は元に影響しなかった）
+- 確認: 原文（Effective Go: 配列が変わりうるので結果を受け直す、blog: スライスはデータをコピーしない、配列全体が残る）。原文（GOROOT）（spec: 容量が足りなければ新しい配列を割り当てる）。実行（容量内の `append` が元の配列を上書きし、容量を超えた `append` は元に影響しなかった）
 
 ### map の性質
 
@@ -166,7 +166,7 @@ AIが生成・提示した Go コードから、コード学習の Read（読解
 - 採点の観点: nil の map への書き込みは panic する。無いキーの読み出しはゼロ値を返すので、有無は comma ok で区別する。反復順は決まっていない
 - 検証: 再現テスト。反復順は、同じ map を何度か回して順序を比べる
 - 出典: https://go.dev/doc/effective_go （Maps）、https://go.dev/ref/spec （Map types、For statements with range clause）
-- 確認: 原文（Effective Go: comma ok、無いキーはゼロ値）。要約経由（spec: nil map には要素を足せない、反復順は決まっていない）。実行（nil map への書き込みで `assignment to entry in nil map` の panic、20回の反復で7種類の順序）
+- 確認: 原文（Effective Go: comma ok、無いキーはゼロ値）。原文（GOROOT）（spec: nil map には要素を足せない、nil map の要素への代入は panic、反復順は決まっていない）。実行（nil map への書き込みで `assignment to entry in nil map` の panic、20回の反復で7種類の順序）
 
 ### table-driven tests
 
@@ -175,4 +175,4 @@ AIが生成・提示した Go コードから、コード学習の Read（読解
 - 採点の観点: `t.Run` の中の `t.Fatal` が止めるのはそのサブテストだけで、他のケースは走る。`t.Run` が無いと、最初の `t.Fatal` で残りのケースが走らない。`t.Errorf` は記録した後もテストを続ける
 - 検証: 一つのケースをわざと失敗させて実行する
 - 出典: https://go.dev/wiki/TableDrivenTests 、https://pkg.go.dev/testing
-- 確認: 原文（Wiki: `t.Run` を使う例、`t.Errorf` は失敗を記録しても続く）。要約経由（testing: `FailNow` は現在のテストを止める）。サブテストの扱いは資料に明記が無い。実行（`t.Run` ありでは a だけ失敗して b・c が走り、無しでは a で止まった）
+- 確認: 原文（Wiki: `t.Run` を使う例、`t.Errorf` は失敗を記録しても続く）。原文（GOROOT）（`src/testing/testing.go`: `FailNow` は `runtime.Goexit` で現在の goroutine を抜け、次のテストへ進む。`t.Run` は f を別の goroutine で実行する。この2つから、止まるのはそのサブテストだけになる）。実行（`t.Run` ありでは a だけ失敗して b・c が走り、無しでは a で止まった）
