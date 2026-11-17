@@ -527,6 +527,17 @@ class LearningStoreCliTests(unittest.TestCase):
         )
         self.assertEqual(len(tuple((self.store / "records").rglob("*.md"))), 2)
 
+    def test_code_record_accepts_read_mode_but_not_explain(self):
+        # Readは予測と実行の照合を証拠にするので保存できる。Explainだけの回は保存しない
+        self.make_active_store()
+        accepted = dict(self.record_payload(capability_id="code.read-skill"), mode="read")
+        result = self.cli_with_json(accepted)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rejected = dict(self.record_payload(event_id=str(uuid.uuid4()),
+                                            capability_id="code.explain-skill"),
+                        mode="explain")
+        self.assertEqual(self.error_code(self.cli_with_json(rejected)), "INVALID_RECORD")
+
     def test_unhashable_record_fields_return_structured_error(self):
         self.make_active_store()
         for field in ("kind", "mode", "initial_result", "retry_result", "transfer_result"):
