@@ -53,11 +53,15 @@ grilling（2026-11-16〜17）でユーザーが決めた。
 ## 結果
 
 - 良くなること: 正しいコードを読む練習が、記録に残る行動（予測と実行）として成り立つ。カタログが答えを漏らさない
-- 諦めること: 実行で確かめられない読解（interface の置き場所、命名、早期 return）は Read の対象にしない。linter の指摘に任せる（backlog）
+- 諦めること: 実行で確かめられない読解（interface の置き場所、命名、早期 return）は Read の対象にしない。レシーバのうち、値かポインタかで挙動が変わる部分は実行で確かめられるので、カタログに残した。linter の指摘に任せる（backlog）
 - リスク: 実際の Go の作業でどれだけ発火するか、ヒントがどれだけ出るかは測っていない。pilot で記録を見る。使い捨てのコピーで実行する手間はAIが負うが、待ち時間で作業の流れが止まりすぎるかもしれない。止まりすぎるなら、backlog の見直しで回数と合わせて扱う
 
 ## 根拠
 
 - ADR 0012（コード学習の形式と優先順位）、ADR 0050（判定の一行）
 - `learning/code/README.md`、`bin/learning_store/schema.py`
-- カタログに書いた検証routeは、次の一次資料で確かめた（2026-11-17）: pkg.go.dev の loopclosure・errgroup・goleak の各ページ、Go Blog「Fixing For Loops in Go 1.22」、revive の RULES_DESCRIPTIONS.md（`indent-error-flow`・`receiver-naming`）
+- Go カタログの項目は、次の基準で一次資料から選び直した（2026-11-17）: 公式の一次資料が扱っている、AIが書く Go によく現れる、実行で確かめられる予測が立つ。
+  当初の13項目は、Muse 案の15項目から3つ外して1つ足した結果で、数に根拠は無かった。選び直して16項目になった
+- 各項目の出典と、何で確かめたか（原文・要約経由・実行）は、カタログの項目ごとに書いた。要約経由のものは原文を確かめていない。
+  当初この節に「検証routeは一次資料で確かめた」と書いたが、実際に確かめていたのは5件だけで、言い過ぎだったので直した
+- backlog の linter 案の根拠: revive の RULES_DESCRIPTIONS.md（`indent-error-flow`・`receiver-naming` の実在を確かめた）
