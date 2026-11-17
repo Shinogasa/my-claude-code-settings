@@ -27,7 +27,7 @@
 
 ## 目標・非目標
 
-- 目標: worktreeを、次の場所に作らせる。`<repo>` は、そのブランチを持つrepoのルート（`git rev-parse --show-toplevel`）
+- 目標: worktreeを、次の場所に作らせる。`<repo>` は、そのブランチを持つrepoの本体の作業ツリー（`git worktree list --porcelain` の先頭の `worktree` 行。worktreeの中の `--show-toplevel` は入れ子を生むので使わない。最終レビューで判明）
   - Claude Code: `<repo>/.claude/worktrees/<名前>`（ネイティブ機能をそのまま使う）
   - Codex: `<repo>/.codex/worktrees/<名前>`（ネイティブ機能は使わず、常に `git worktree add` で作る）
   - 両方の置き場所が、どのrepoでも `git status` に出ない

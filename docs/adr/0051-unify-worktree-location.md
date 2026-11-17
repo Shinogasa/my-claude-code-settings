@@ -37,7 +37,7 @@ status: accepted
 - Claude Codeは `<repo>/.claude/worktrees/<名前>` に作る。ネイティブ機能（`EnterWorktree`、`claude -w`）をそのまま使う
 - Codexは `<repo>/.codex/worktrees/<名前>` に作る。ネイティブ機能（`codex --worktree`、`create_worktree`）は使わず、
   常に `git worktree add` で作る。superpowersがネイティブ機能を優先するよう求めても、ruleを優先する
-- `<repo>` は、そのブランチを持つrepoのルート（`git rev-parse --show-toplevel`）とする。子repoのworktreeを親の作業ディレクトリへ集めない
+- `<repo>` は、そのブランチを持つrepoの本体の作業ツリー（`git worktree list --porcelain` の先頭の `worktree` 行。worktreeの中の `--show-toplevel` は入れ子を生むので使わない。最終レビューで判明）とする。子repoのworktreeを親の作業ディレクトリへ集めない
 - 2つの置き場所は、dotfilesのグローバルignore（`**/.claude/worktrees/`、`**/.codex/worktrees/`）で無視する。
   作る前に `git check-ignore` で確かめ、無視されていなければ `.git/info/exclude` に足す
 - 宣言は `rules/parallel-worktree.md` の「worktreeの置き場所」節だけに置き、`tests/test_worktree_location_contract.py` で固定する
