@@ -111,3 +111,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0039](0039-fix-completion-criteria-rule.md) | 作業のぶれを、並列化ではなく完了条件の固定と仕分けで防ぐ | 2026-10-22 | accepted |
 | [0049](0049-no-new-assets-from-ecc.md) | ECC（affaan-m/ECC）からは、新しい資産を導入しない | 2026-11-06 | accepted |
 | [0050](0050-code-learning-judgment-line-hook.md) | コード学習の判定を、開示の前に一行で残させ、Stopフックで有無を確かめる（学習storeの `observed_at` の自動化を含む） | 2026-11-12 | accepted |
+| [0051](0051-unify-worktree-location.md) | worktreeの置き場所を、ホストごとにrepoの中の1か所へ固定する | 2026-11-17 | accepted |
