@@ -4,6 +4,25 @@
 ブランチが衝突する。片方がブランチを切り替えると、もう片方はチェックアウト中の
 ブランチが変わったことに気づかないまま作業を続ける。
 
+## worktreeの置き場所
+
+すべてのリポジトリで、worktreeはホストごとに次の場所に作る。`<repo>` は、そのブランチを持つrepoのルート
+（`git rev-parse --show-toplevel`）。子repoのブランチなら子repoのルートで、親の作業ディレクトリには集めない。
+
+| ホスト | 置き場所 | 作り方 |
+|---|---|---|
+| Claude Code | `<repo>/.claude/worktrees/<名前>` | `EnterWorktree`（`claude -w` も同じ場所に作る） |
+| Codex CLI | `<repo>/.codex/worktrees/<名前>` | `git worktree add <repo>/.codex/worktrees/<名前> -b <branch>` |
+
+Codexでは、上の `git worktree add` で作る。ネイティブ機能（`codex --worktree`、`create_worktree`）は
+repoの外の `$CODEX_HOME/worktrees/` に作るので使わない。superpowers `using-git-worktrees` がネイティブ機能を
+優先するよう求めても、この指示を優先する。
+
+作る前に `git check-ignore -q` で、置き場所のディレクトリが無視されているかを確かめる。ふだんはグローバルignore
+（dotfiles）が無視している。無視されていなければ、`git rev-parse --git-path info/exclude` が指すファイル
+（通常は `.git/info/exclude`）に `/.claude/worktrees/` か `/.codex/worktrees/` を足す。repoの `.gitignore` は変えない。
+経緯はADR 0051。
+
 ## サブエージェントを起動するとき（既定）
 
 `Agent` ツールでサブエージェントを起動し、**そのエージェントがコミットを作る場合は
@@ -20,7 +39,7 @@
 | ホスト | 分離の手段 |
 |---|---|
 | Claude Code | `EnterWorktree` ツールを呼ぶ |
-| 同等ツールを持たないホスト | `git worktree add <path> -b <branch>` を実行し、以降そのパスで作業する |
+| Codex CLI など | 「worktreeの置き場所」の `git worktree add` を実行し、以降そのパスで作業する |
 
 通知が届くのは後から起動した側だけ。先に動いているセッションは作業中で
 中断のコストが高いので、**通知を受けた側が移動する**。
@@ -78,7 +97,7 @@ worktreeは**ファイルシステムを分けるだけで、実行環境は分�
    Claude Codeで `EnterWorktree` を使って入ったセッションは、本体のファイルの編集と本体でのgit操作を拒否される。
    本体へ移るときは、ユーザーの了承を得て `ExitWorktree`（`keep`）で戻る。戻れなければ、
    ユーザーが端末で打つコマンド（`! ` を付けた形）を示す
-2. worktreeは `.claude/worktrees/` に作る。一時ディレクトリなど、リポジトリの外には作らない。
+2. worktreeは「worktreeの置き場所」に従って作る。一時ディレクトリなど、リポジトリの外には作らない。
    開始時にサブモジュールを初期化する。永続メモリは空から始まる
 3. 本体でブランチを切る前に `bin/detect-parallel-sessions` を実行する。
    並列セッションがいれば、待つ・worktreeに回す・構わず進めるのどれにするかをユーザーに聞く。
