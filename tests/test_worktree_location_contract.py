@@ -30,11 +30,20 @@ class WorktreeLocationContract(unittest.TestCase):
         self.assertIn("codex --worktree", self.text)
         self.assertIn("create_worktree", self.text)
 
-    def test_repo_root_is_toplevel(self):
-        self.assertIn("git rev-parse --show-toplevel", self.text)
+    def test_repo_root_is_main_worktree(self):
+        # worktreeの中で --show-toplevel を使うと、そのworktreeが <repo> になり入れ子になる。
+        # 親を git worktree remove すると、ignoreされた子の未コミット変更が消える
+        self.assertIn("git worktree list --porcelain", self.text)
+        self.assertNotIn("--show-toplevel", self.text)
+
+    def test_claude_child_repo_session_starts_in_child(self):
+        # EnterWorktree はパスを受け取らない。親の作業ディレクトリのセッションから呼ぶと親に作られる
+        self.assertIn("子repoでセッションを起動する", self.text)
 
     def test_ignore_check_before_create(self):
-        self.assertIn("git check-ignore", self.text)
+        # 末尾の / が無いと、まだ無いディレクトリはパターン（末尾 / 付き）に一致せず、常に「無視されていない」になる
+        self.assertIn("git check-ignore -q .claude/worktrees/", self.text)
+        self.assertIn("git check-ignore -q .codex/worktrees/", self.text)
         self.assertIn(".git/info/exclude", self.text)
 
     def test_no_unspecified_path(self):
