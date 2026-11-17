@@ -67,7 +67,8 @@ gitやsuperpowersの慣習には合う。Claude Codeのネイティブ機能は�
 ### Codexはネイティブ機能に合わせる（`$CODEX_HOME/worktrees/`）
 
 Codexのネイティブ機能はrepoの外に作る。置き場所の設定は絶対パスしか受け付けないと報告されており、repoごとの場所には向けられない。
-ユーザーは、置き場所をrepoの中に揃えるほうを選んだ。
+ユーザーは、置き場所をrepoの中に揃えるほうを選んだ。理由は2つ。repoの中を見ればClaude Codeと同じように見つかること。
+Codexは仕事用と個人用で `CODEX_HOME` を分けている（ADR 0026）ので、ネイティブ機能ではworktreeが2つの `CODEX_HOME` に分かれてしまうこと。
 
 ### Codexはネイティブ機能を使い、手作業ルートだけ `.codex/worktrees/` にする
 
@@ -83,9 +84,12 @@ Claude Codeの `EnterWorktree` は、子repoの中で使うと子repoの `.claud
 
 ## 結果
 
-- どちらのホストでも、worktreeの置き場所はrepoの中の1か所に決まる。superpowersの手作業ルートも、宣言を最優先にするので同じ場所を選ぶ
+- ruleの宣言としては、どちらのホストでもworktreeの置き場所はrepoの中の1か所に決まる。superpowersの手作業ルートも、宣言を最優先にするので同じ場所を選ぶ。
+  Codexのエージェントが実際に従うかは未確認（下記）
+- 覚えることは、ホストごとの1か所に減る。作った場所は、ホストに関係なく `git worktree list` で一覧できる
 - 諦めたこと: Codexのネイティブ機能が持つホスト管理の掃除（直近15件を残す）と、`.worktreeinclude` による未追跡ファイルのコピーが効かない。
-  未追跡ファイルは同じruleの「分離した後にやること」で、掃除はブランチを仕上げるときの `git worktree remove` で補う
+  未追跡ファイルは同じruleの「分離した後にやること」で、掃除は `git worktree list` で見つけて、ブランチを仕上げるときの `git worktree remove` で補う。
+  ユーザーは、この損失を原則レビュー（P03a）で示されたうえで、決定を変えないと答えた
 - 未確認: CodexのCLIのネイティブ機能が `$CODEX_HOME/worktrees/` に作ること（公式ドキュメントはアプリについての記述で、CLIはissueの報告のみ）
 - 未確認: Codexのエージェントが、ruleに従ってネイティブ機能を使わずに `.codex/worktrees/` へ作ること。
   確かめる手段はあるが、手間との兼ね合いで、ユーザーが完了条件から外した。契約テストはruleの文面を固定するだけで、エージェントの挙動は確かめない
