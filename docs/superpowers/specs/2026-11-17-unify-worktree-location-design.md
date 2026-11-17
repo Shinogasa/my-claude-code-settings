@@ -68,8 +68,8 @@ Codexだけで使うrepoに `.claude/` を作らせないため、Claude Codeと
 2. ADR 0051に、決定と却下案を残す
 3. dotfiles repoの `config/git/ignore` に2つのパターンを足す（別PR）
 
-子repoのworktreeは、WS側に集めず、そのブランチを持つrepoのルート直下に置く。ユーザーはCodexの置き場所を子repoの `.codex/worktrees/` と答えており、
-Claude Codeの `EnterWorktree` を子repoの中で使ったときの挙動とも合う（原則レビューP15aへの回答）。
+子repoのworktreeは、WS側に集めず、そのブランチを持つrepoの本体の作業ツリーの直下に置く。ユーザーはCodexの置き場所を子repoの `.codex/worktrees/` と答えた。
+この置き方は、Claude Codeの `EnterWorktree` を子repoの中で使ったときの挙動とも合う（原則レビューP15aへの回答）。
 
 ## 完了の判定
 

@@ -6,7 +6,7 @@
 
 ## worktreeの置き場所
 
-すべてのリポジトリで、worktreeはホストごとに次の場所に作る。`<repo>` は、そのブランチを持つrepoの本体の作業ツリー。
+すべてのリポジトリで、worktreeはホストごとに次の場所に作る。`<repo>` はそのブランチを持つrepoの本体の作業ツリー。
 `git worktree list --porcelain` の先頭の `worktree` 行が指すパスで、worktreeの中にいても本体を指す
 （worktreeの中を `<repo>` にすると入れ子になり、親を消したときに子の未コミットの変更も消える）。
 子repoのブランチなら子repoの本体で、親の作業ディレクトリには集めない。
@@ -18,7 +18,7 @@ Claude Codeで子repoのブランチを扱うときは、子repoでセッショ�
 | Claude Code | `<repo>/.claude/worktrees/<名前>` | `EnterWorktree`（`claude -w` も同じ場所に作る） |
 | Codex CLI | `<repo>/.codex/worktrees/<名前>` | `git worktree add <repo>/.codex/worktrees/<名前> -b <branch>` |
 
-Codexでは、上の `git worktree add` で作る。ネイティブ機能（`codex --worktree`、`create_worktree`）は
+Codexでは上の `git worktree add` で作る。ネイティブ機能（`codex --worktree`、`create_worktree`）は
 repoの外の `$CODEX_HOME/worktrees/` に作るので使わない。superpowers `using-git-worktrees` がネイティブ機能を
 優先するよう求めても、この指示を優先する。
 

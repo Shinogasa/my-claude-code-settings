@@ -53,7 +53,7 @@ Codexについては、原則レビューで「Codexだけで使うrepoにも `.
 
 ### 全ホストで `.worktrees/` に揃える
 
-gitやsuperpowersの慣習には合う。Claude Codeのネイティブ機能は置き場所を変える設定キーを持たない。
+gitやsuperpowersの慣習には合うが、Claude Codeのネイティブ機能は置き場所を変える設定キーを持たない。
 変えるには `WorktreeCreate` フックを自作し、保守し続ける必要がある。
 
 ### repoごとに任せる
@@ -87,7 +87,7 @@ Claude Codeの `EnterWorktree` は、子repoの中で使うと子repoの `.claud
 - ruleの宣言としては、どちらのホストでもworktreeの置き場所はrepoの中の1か所に決まる。superpowersの手作業ルートも、宣言を最優先にするので同じ場所を選ぶ。
   Codexのエージェントが実際に従うかは未確認（下記）
 - 覚えることは、ホストごとの1か所に減る。作った場所は、ホストに関係なく `git worktree list` で一覧できる
-- 諦めたこと: Codexのネイティブ機能が持つホスト管理の掃除（直近15件を残す）と、`.worktreeinclude` による未追跡ファイルのコピーが効かない。
+- 諦めたこと: Codexのネイティブ機能でホストが管理する掃除（直近15件を残す）と、`.worktreeinclude` による未追跡ファイルのコピーが効かない。
   未追跡ファイルは同じruleの「分離した後にやること」で、掃除は `git worktree list` で見つけて、ブランチを仕上げるときの `git worktree remove` で補う。
   ユーザーは、この損失を原則レビュー（P03a）で示されたうえで、決定を変えないと答えた
 - 未確認: CodexのCLIのネイティブ機能が `$CODEX_HOME/worktrees/` に作ること（公式ドキュメントはアプリについての記述で、CLIはissueの報告のみ）
