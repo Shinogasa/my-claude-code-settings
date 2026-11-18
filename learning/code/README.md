@@ -6,7 +6,8 @@
 
 ## 保存する条件
 
-- Investigate、Review、Modify、Writeで、本人が調査・変更・レビュー・検証した実行動を観測した場合だけ保存する。
+- Investigate、Review、Modify、Write、Readで、本人が調査・変更・レビュー・検証・予測した実行動を観測した場合だけ保存する。
+- Readで証拠にするのは、本人の外れうる予測と、その変更を使い捨てのコピーで実行した結果（予測と実行結果の照合）だけである。読解の説明だけでは保存しない。
 - 説明・転移回答だけ、AIによる解説だけ、skip、未回答は能力証拠として保存しない。
 - tool出力、diff、agent報告、AIが完成させたテストや修正は支援として明記する。
 - `★ Code Delta` と同じ一つの能力について、行動、理由、検証、未確認事項を分ける。
@@ -14,7 +15,7 @@
 - 記録をteachへ**自動同期しない**。
 
 Writeを固定で優先しない。現在の要求に関係し、本人が所有でき、検証できる形式を
-Investigate、Review、Modify、Writeから選ぶ。Explainだけなら能力recordを作らない。
+Investigate、Review、Modify、Write、Readから選ぶ。Explainだけなら能力recordを作らない。
 
 ## 能力recordのJSON
 
@@ -27,7 +28,7 @@ Investigate、Review、Modify、Writeから選ぶ。Explainだけなら能力rec
 | `event_id` | 初回・再試行・訂正で共有するUUID。イベントの最初の保存では省略する（下記） |
 | `observed_at` | timezone付きISO 8601。省略する（下記） |
 | `kind` | `code`。設計判断は `decision` |
-| `mode` | `investigate` / `review` / `modify` / `write` |
+| `mode` | `investigate` / `review` / `modify` / `write` / `read` |
 | `capability_id` | 公開可能で安定した能力ID |
 | `scope` | 行動と対象範囲を表す短い説明 |
 | `initial_result` | `pass` / `partial` / `fail` / `unverified` |
@@ -64,7 +65,7 @@ Claude Codeのsessionでは、複合コマンドを「worktreeの外に出ない
 能力IDとscope。扱った挙動・失敗経路・依存・変更影響を一つに絞る。
 
 ## 形式
-Investigate / Review / Modify / Writeのどれを行ったか。
+Investigate / Review / Modify / Write / Readのどれを行ったか。
 
 ## 担当範囲と完了条件
 本人が担った範囲、外部の完了条件、完了または中断の状態。

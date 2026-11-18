@@ -21,7 +21,7 @@ RESULTS = {"pass", "partial", "fail", "unverified"}
 LATER_RESULTS = RESULTS | {"not_attempted"}
 MODES = {
     "decision": {"predict"},
-    "code": {"investigate", "review", "modify", "write"},
+    "code": {"investigate", "review", "modify", "write", "read"},
 }
 OPERATION_KEYS = {
     "schema_version", "id", "event_id", "observed_at", "kind",
