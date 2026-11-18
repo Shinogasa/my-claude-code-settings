@@ -14,9 +14,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "bin" / "measure-rename-proposals.py"
 
 
-def call(name, at, **tool_input):
+def call(tool, at, **tool_input):
     return {"type": "assistant", "timestamp": at,
-            "message": {"content": [{"type": "tool_use", "name": name, "input": tool_input}]}}
+            "message": {"content": [{"type": "tool_use", "name": tool, "input": tool_input}]}}
 
 
 def say(text, at):
