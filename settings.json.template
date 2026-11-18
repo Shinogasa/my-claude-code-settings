@@ -154,6 +154,16 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "Bash|EnterWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f ~/.claude/hooks/suggest-session-rename.py ]; then python3 ~/.claude/hooks/suggest-session-rename.py; else echo '{\"systemMessage\":\"フック（~/.claude/hooks/suggest-session-rename.py）が見つからないので検査しなかった。設定リポジトリのブランチを切り替えたなら bash setup.sh --claude を実行する\"}'; fi",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "mcp__.*__((create|update)Confluence(Page|FooterComment|InlineComment|Content)|executeWrite)",
         "hooks": [
           {
