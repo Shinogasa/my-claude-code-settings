@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -329,6 +330,19 @@ class TestHandoffFork(unittest.TestCase):
         self.assertNotIn("/tmp", text)
         self.assertIn("tasks/handoff/", text)
         self.assertIn("git check-ignore", text)
+
+    def test_offers_to_exclude_once_when_not_ignored(self):
+        # 毎回置き場所を聞かれないよう、了承を得て info/exclude に足す（ADR 0051 の worktree と同じ形）
+        text = self.skill_md.read_text(encoding="utf-8")
+        self.assertIn("git rev-parse --git-path info/exclude", text)
+        self.assertIn("/tasks/handoff/", text)
+
+    def test_this_repository_ignores_tasks_handoff(self):
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", "tasks/handoff/example.md"],
+            cwd=REPO_ROOT,
+        )
+        self.assertEqual(result.returncode, 0)
 
 
 if __name__ == "__main__":
