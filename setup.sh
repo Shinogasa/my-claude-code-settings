@@ -765,7 +765,8 @@ if isinstance(existing_permissions, dict) and "permissions" in template:
         else:
             permissions[key] = value
     settings["permissions"] = permissions
-env_template_values = json.loads(Path(env_template).read_text(encoding="utf-8"))["env"]
+env_template_document = json.loads(Path(env_template).read_text(encoding="utf-8"))
+env_template_values = env_template_document["env"]
 if merge_env == "true":
     configured_env = json.loads(os.environ["SETUP_ENV_JSON"])
     env_block = {
@@ -792,11 +793,16 @@ Path(personal_staged).write_text(
         # CLAUDE_PROFILE は、このプロファイルで起動したセッションの子の claude -p が
         # 同じプロファイルで動くための目印（bin/claude-headless が読む）。会社の settings.json には入れない
         # CODEX_HOME は、同じセッションから素の codex を起動しても個人用で動かすため（ADR 0036）
-        {"env": {
-            **{key: "" for key in env_template_values},
-            "CLAUDE_PROFILE": "personal",
-            "CODEX_HOME": personal_codex_home,
-        }},
+        # env 以外のキー（modelPicker など個人プロファイルだけの設定）は、テンプレートの値をそのまま通す。
+        # コンテナ側の生成（cw-workspace-local の claude_snapshot.py）も同じ扱いにしている（ADR 0056）
+        {
+            **{key: value for key, value in env_template_document.items() if key != "env"},
+            "env": {
+                **{key: "" for key in env_template_values},
+                "CLAUDE_PROFILE": "personal",
+                "CODEX_HOME": personal_codex_home,
+            },
+        },
         ensure_ascii=False,
         indent=2,
     ) + "\n",
