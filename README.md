@@ -699,7 +699,7 @@ git -C agent-toolkit-for-aws checkout origin/main
 
 - `grilling`: 計画を質問で詰める。`/grilling` と打てば手動でも起動できる。
   上流の `grill-me` は「`grilling` を呼ぶ」だけの入口で、手動起動の別名にすぎないので配らない
-- `handoff`: 会話を、別のエージェント向けの引き継ぎ文書にまとめる。保存先は作業repoの `tasks/handoff/`（git が無視していなければ聞く）。
+- `handoff`: 会話を別のエージェント向けの引き継ぎ文書にまとめる。保存先は作業repoの `tasks/handoff/`（git が無視していなければ聞く）。
   置き場所を変えるため、symlinkではなく上流 `4ae2317` からのフォークで配る。上流の更新は手で取り込む（ADR 0054）
 - `retro`・`writing-for-agents`: セッションを振り返り、エージェントの環境の改善候補を挙げる。`retro` が最初に `writing-for-agents` を呼ぶので、2つを一緒に配る。
   `writing-for-agents` は自動で起動し、スキルや CLAUDE.md を直すたびに読まれる。このリポジトリの作業はほとんどがそれに当たるので、承知のうえで入れている
