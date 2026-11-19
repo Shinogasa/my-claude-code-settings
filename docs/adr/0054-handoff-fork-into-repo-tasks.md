@@ -77,9 +77,11 @@ skill と rule の指示が食い違い、どちらを採るかがエージェ�
 ### 達成する範囲
 
 - 解決する: ホストで `/handoff` を実行して作った資料を、devcontainer の中のセッションが `/workspace` の下で読める。再起動でも消えない
-- 解決しない: devcontainer の中で `/handoff` を実行した場合。コンテナの `~/.claude/skills/handoff` は、ホストと共有しない volume（`claude-home`）に入った静的なコピーで、
-  今も `$TMPDIR` に置く版のままになっている。この変更はコピーに届かない。指示そのものはホスト固有のパスを使わないので、コピーを差し替えればコンテナの中でも通じる。
-  差し替えはワークスペース側の課題とした（ユーザーの判断）
+- devcontainer の中で `/handoff` を実行した場合も、この変更をコンテナへ反映すれば、資料の置き場所はホストと同じになる。指示はホスト固有のパスを使わない。
+  コンテナの `~/.claude/skills/` は、ホストと共有しない volume（`claude-home`）にある。`cw-workspace-local` の `./cwl build` が
+  このrepoから snapshot を作って image に焼き込み、起動時に volume へ反映する。反映には `./cwl build && ./cwl up` が要り、`up` だけでは変わらない
+- 訂正（2026-11-19）: 最初の版では、コンテナ内の skill を「この変更が届かない静的なコピー」と書き、反映をワークスペース側の課題としていた。
+  ワークスペース側の `entrypoint.sh` だけを調べ、`cw-workspace-local` の override を追っていなかったための誤りである
 
 ### 見直す条件
 
