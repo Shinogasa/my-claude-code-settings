@@ -27,15 +27,20 @@ Codex CLI のセッション（`~/.codex/sessions/YYYY/MM/`）には 2026-07 か
 
 ## 決定
 
-`settings.json.template` に `"cleanupPeriodDays": 365` を入れる。年に1回、ログを棚卸しして振り返る。
+`settings.json.template` に `"cleanupPeriodDays": 365` を入れる。
+年に1回ログを棚卸しし、残したいものを、利用者が用意した退避用のリポジトリへ移す。
 棚卸しのリマインダは、このリポジトリの外のサービスで設定する。
+
+365日は利用者が決めた。具体的に何をしていたかを、ログを見て思い出せるのは1年くらいが上限だと見積もったためである。
+ディスク上に置く期間を1年で区切り、それより長く残すものは棚卸しで選んで退避する。
 
 ## 検討した代替案
 
 - **3650日（実質無期限）**: 採らなかった。間が空きすぎると、何をしていたかを思い出せず、材料として使いにくい。
   また、ツール出力に混じった secret がディスクに残る期間が際限なく延びる
-- **既定の30日のまま、別の場所へ定期的に退避する**: 採らなかった。退避先が増えると、secret を含むかもしれないファイルの置き場も増える。
-  退避の仕組みを作って保守する手間もかかる
+- **既定の30日のまま、別の場所へ定期的に退避する**: 採らなかった。30日ごとに退避を回すのは手間がかかり、
+  回し忘れるとその間のログが黙って消える。年1回の棚卸しでも退避はするので、退避先が増えることは変わらない。
+  違うのは頻度と、退避する前に1年分から選べることである
 - **`0` で無効にする**: 仕様上できない（バリデーションエラーになる）
 
 ## 結果
@@ -44,10 +49,17 @@ Codex CLI のセッション（`~/.codex/sessions/YYYY/MM/`）には 2026-07 か
 - secret を含むツール出力が、最大1年ディスクに残る。`guard-secret-read.py` と `permissions.deny` は読み取りを減らすが、
   出力に混じったものは消せない
 - `file-history/` や `plans/` なども1年残るので、ディスク使用量が増える。量は測っていない
-- 孤立した worktree が自動で消えるまでの期間も1年に延びる
+- 孤立した worktree が自動で消えるまでの期間も1年に延びる。必要なら手で消す。
+  worktree が消えても、そのセッションのログは消えない。ログは worktree の中ではなく
+  `~/.claude/projects/<worktreeのパス由来の名前>/` に置かれ、`cleanupPeriodDays` に従って消える
+  （2026-11-19 に、既に消えた worktree 由来のディレクトリが残っていることを確認した）
+- 退避用のリポジトリには、secret を含みうるログが期限なく残る。コミットの前にマスクし（例: gitleaks で検査する）、
+  リポジトリは非公開にする
 - 棚卸しを忘れると、1年経ったログは黙って消える
+- 30日の削除が原因だという判断は、日付の一致からの推定のまま残す。既に消えたログの原因を調べても、得るものが少ないため
 
 ## 根拠
 
+- https://code.claude.com/docs/en/worktrees.md （「Clean up subagent and background-session worktrees」の節と、worktree に入ると transcript が新しい作業ディレクトリの下へ移るという記述。2026-11-19に取得）
 - https://code.claude.com/docs/en/settings-reference.md （`cleanupPeriodDays`、`desktopSessionCleanupPeriodDays` の節。2026-11-19に取得）
 - https://code.claude.com/docs/en/claude-directory.md （「Cleaned up automatically」の節。2026-11-19に取得）
