@@ -22,6 +22,8 @@ rules/persona.md
 # todo.md と todo/ はタスクごとに使い捨てる一時ファイル (rules/task-management.md参照)。
 tasks/todo.md
 tasks/todo/
+# handoff skill が書く引き継ぎ資料（ADR 0054）。
+tasks/handoff/
 
 # 親セッションの切替状態はsession固有であり、公開リポジトリへ記録しない。
 .superpowers/model-switch/

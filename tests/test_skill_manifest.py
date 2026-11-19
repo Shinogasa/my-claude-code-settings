@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -268,7 +269,7 @@ class TestAwsSkillSubmodule(unittest.TestCase):
 MATT_SUBMODULE = "mattpocock-skills"
 MATT_SKILLS = {
     "grilling": "skills/productivity/grilling",
-    "handoff": "skills/productivity/handoff",
+    # handoffは置き場所を変えるためフォークした（ADR 0054）。TestHandoffForkで検査する
     # retroは最初にwriting-for-agentsを呼ぶので、一緒に配る
     "retro": "skills/engineering/retro",
     "writing-for-agents": "skills/productivity/writing-for-agents",
@@ -299,6 +300,49 @@ class TestMattPocockSkillSubmodule(unittest.TestCase):
         self.assertFalse(link.is_symlink() or link.exists())
         for host in HOST_KEYS:
             self.assertNotIn("grill-me", manifest[host])
+
+
+class TestHandoffFork(unittest.TestCase):
+    """handoffは上流をフォークし、引き継ぎ資料を作業repoのgit対象外の場所に置く（ADR 0054）。"""
+
+    def setUp(self):
+        self.skill_dir = SKILLS_DIR / "handoff"
+        self.skill_md = self.skill_dir / "SKILL.md"
+
+    def test_is_own_directory_listed_as_shared(self):
+        # symlinkのままだと、submoduleを更新したときに置き場所の指示が上流の版へ戻る
+        self.assertFalse(self.skill_dir.is_symlink())
+        self.assertTrue(self.skill_md.is_file())
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        self.assertIn("handoff", manifest["shared"])
+
+    def test_keeps_upstream_frontmatter_and_codex_metadata(self):
+        text = self.skill_md.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("---\nname: handoff\n"))
+        self.assertIn("disable-model-invocation: true", text)
+        openai = (self.skill_dir / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        self.assertIn("allow_implicit_invocation: false", openai)
+
+    def test_saves_into_ignored_tasks_handoff_of_working_repo(self):
+        text = self.skill_md.read_text(encoding="utf-8")
+        # ホストの一時ディレクトリはdevcontainerから見えず、再起動でも消える
+        self.assertNotIn("$TMPDIR", text)
+        self.assertNotIn("/tmp", text)
+        self.assertIn("tasks/handoff/", text)
+        self.assertIn("git check-ignore", text)
+
+    def test_offers_to_exclude_once_when_not_ignored(self):
+        # 毎回置き場所を聞かれないよう、了承を得て info/exclude に足す（ADR 0051 の worktree と同じ形）
+        text = self.skill_md.read_text(encoding="utf-8")
+        self.assertIn("git rev-parse --git-path info/exclude", text)
+        self.assertIn("/tasks/handoff/", text)
+
+    def test_this_repository_ignores_tasks_handoff(self):
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", "tasks/handoff/example.md"],
+            cwd=REPO_ROOT,
+        )
+        self.assertEqual(result.returncode, 0)
 
 
 if __name__ == "__main__":

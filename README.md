@@ -473,7 +473,7 @@ persona polite     # 切り替える。反映されるのは次に始めるセ�
 │   ├── code-learning/           #   実作業でのコード理解・変更・レビュー演習
 │   ├── coding-standards/        #   コーディング規約
 │   ├── grilling                 #   計画や設計を質問で詰める（mattpocock-skills内へのsymlink）
-│   ├── handoff                  #   別のエージェントへの引き継ぎ文書を作る（同上）
+│   ├── handoff                  #   別のエージェントへの引き継ぎ文書を作る（上流からのフォーク。ADR 0054）
 │   ├── retro, writing-for-agents  # セッションを振り返り、エージェントの環境の改善候補を挙げる（同上）
 │   ├── learning-mode/           #   学習モードの手順と書式
 │   ├── source-command-*/        #   commands/ をCodexのskillとして共有する
@@ -699,7 +699,8 @@ git -C agent-toolkit-for-aws checkout origin/main
 
 - `grilling`: 計画を質問で詰める。`/grilling` と打てば手動でも起動できる。
   上流の `grill-me` は「`grilling` を呼ぶ」だけの入口で、手動起動の別名にすぎないので配らない
-- `handoff`: 会話を、別のエージェント向けの引き継ぎ文書にまとめる。保存先は `$TMPDIR`
+- `handoff`: 会話を別のエージェント向けの引き継ぎ文書にまとめる。保存先は作業repoの `tasks/handoff/`（git が無視していなければ聞く）。
+  置き場所を変えるため、symlinkではなく上流 `4ae2317` からのフォークで配る。上流の更新は手で取り込む（ADR 0054）
 - `retro`・`writing-for-agents`: セッションを振り返り、エージェントの環境の改善候補を挙げる。`retro` が最初に `writing-for-agents` を呼ぶので、2つを一緒に配る。
   `writing-for-agents` は自動で起動し、スキルや CLAUDE.md を直すたびに読まれる。このリポジトリの作業はほとんどがそれに当たるので、承知のうえで入れている
 配り方は agent-toolkit-for-aws と同じ（ADR 0035）。公式のプラグイン（`mattpocock-skills@claude-plugins-official`）は
