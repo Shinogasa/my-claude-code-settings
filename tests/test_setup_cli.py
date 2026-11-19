@@ -294,6 +294,22 @@ class SetupCliTests(unittest.TestCase):
         # 既定のプロファイルにも明示の目印を置く。引き継いだ personal を上書きし、目印の脱落も検出できるようにする
         self.assertEqual(settings["env"]["CLAUDE_PROFILE"], "default")
 
+    def test_personal_overlay_carries_non_env_keys_from_env_template(self):
+        # 個人プロファイルだけの設定（modelPicker など）は env.json.template に書き、overlay へそのまま通す。
+        # コンテナ側の生成（cw-workspace-local の claude_snapshot.py）と同じ扱いにそろえる
+        (self.home / ".claude").mkdir()
+        template_path = self.repository / "env.json.template"
+        template = json.loads(template_path.read_text(encoding="utf-8"))
+        template["modelPicker"] = {"options": []}
+        template_path.write_text(json.dumps(template, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        result = run_setup(self.repository, self.home, "--claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        personal = json.loads((self.home / ".claude" / "settings.personal.json").read_text(encoding="utf-8"))
+        self.assertEqual(personal["modelPicker"], {"options": []})
+        # env は今までどおり setup.sh が組み立てる（テンプレートの ${...} をそのまま写さない）
+        self.assertEqual(personal["env"]["CLAUDE_PROFILE"], "personal")
+        self.assertEqual(personal["env"]["ANTHROPIC_BASE_URL"], "")
+
     def test_secret_reads_are_denied_without_dropping_existing_permissions(self):
         # テンプレートの permissions で、利用者が足した defaultMode や allow・deny を上書きしない
         (self.home / ".claude").mkdir()
