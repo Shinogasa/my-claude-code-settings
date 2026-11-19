@@ -5,7 +5,7 @@ argument-hint: "What will the next session be used for?"
 disable-model-invocation: true
 ---
 
-Write a handoff document summarising the current conversation so a fresh agent can continue the work. Save it to `tasks/handoff/<short-kebab-name>.md` under the top of the current git repository (`git rev-parse --show-toplevel`): there it survives restarts and is visible from a devcontainer that mounts the repository. Before writing, run `git check-ignore -q tasks/handoff/<short-kebab-name>.md` from that top. If it exits non-zero (git does not ignore the path, or there is no repository), stop and ask the user where to save it. Report the saved path.
+Write a handoff document summarising the current conversation so a fresh agent can continue the work. Save it to `tasks/handoff/<short-kebab-name>.md` under the top of the current git repository (`git rev-parse --show-toplevel`): there it survives restarts and is visible from a devcontainer that mounts the repository. Before writing, run `git check-ignore -q tasks/handoff/<short-kebab-name>.md` from that top. If it exits 1 (git does not ignore the path), ask the user once whether to append `/tasks/handoff/` to the file `git rev-parse --git-path info/exclude` prints; on yes, append it, confirm `git check-ignore` now exits 0, and save. If the user declines, or the command exits with any other code (such as 128 outside a repository), stop and ask the user where to save it. Report the saved path.
 
 Include a "suggested skills" section in the document, naming which skills the next agent should call the Skill tool for.
 
