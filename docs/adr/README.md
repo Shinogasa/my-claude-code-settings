@@ -113,3 +113,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0050](0050-code-learning-judgment-line-hook.md) | コード学習の判定を、開示の前に一行で残させ、Stopフックで有無を確かめる（学習storeの `observed_at` の自動化を含む） | 2026-11-12 | accepted |
 | [0051](0051-unify-worktree-location.md) | worktreeの置き場所を、ホストごとにrepoの中の1か所へ固定する | 2026-11-17 | accepted |
 | [0052](0052-code-learning-read-form.md) | AIが書いた正しいコードの読解を、コード学習の形式「Read」として切り出す | 2026-11-17 | accepted |
+| [0054](0054-handoff-fork-into-repo-tasks.md) | handoff skill を上流からフォークし、引き継ぎ資料を作業repoの `tasks/handoff/` に置く | 2026-11-19 | accepted |
