@@ -68,6 +68,15 @@
     "CLAUDE_PROFILE": "default"
   },
   "theme": "dark-daltonized",
+  "modelPicker": {
+    "options": [
+      { "model": "gpt-6.2-sol[1m]", "label": "GPT-6.2 Sol" },
+      { "model": "gpt-6.1-terra", "label": "GPT-6.1 Terra" },
+      { "model": "gpt-6-luna", "label": "GPT-6 Luna" },
+      { "model": "qwen3-coder-next", "label": "Qwen3 Coder Next" },
+      { "model": "kimi-k2.5", "label": "Kimi K2.5" }
+    ]
+  },
   "askUserQuestionTimeout": "never",
   "autoCompactEnabled": true,
   "hooks": {

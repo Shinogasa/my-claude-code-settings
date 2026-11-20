@@ -1,7 +1,7 @@
 ---
 adr: 56
 date: 2026-11-19
-status: accepted
+status: proposed
 ---
 
 # 個人プロファイルのoverlayに、`env` 以外のキーも通す
@@ -28,10 +28,14 @@ overlayを生成するコードは2か所ある。コンテナ側（cw-workspace
 
 ## 決定
 
-- 会社用の `modelPicker` は `settings.json.template` に書く。このrepoは公開されているが、それを承知のうえで利用者が決めた（2026-11-19）
+- 会社用の `modelPicker` は `settings.json.template` に書く。このrepoは公開されているが、それを承知のうえで利用者が決めた（2026-11-19）。
+  載るのは、Bedrockなどで一般に提供されているモデルのうち、会社で使えるものから利用者が選んだ一覧だけで、社内固有の情報は含まない
+  （利用者の言葉は「一般的なモデル、そもそもBedrockで使えるやつだし、その中で会社として使えるモデルを出してそれを自分がピックしてるだけ」）
 - 個人用は `env.json.template` に `"modelPicker": {"options": []}` を書き、会社用の一覧を打ち消す
 - `setup.sh` は、`env.json.template` の `env` 以外のトップレベルのキーを、`settings.personal.json` にそのまま書く。
-  会社の `settings.json` へは今までどおり `env` だけを写す
+  会社の `settings.json` へは今までどおり `env` だけを写す。
+  `modelPicker` だけに絞らず、`env` 以外をすべて通すのは、コンテナ側の生成がもともとそうしているからである。
+  ホストだけ絞ると、両者がまたずれる
 - `modelSettings` は今回は扱わない（利用者の判断）
 
 ## 却下した案
