@@ -110,8 +110,11 @@ def check(payload: dict) -> Optional[dict]:
         window = since_last_prompt(after_last_compact(read_entries(payload.get("transcript_path"))))
     except TranscriptError as error:
         return {"systemMessage": f"コード学習の確認: 会話記録を読めなかったので確認していない（{error}）"}
+    # Stopの時点では、最後の本文がまだ会話記録に書かれていないことがある。入力の本文も一行の検索に含める
+    last_message = payload.get("last_assistant_message")
+    texts = assistant_texts(window) + ([last_message] if isinstance(last_message, str) else [])
     if any(touched(window, language) for language in known) and not any(
-            JUDGMENT_LINE.search(text) for text in assistant_texts(window)):
+            JUDGMENT_LINE.search(text) for text in texts):
         if payload.get("stop_hook_active"):
             messages.append("コード学習の確認: 判定の一行が無いまま応答が終わった")
         else:
