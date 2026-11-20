@@ -388,6 +388,10 @@ Codexで効かせるには、`/hooks` での承認が要る。
 **無効化キーの二重管理を避ける**: `settings.personal.json` は `env.json.template` のキー集合から
 `setup.sh` が導出する。テンプレートにキーを足したときの無効化漏れを構造的に防ぐため。
 
+**個人プロファイルだけの設定**: `env.json.template` の `env` 以外のトップレベルのキーは、
+`settings.personal.json` にだけそのまま書かれ、会社の `settings.json` には入らない。
+`modelPicker` のように設定ファイルをまたいでマージされないキーで、会社用の値を `ccp` で打ち消すのに使う（ADR 0056）。
+
 詳細は `docs/superpowers/specs/2026-08-01-auth-profile-switching-design.md` を参照。
 
 ### Codex CLI
