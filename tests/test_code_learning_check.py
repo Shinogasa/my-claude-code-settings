@@ -103,6 +103,13 @@ class CodeLearningCheckTests(unittest.TestCase):
                 entries = [prompt(), call("Read", file_path="/repo/a.go"), say(f"所見の前に\n`コード学習: 何か → {state}`\n本文")]
                 self.assertEqual(self.run_hook(entries), {})
 
+    def test_line_in_last_assistant_message_counts_before_transcript_is_written(self):
+        # 2026-11-12〜13: 一行を書いたのに差し戻された。最終状態の会話記録なら通るので、
+        # Stopの時点では最後の本文がまだ会話記録に無かったとみなす。入力の last_assistant_message には本文がある
+        entries = [prompt(), call("Read", file_path="/repo/a.go")]
+        output = self.run_hook(entries, last_assistant_message=f"{LINE}\n本文")
+        self.assertEqual(output, {})
+
     def test_line_without_reason_or_unknown_state_does_not_count(self):
         for line in ("コード学習: 何か → 候補なし", "コード学習: 何か → たぶん（不明）"):
             with self.subTest(line=line):
