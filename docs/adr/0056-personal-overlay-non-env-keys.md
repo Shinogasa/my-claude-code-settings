@@ -18,7 +18,7 @@ status: proposed
 
 - `modelPicker` は `{"options": [{"model": ..., "label": ...}], "replaceBuiltInOptions": ...}` のobjectである
 - 設定ファイルをまたいでマージされない。managed・`--settings`・userのうち、定義している最も優先度の高いファイルの値がまるごと使われる。
-  `ccp` は `--settings ~/.claude/settings.personal.json` で起動するので、overlayに書いた値が会社用の値に勝つ
+  `ccp` は `--settings ~/.claude/settings.personal.json` で起動するので、overlayに書いた値が会社用の値より優先される
 - `replaceBuiltInOptions` を付けなければ、行は組み込みの一覧の後ろに足される。有効な行が無ければ、組み込みの一覧だけになる
   （settings-referenceの記述。空配列を明示した場合の挙動は書かれていないので、`ccp` の `/model` で確かめる）
 
@@ -32,7 +32,7 @@ overlayを生成するコードは2か所ある。コンテナ側（cw-workspace
   載るのは、Bedrockなどで一般に提供されているモデルのうち、会社で使えるものから利用者が選んだ一覧だけで、社内固有の情報は含まない
   （利用者の言葉は「一般的なモデル、そもそもBedrockで使えるやつだし、その中で会社として使えるモデルを出してそれを自分がピックしてるだけ」）
 - 個人用は `env.json.template` に `"modelPicker": {"options": []}` を書き、会社用の一覧を打ち消す
-- `setup.sh` は、`env.json.template` の `env` 以外のトップレベルのキーを、`settings.personal.json` にそのまま書く。
+- `setup.sh` は `env.json.template` の `env` 以外のトップレベルのキーを、`settings.personal.json` にそのまま書く。
   会社の `settings.json` へは今までどおり `env` だけを写す。
   `modelPicker` だけに絞らず、`env` 以外をすべて通すのは、コンテナ側の生成がもともとそうしているからである。
   ホストだけ絞ると、両者がまたずれる
@@ -51,12 +51,12 @@ overlayを生成するコードは2か所ある。コンテナ側（cw-workspace
 
 ### B. 個人用にもClaudeのモデル一覧を手で書く
 
-組み込みの一覧に戻せるなら、手で持つ必要は無い。新しいモデルが出るたびに、個人用の一覧を直す手間も生じる。
+組み込みの一覧に戻せるなら、手で持つ必要は無い。新しいモデルが出るたびに、個人用の一覧を直す手間もかかる。
 
 ### C. 会社用の一覧を、gitで追跡しない別ファイルに置く
 
 社内のモデル構成を公開repoに載せずに済む。ただし、ホストとコンテナの両方の生成処理に、新しい入力を足す必要がある。
-利用者は、公開されることを承知のうえで、テンプレートに直接書く方を選んだ。
+利用者は公開されることを承知のうえで、テンプレートに直接書く方を選んだ。
 
 ## 結果
 
