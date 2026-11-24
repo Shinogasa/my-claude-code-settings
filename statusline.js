@@ -39,8 +39,82 @@ process.stdin.on('end', async () => {
 });
 
 async function buildStatusLines(data) {
-  const rows = [buildRepoRow(data), await buildBudgetRow(data), buildMetricsRow(data)];
-  return rows.map(renderRow);
+  const columns = parseColumns(process.env.COLUMNS);
+  return [
+    // 1段目: 名前を中央で省略する。リポジトリ名は省略しない
+    fitRow(buildRepoRow(data), columns, { shrink: ['session', 'branch', 'worktree'] }),
+    // 2段目: 縮めず、幅を超えたら端末の折り返しに任せる（目的の中心なので欠けるより全部見せる）
+    renderRow(await buildBudgetRow(data)),
+    // 3段目: 価値の低い順に落とす。コストと output style は落とさない
+    fitRow(buildMetricsRow(data), columns, { drop: ['time', 'duration', 'lines', 'tokens'] }),
+  ];
+}
+
+// Claude Code は実行前に COLUMNS を端末の幅に設定する。正の整数でなければ縮めない
+function parseColumns(value) {
+  if (!/^\d+$/.test(value || '')) return null;
+  const n = Number.parseInt(value, 10);
+  return n > 0 ? n : null;
+}
+
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+const WIDE_RE = /[\p{Emoji_Presentation}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff01-\uff60\uffe0-\uffe6]/u;
+const ZERO_RE = /[\u200d\ufe0e\ufe0f\p{Mn}]/u;
+
+// 端末上の表示幅。色コードを除き、絵文字表示の文字と全角文字を2桁で数える
+function displayWidth(s) {
+  const chars = [...s.replace(ANSI_RE, '')];
+  let width = 0;
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    if (ZERO_RE.test(ch)) continue;
+    // 文字表示の記号でも、FE0F が続けば絵文字として2桁で描かれる
+    width += WIDE_RE.test(ch) || chars[i + 1] === '\ufe0f' ? 2 : 1;
+  }
+  return width;
+}
+
+const MIN_KEEP_EACH_SIDE = 4; // 前後4文字ずつ、計8文字は残す
+
+// 前後を残し、中央を … にして maxWidth に収める。文字の途中では切らない
+function truncateMiddle(name, maxWidth) {
+  const chars = [...name];
+  if (displayWidth(name) <= maxWidth || chars.length <= MIN_KEEP_EACH_SIDE * 2) return name;
+  const budget = Math.max(maxWidth - 1, 0);
+  const take = (list, limit) => {
+    const out = [];
+    let w = 0;
+    for (const ch of list) {
+      const cw = displayWidth(ch);
+      if (out.length >= MIN_KEEP_EACH_SIDE && w + cw > limit) break;
+      out.push(ch);
+      w += cw;
+    }
+    return out;
+  };
+  const front = take(chars, Math.ceil(budget / 2));
+  const back = take([...chars].reverse(), Math.floor(budget / 2)).reverse();
+  if (front.length + back.length >= chars.length) return name;
+  return `${front.join('')}…${back.join('')}`;
+}
+
+// 幅を超えている間、drop の順にセグメントを落とし、次に shrink の順に名前を縮める
+function fitRow(segments, columns, { drop = [], shrink = [] } = {}) {
+  let segs = segments.map(seg => ({ ...seg }));
+  if (!columns) return renderRow(segs);
+  const overflow = () => displayWidth(renderRow(segs)) - columns;
+
+  for (const id of drop) {
+    if (overflow() <= 0) break;
+    segs = segs.filter(seg => seg.id !== id);
+  }
+  for (const id of shrink) {
+    const over = overflow();
+    if (over <= 0) break;
+    const seg = segs.find(s => s.id === id && s.render);
+    if (seg) seg.name = truncateMiddle(seg.name, Math.max(displayWidth(seg.name) - over, 0));
+  }
+  return renderRow(segs);
 }
 
 // セグメントは { id, text } か、名前を省略できる { id, name, render(name) }
