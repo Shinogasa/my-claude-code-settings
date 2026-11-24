@@ -49,7 +49,7 @@ worktreeで作業すると、リポジトリ名・ブランチ名・worktree名�
 
 ## 幅を超えたときの縮め方
 
-表示幅は、ANSI の色コードを除き、絵文字と全角文字を2桁として数える。
+表示幅は ANSI の色コードを除き、絵文字と全角文字を2桁として数える。
 
 幅は `COLUMNS` から読む。公式ドキュメント（https://code.claude.com/docs/en/statusline）によると、
 Claude Code はスクリプトを実行する前に `COLUMNS` と `LINES` を端末の大きさに設定する。

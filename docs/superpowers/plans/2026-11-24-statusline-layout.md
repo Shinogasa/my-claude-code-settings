@@ -19,8 +19,8 @@
 - 1段目の省略順: セッション名 → ブランチ名 → worktree名。中央を `…` で省略し、各名前は8文字までは残す。リポジトリ名は省略しない
 - 色のしきい値は 70% で警告色、90% で危険色
 - 時刻系フィールド（`expires_at`、`resets_at`）は Unix epoch 秒
-- `statusline.js` は本体のシンボリックリンク先なので、保存した瞬間に実行中のステータスラインへ効く。
-  表示が壊れたら `git checkout HEAD -- statusline.js` で直前のコミットへ戻す。RED のコミットはテストだけを変えるので、
+- `statusline.js` は本体のシンボリックリンク先なので、保存するとすぐ実行中のステータスラインへ効く。
+  表示がおかしくなったら `git checkout HEAD -- statusline.js` で直前のコミットへ戻す。RED のコミットはテストだけを変えるので、
   直前のコミットの `statusline.js` は常に動く
 - TDD の段階ごとにコミットする（RED で1回、GREEN で1回。メッセージに段階と、失敗・成功したテスト名を書く）
 
@@ -36,7 +36,7 @@
 
 ### Task 0: `COLUMNS` が実際に届くかを確かめる
 
-幅への追従はこの前提の上に立つので、実装の前に確かめる。
+幅への追従はこの前提に基づくので、実装の前に確かめる。
 
 - [ ] **Step 1:** `statusline.js` の入力処理の先頭に、一時的に
   `fs.writeFileSync(path.join(os.homedir(), '.claude', 'cache', 'statusline-columns.log'), String(process.env.COLUMNS))` を足す（コミットしない）
@@ -60,7 +60,7 @@
 - 2段目: 🤖 モデル[effort 🧠]、プロファイル、💳 または 📊 5h/7d、コンテキストのバー、キャッシュ（Task 2）
 - 3段目: 🪙 トークン、💰 コスト、+/- 行数、⏱ 経過時間、🎨 output style、🕐 時刻
 
-- [ ] **Step 1: テストの土台を直す**
+- [ ] **Step 1: テストの共通処理を直す**
   `run_statusline(data, env=None)` に追加の環境変数を受け取らせ、継承した環境から `COLUMNS` と `LINES` を除く。戻り値は今のまま（1段目と git 呼び出し）。`self.lines` に全段が入る
 - [ ] **Step 2: 失敗するテストを書く**
 
