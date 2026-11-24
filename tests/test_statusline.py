@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -184,6 +185,48 @@ class StatuslineTest(unittest.TestCase):
         self.assertIn("🌲 wt2", line)
         self.assertNotIn("worktree-wt2", line)
         self.assertIn("⎇", line)
+
+    def test_温かいキャッシュは残り分とヒット率を出す(self):
+        now = int(time.time())
+        self.run_statusline({
+            "cwd": str(self.outside),
+            "prompt_cache": {"warm": True, "expires_at": now + 240, "hit_ratio": 0.92},
+        })
+        self.assertIn("🔥cache 4m (hit 92%)", self.lines[1])
+
+    def test_期限切れのキャッシュは冷えた表示にする(self):
+        now = int(time.time())
+        self.run_statusline({
+            "cwd": str(self.outside),
+            "prompt_cache": {"warm": True, "expires_at": now - 10, "hit_ratio": 0.5},
+        })
+        self.assertIn("🧊cache cold", self.lines[1])
+        self.assertNotIn("🔥", self.lines[1])
+
+    def test_ヒット率とexpires_atがnullでも落ちない(self):
+        self.run_statusline({
+            "cwd": str(self.outside),
+            "prompt_cache": {"warm": False, "expires_at": None, "hit_ratio": None},
+        })
+        self.assertIn("🧊cache cold", self.lines[1])
+        self.assertNotIn("hit", self.lines[1])
+
+    def test_PR番号とレビュー状態を1段目に出す(self):
+        line, _ = self.run_statusline({
+            "cwd": str(self.repo), "workspace": self.workspace(self.repo),
+            "pr": {"number": 1234, "url": "https://example.com/pr/1234", "review_state": "approved"},
+        })
+        self.assertIn("#1234 approved", line)
+
+    def test_spend_limitを2段目に出す(self):
+        self.run_statusline({
+            "cwd": str(self.outside),
+            "rate_limits": {"spend_limit": {
+                "used_percentage": 62.8, "resets_at": int(time.time()) + 3600,
+                "used_usd": 314.12, "limit_usd": 500, "period": "monthly",
+            }},
+        })
+        self.assertIn("💸 63% $314/$500", self.lines[1])
 
 
 if __name__ == "__main__":
