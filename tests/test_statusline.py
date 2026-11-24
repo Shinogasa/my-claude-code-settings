@@ -287,6 +287,38 @@ class StatuslineTest(unittest.TestCase):
         self.assertIn("📁 origin_repo ", line)
         self.assertIn("…", line)
 
+    def test_3段目は時刻の次に経過時間を落とす(self):
+        # 時刻を落としても37桁で35を超え、経過時間も落とすと30桁で収まる
+        self.run_statusline({"cwd": str(self.outside), **self.METRICS}, env={"COLUMNS": "35"})
+        self.assertNotIn("⏱", self.lines[2])
+        self.assertIn("+40/-3", self.lines[2])
+        self.assertIn("🪙", self.lines[2])
+
+    def _long_names_row(self, columns):
+        # 「📁 origin_repo 🌲 W(29) ⎇ B(33) ● 📌 s×30」は 14+33+38+34=119桁
+        wt = self.repo / ".claude" / "worktrees" / "wt3"
+        git(self.repo, "worktree", "add", "-q", "-b", "feature/very-long-branch-name-xyz", str(wt))
+        line, _ = self.run_statusline({
+            "cwd": str(wt),
+            "workspace": self.workspace(wt, git_worktree="worktree-name-long-0123456789"),
+            "session_name": "s" * 30,
+        }, env={"COLUMNS": str(columns)})
+        return line
+
+    def test_1段目はセッション名を最小まで縮めてからブランチ名に進む(self):
+        # 98桁: セッション名だけが 4+…+4 になり、ブランチ名と worktree 名は完全な形で残る
+        line = self._long_names_row(98)
+        self.assertIn("📌 ssss…ssss", line)
+        self.assertIn("⎇ feature/very-long-branch-name-xyz ", line)
+        self.assertIn("🌲 worktree-name-long-0123456789", line)
+
+    def test_1段目はブランチ名の次にworktree名を縮める(self):
+        # 60桁: セッション名とブランチ名が最小になり、worktree 名は15桁（7+…+7）になる
+        line = self._long_names_row(60)
+        self.assertIn("📌 ssss…ssss", line)
+        self.assertIn("⎇ feat…-xyz ", line)
+        self.assertIn("🌲 worktre…3456789", line)
+
 
 if __name__ == "__main__":
     unittest.main()
