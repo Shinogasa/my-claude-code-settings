@@ -100,6 +100,11 @@ class CodeLearningCheckTests(unittest.TestCase):
             "git_show": "git show HEAD:pkg/series.go",
             "second_line": "ls pkg\nnl -ba pkg/series.go",
             "unparsable_quote": "sed -n '1,5p pkg/series.go",
+            # 新しい判定を過去ログに当てたとき、取りこぼしていた形
+            "via_variable": "f=pkg/series.go; awk 'NR>=19 && NR<=27' $f",
+            "for_loop": "for f in pkg/a.go pkg/b.go; do head -5 $f; done",
+            "git_grep": "git grep -n 'cooldown' origin/main -- '*.go'",
+            "command_substitution": "f=$(git ls-files 'pkg/*.go' | head -1); grep -n '^func ' \"$f\"",
         }
         for name, command in cases.items():
             with self.subTest(name=name):
