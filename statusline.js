@@ -79,6 +79,9 @@ function buildRepoRow(data) {
     }
   }
 
+  const prText = formatPr(data.pr);
+  if (prText) segs.push({ id: 'pr', text: prText });
+
   if (sessionName) {
     segs.push({ id: 'session', name: sessionName, render: n => `${C.dim}📌 ${n}${C.reset}` });
   }
@@ -120,12 +123,20 @@ async function buildBudgetRow(data) {
     segs.push({ id: 'rate7d', text: formatRateLimit('7d', rl.seven_day) });
   }
 
+  // gateway の spend limit
+  const spendText = formatSpendLimit(rl?.spend_limit);
+  if (spendText) segs.push({ id: 'spend', text: spendText });
+
   // コンテキスト使用率 + プログレスバー
   if (typeof usedPct === 'number') {
     segs.push({ id: 'context', text: formatProgressBar(usedPct) });
   } else {
     segs.push({ id: 'context', text: `${C.dim}[░░░░░░░░░░] --%${C.reset}` });
   }
+
+  // プロンプトキャッシュ
+  const cacheText = formatCache(data.prompt_cache, Math.floor(Date.now() / 1000));
+  if (cacheText) segs.push({ id: 'cache', text: cacheText });
 
   return segs;
 }
@@ -262,6 +273,39 @@ async function updateLitellmBudgetCache() {
     // ネットワーク不通・タイムアウト時は静かに諦める(次回のTTL切れで再試行される)
     return null;
   }
+}
+
+// プロンプトキャッシュ: 温かければ残り分、冷えていれば cold。expires_at は epoch 秒で null もありうる
+function formatCache(pc, nowSec) {
+  if (!pc) return null;
+  const hit = typeof pc.hit_ratio === 'number' ? ` ${C.dim}(hit ${Math.round(pc.hit_ratio * 100)}%)${C.reset}` : '';
+  const remaining = typeof pc.expires_at === 'number' ? pc.expires_at - nowSec : 0;
+  if (pc.warm && remaining > 0) {
+    return `${C.yellow}🔥cache ${Math.ceil(remaining / 60)}m${C.reset}${hit}`;
+  }
+  return `${C.blue}🧊cache cold${C.reset}${hit}`;
+}
+
+// PR: GitHub は #番号、GitLab の merge request は !番号。review_state は無いこともある
+function formatPr(pr) {
+  if (!pr || typeof pr.number !== 'number') return null;
+  const num = pr.kind === 'mr' ? `!${pr.number}` : `#${pr.number}`;
+  const colors = { approved: C.green, changes_requested: C.red, pending: C.yellow, draft: C.gray };
+  const state = pr.review_state ? ` ${pr.review_state}` : '';
+  return `${colors[pr.review_state] || C.cyan}${num}${state}${C.reset}`;
+}
+
+// gateway の spend limit。used_usd / limit_usd は無いこともある
+function formatSpendLimit(sl) {
+  if (!sl || typeof sl.used_percentage !== 'number') return null;
+  const pct = Math.round(sl.used_percentage);
+  let color = C.green;
+  if (pct >= 90) color = C.red + C.bold;
+  else if (pct >= 70) color = C.yellow;
+  const usd = typeof sl.used_usd === 'number' && typeof sl.limit_usd === 'number'
+    ? ` $${Math.round(sl.used_usd)}/$${Math.round(sl.limit_usd)}`
+    : '';
+  return `${color}💸 ${pct}%${usd}${C.reset}`;
 }
 
 function formatProgressBar(pct) {
