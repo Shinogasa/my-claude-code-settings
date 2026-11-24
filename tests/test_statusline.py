@@ -228,6 +228,65 @@ class StatuslineTest(unittest.TestCase):
         })
         self.assertIn("💸 63% $314/$500", self.lines[1])
 
+    # ───── 幅への追従（期待値は手で数えた固定値。実装の幅関数は使わない） ─────
+    METRICS = {
+        "context_window": {"used_percentage": 40, "total_input_tokens": 1000, "total_output_tokens": 10},
+        "cost": {"total_cost_usd": 0.5, "total_duration_ms": 61000,
+                 "total_lines_added": 40, "total_lines_removed": 3},
+    }
+
+    def test_3段目は幅が足りないと時刻から落とす(self):
+        # 3段目「🪙 1.0K↓/10↑ 💰 $0.5000 +40/-3 ⏱ 1m1s 🕐 HH:MM」は47桁、時刻を落とすと38桁
+        self.run_statusline({"cwd": str(self.outside), **self.METRICS}, env={"COLUMNS": "40"})
+        self.assertNotIn("🕐", self.lines[2])
+        self.assertIn("⏱", self.lines[2])
+        self.assertIn("💰", self.lines[2])
+
+    def test_3段目を極端に縮めてもコストは残る(self):
+        self.run_statusline({"cwd": str(self.outside), **self.METRICS}, env={"COLUMNS": "20"})
+        self.assertIn("💰 $0.5000", self.lines[2])
+        for gone in ("🪙", "+40", "⏱", "🕐"):
+            self.assertNotIn(gone, self.lines[2])
+
+    def test_1段目はセッション名から中央省略しリポジトリ名は残す(self):
+        # 「📁 not_a_repo 📌 a×40」は 13+1+43=57桁。COLUMNS=50 で7桁超え、名前は33桁（16+…+16）になる
+        line, _ = self.run_statusline(
+            {"cwd": str(self.outside), "session_name": "a" * 40}, env={"COLUMNS": "50"})
+        self.assertIn("📁 not_a_repo ", line)
+        self.assertIn("📌 " + "a" * 16 + "…" + "a" * 16, line)
+
+    def test_日本語のセッション名は全角2桁で数えて省略する(self):
+        # 「📁 not_a_repo 📌 あ×30」は 13+1+63=77桁。COLUMNS=50 で名前は33桁 → あ×8 + … + あ×8
+        line, _ = self.run_statusline(
+            {"cwd": str(self.outside), "session_name": "あ" * 30}, env={"COLUMNS": "50"})
+        self.assertIn("📌 " + "あ" * 8 + "…" + "あ" * 8, line)
+
+    def test_2段目は狭くても縮めない(self):
+        now = int(time.time())
+        self.run_statusline({
+            "cwd": str(self.outside), "model": {"display_name": "Opus"}, **self.METRICS,
+            "prompt_cache": {"warm": True, "expires_at": now + 240, "hit_ratio": 0.92},
+        }, env={"COLUMNS": "20"})
+        for kept in ("🤖 Opus", "🏠PERSONAL", "40%", "🔥cache 4m (hit 92%)"):
+            self.assertIn(kept, self.lines[1])
+
+    def test_COLUMNSが無いか不正なら縮めない(self):
+        for columns in (None, "abc", "0"):
+            with self.subTest(columns=columns):
+                env = {"COLUMNS": columns} if columns else None
+                self.run_statusline({"cwd": str(self.outside), **self.METRICS}, env=env)
+                self.assertIn("🕐", self.lines[2])
+
+    def test_極端に狭くても落ちずにリポジトリ名を出す(self):
+        line, _ = self.run_statusline({
+            "cwd": str(self.worktree),
+            "workspace": self.workspace(self.worktree, git_worktree="very-long-worktree-name-for-testing"),
+            "session_name": "long-session-name-for-testing",
+        }, env={"COLUMNS": "20"})
+        self.assertEqual(len(self.lines), 3)
+        self.assertIn("📁 origin_repo ", line)
+        self.assertIn("…", line)
+
 
 if __name__ == "__main__":
     unittest.main()
