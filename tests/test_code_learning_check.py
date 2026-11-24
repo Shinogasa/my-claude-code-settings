@@ -79,6 +79,33 @@ class CodeLearningCheckTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(self.run_hook([prompt(), *entries, say("ok")]), {})
 
+    def test_ignores_go_paths_passed_as_strings_through_bash(self):
+        # 2026-11-19: ログを調べるスクリプトへ .go のパスを文字列で渡しただけで差し戻された（Goのコードは読んでいない）
+        cases = {
+            "heredoc_body": "python3 -I - <<'EOF'\nprint(check('pkg/v3/path_to_url.go'))\nEOF",
+            "inline_script": "python3 -c 'print(\"pkg/series.go\")'",
+            "echo_string": "echo 'see pkg/series.go'",
+        }
+        for name, command in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(self.run_hook([prompt(), call("Bash", command=command), say("ok")]), {})
+
+    def test_detects_go_files_read_through_bash(self):
+        # 過去の作業ログで、Bashの .go パス320回のうち245回は、ファイルを読むコマンドの引数だった
+        cases = {
+            "sed": "sed -n '30,80p' pkg/series.go",
+            "cat_pipe": "cat pkg/series.go | head -40",
+            "after_cd": "cd sub && grep -n 'func New' pkg/series.go",
+            "rtk_wrapper": "rtk grep -n Foo pkg/series.go",
+            "git_show": "git show HEAD:pkg/series.go",
+            "second_line": "ls pkg\nnl -ba pkg/series.go",
+            "unparsable_quote": "sed -n '1,5p pkg/series.go",
+        }
+        for name, command in cases.items():
+            with self.subTest(name=name):
+                output = self.run_hook([prompt(), call("Bash", command=command), say("ok")])
+                self.assertEqual(output.get("decision"), "block")
+
     def test_detects_other_go_tooling(self):
         cases = {
             "go_mod": call("Bash", command="go mod tidy"),
