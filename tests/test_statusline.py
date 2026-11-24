@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -65,13 +66,17 @@ class StatuslineTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def run_statusline(self, data):
-        """statusline.js に JSON を流し、色を除いた1行目と git の呼び出し一覧を返す。"""
+    def run_statusline(self, data, env=None):
+        """statusline.js に JSON を流し、色を除いた1行目と git の呼び出し一覧を返す。
+
+        全段は self.lines に入る。env で追加の環境変数（COLUMNS など）を渡せる。
+        """
         if self.git_log.exists():
             self.git_log.unlink()
         environment = {
             key: value for key, value in os.environ.items()
             if not key.startswith("GIT_") and not key.startswith("ANTHROPIC_")
+            and key not in ("COLUMNS", "LINES")
         }
         environment.update({
             "PATH": f"{self.shim_dir}{os.pathsep}{environment.get('PATH', '')}",
@@ -81,6 +86,7 @@ class StatuslineTest(unittest.TestCase):
             # 並列実行の負荷で既定の500msを超え、git の情報が消えて揺れるのを防ぐ
             "STATUSLINE_GIT_TIMEOUT_MS": "10000",
         })
+        environment.update(env or {})
         result = subprocess.run(
             ["node", str(STATUSLINE)], input=json.dumps(data), env=environment,
             capture_output=True, text=True, timeout=10, check=True,
@@ -153,6 +159,165 @@ class StatuslineTest(unittest.TestCase):
         })
         self.assertIn("25%", self.lines[1])
         self.assertNotIn("200k", self.lines[1])
+
+    def test_3段に分かれ各段に決まった項目が出る(self):
+        self.run_statusline({
+            "cwd": str(self.repo), "workspace": self.workspace(self.repo),
+            "model": {"display_name": "Opus"},
+            "context_window": {"used_percentage": 40, "total_input_tokens": 1000, "total_output_tokens": 10},
+            "cost": {"total_cost_usd": 0.5, "total_duration_ms": 61000},
+        })
+        self.assertEqual(len(self.lines), 3, self.lines)
+        self.assertIn("📁 origin_repo", self.lines[0])
+        self.assertIn("⎇ main", self.lines[0])
+        self.assertIn("🤖 Opus", self.lines[1])
+        self.assertIn("🏠PERSONAL", self.lines[1])
+        self.assertIn("40%", self.lines[1])
+        self.assertIn("🪙", self.lines[2])
+        self.assertIn("💰", self.lines[2])
+        self.assertIn("⏱", self.lines[2])
+        self.assertIn("🕐", self.lines[2])
+
+    def test_ブランチ名がworktree名由来なら名前を二度出さない(self):
+        wt = self.repo / ".claude" / "worktrees" / "wt2"
+        git(self.repo, "worktree", "add", "-q", "-b", "worktree-wt2", str(wt))
+        line, _ = self.run_statusline({"cwd": str(wt), "workspace": self.workspace(wt, git_worktree="wt2")})
+        self.assertIn("🌲 wt2", line)
+        self.assertNotIn("worktree-wt2", line)
+        self.assertIn("⎇", line)
+
+    def test_温かいキャッシュは残り分とヒット率を出す(self):
+        now = int(time.time())
+        self.run_statusline({
+            "cwd": str(self.outside),
+            "prompt_cache": {"warm": True, "expires_at": now + 240, "hit_ratio": 0.92},
+        })
+        self.assertIn("🔥cache 4m (hit 92%)", self.lines[1])
+
+    def test_期限切れのキャッシュは冷えた表示にする(self):
+        now = int(time.time())
+        self.run_statusline({
+            "cwd": str(self.outside),
+            "prompt_cache": {"warm": True, "expires_at": now - 10, "hit_ratio": 0.5},
+        })
+        self.assertIn("🧊cache cold", self.lines[1])
+        self.assertNotIn("🔥", self.lines[1])
+
+    def test_ヒット率とexpires_atがnullでも落ちない(self):
+        self.run_statusline({
+            "cwd": str(self.outside),
+            "prompt_cache": {"warm": False, "expires_at": None, "hit_ratio": None},
+        })
+        self.assertIn("🧊cache cold", self.lines[1])
+        self.assertNotIn("hit", self.lines[1])
+
+    def test_PR番号とレビュー状態を1段目に出す(self):
+        line, _ = self.run_statusline({
+            "cwd": str(self.repo), "workspace": self.workspace(self.repo),
+            "pr": {"number": 1234, "url": "https://example.com/pr/1234", "review_state": "approved"},
+        })
+        self.assertIn("#1234 approved", line)
+
+    def test_spend_limitを2段目に出す(self):
+        self.run_statusline({
+            "cwd": str(self.outside),
+            "rate_limits": {"spend_limit": {
+                "used_percentage": 62.8, "resets_at": int(time.time()) + 3600,
+                "used_usd": 314.12, "limit_usd": 500, "period": "monthly",
+            }},
+        })
+        self.assertIn("💸 63% $314/$500", self.lines[1])
+
+    # ───── 幅への追従（期待値は手で数えた固定値。実装の幅関数は使わない） ─────
+    METRICS = {
+        "context_window": {"used_percentage": 40, "total_input_tokens": 1000, "total_output_tokens": 10},
+        "cost": {"total_cost_usd": 0.5, "total_duration_ms": 61000,
+                 "total_lines_added": 40, "total_lines_removed": 3},
+    }
+
+    def test_3段目は幅が足りないと時刻から落とす(self):
+        # 3段目「🪙 1.0K↓/10↑ 💰 $0.5000 +40/-3 ⏱ 1m1s 🕐 HH:MM」は47桁、時刻を落とすと38桁
+        self.run_statusline({"cwd": str(self.outside), **self.METRICS}, env={"COLUMNS": "40"})
+        self.assertNotIn("🕐", self.lines[2])
+        self.assertIn("⏱", self.lines[2])
+        self.assertIn("💰", self.lines[2])
+
+    def test_3段目を極端に縮めてもコストは残る(self):
+        self.run_statusline({"cwd": str(self.outside), **self.METRICS}, env={"COLUMNS": "20"})
+        self.assertIn("💰 $0.5000", self.lines[2])
+        for gone in ("🪙", "+40", "⏱", "🕐"):
+            self.assertNotIn(gone, self.lines[2])
+
+    def test_1段目はセッション名から中央省略しリポジトリ名は残す(self):
+        # 「📁 not_a_repo 📌 a×40」は 13+1+43=57桁。COLUMNS=50 で7桁超え、名前は33桁（16+…+16）になる
+        line, _ = self.run_statusline(
+            {"cwd": str(self.outside), "session_name": "a" * 40}, env={"COLUMNS": "50"})
+        self.assertIn("📁 not_a_repo ", line)
+        self.assertIn("📌 " + "a" * 16 + "…" + "a" * 16, line)
+
+    def test_日本語のセッション名は全角2桁で数えて省略する(self):
+        # 「📁 not_a_repo 📌 あ×30」は 13+1+63=77桁。COLUMNS=50 で名前は33桁 → あ×8 + … + あ×8
+        line, _ = self.run_statusline(
+            {"cwd": str(self.outside), "session_name": "あ" * 30}, env={"COLUMNS": "50"})
+        self.assertIn("📌 " + "あ" * 8 + "…" + "あ" * 8, line)
+
+    def test_2段目は狭くても縮めない(self):
+        now = int(time.time())
+        self.run_statusline({
+            "cwd": str(self.outside), "model": {"display_name": "Opus"}, **self.METRICS,
+            "prompt_cache": {"warm": True, "expires_at": now + 240, "hit_ratio": 0.92},
+        }, env={"COLUMNS": "20"})
+        for kept in ("🤖 Opus", "🏠PERSONAL", "40%", "🔥cache 4m (hit 92%)"):
+            self.assertIn(kept, self.lines[1])
+
+    def test_COLUMNSが無いか不正なら縮めない(self):
+        for columns in (None, "abc", "0"):
+            with self.subTest(columns=columns):
+                env = {"COLUMNS": columns} if columns else None
+                self.run_statusline({"cwd": str(self.outside), **self.METRICS}, env=env)
+                self.assertIn("🕐", self.lines[2])
+
+    def test_極端に狭くても落ちずにリポジトリ名を出す(self):
+        line, _ = self.run_statusline({
+            "cwd": str(self.worktree),
+            "workspace": self.workspace(self.worktree, git_worktree="very-long-worktree-name-for-testing"),
+            "session_name": "long-session-name-for-testing",
+        }, env={"COLUMNS": "20"})
+        self.assertEqual(len(self.lines), 3)
+        self.assertIn("📁 origin_repo ", line)
+        self.assertIn("…", line)
+
+    def test_3段目は時刻の次に経過時間を落とす(self):
+        # 時刻を落としても37桁で35を超え、経過時間も落とすと30桁で収まる
+        self.run_statusline({"cwd": str(self.outside), **self.METRICS}, env={"COLUMNS": "35"})
+        self.assertNotIn("⏱", self.lines[2])
+        self.assertIn("+40/-3", self.lines[2])
+        self.assertIn("🪙", self.lines[2])
+
+    def _long_names_row(self, columns):
+        # 「📁 origin_repo 🌲 W(29) ⎇ B(33) ● 📌 s×30」は 14+33+38+34=119桁
+        wt = self.repo / ".claude" / "worktrees" / "wt3"
+        git(self.repo, "worktree", "add", "-q", "-b", "feature/very-long-branch-name-xyz", str(wt))
+        line, _ = self.run_statusline({
+            "cwd": str(wt),
+            "workspace": self.workspace(wt, git_worktree="worktree-name-long-0123456789"),
+            "session_name": "s" * 30,
+        }, env={"COLUMNS": str(columns)})
+        return line
+
+    def test_1段目はセッション名を最小まで縮めてからブランチ名に進む(self):
+        # 98桁: セッション名だけが 4+…+4 になり、ブランチ名と worktree 名は完全な形で残る
+        line = self._long_names_row(98)
+        self.assertIn("📌 ssss…ssss", line)
+        self.assertIn("⎇ feature/very-long-branch-name-xyz ", line)
+        self.assertIn("🌲 worktree-name-long-0123456789", line)
+
+    def test_1段目はブランチ名の次にworktree名を縮める(self):
+        # 60桁: セッション名とブランチ名が最小になり、worktree 名は15桁（7+…+7）になる
+        line = self._long_names_row(60)
+        self.assertIn("📌 ssss…ssss", line)
+        self.assertIn("⎇ feat…-xyz ", line)
+        self.assertIn("🌲 worktre…3456789", line)
 
 
 if __name__ == "__main__":
