@@ -1,7 +1,7 @@
 ---
 adr: 56
 date: 2026-11-19
-status: proposed
+status: accepted
 ---
 
 # 個人プロファイルのoverlayに、`env` 以外のキーも通す
@@ -20,7 +20,8 @@ status: proposed
 - 設定ファイルをまたいでマージされない。managed・`--settings`・userのうち、定義している最も優先度の高いファイルの値がまるごと使われる。
   `ccp` は `--settings ~/.claude/settings.personal.json` で起動するので、overlayに書いた値が会社用の値より優先される
 - `replaceBuiltInOptions` を付けなければ、行は組み込みの一覧の後ろに足される。有効な行が無ければ、組み込みの一覧だけになる
-  （settings-referenceの記述。空配列を明示した場合の挙動は書かれていないので、`ccp` の `/model` で確かめる）
+  （settings-referenceの記述。空配列を明示した場合の挙動は書かれていない。2026-11-20に、ホストとコンテナの両方で、
+  `ccp` の `/model` に会社用の5件が出ず、`claude` には出ることを利用者が確かめた）
 
 overlayを生成するコードは2か所ある。コンテナ側（cw-workspace-local の `claude_snapshot.py`）は、
 `env.json.template` をまるごと写して `env` だけを空にする。ホスト側（`setup.sh` の `prepare_claude_files`）は、
@@ -36,7 +37,9 @@ overlayを生成するコードは2か所ある。コンテナ側（cw-workspace
   会社の `settings.json` へは今までどおり `env` だけを写す。
   `modelPicker` だけに絞らず、`env` 以外をすべて通すのは、コンテナ側の生成がもともとそうしているからである。
   ホストだけ絞ると、両者がまたずれる
-- `modelSettings` は今回は扱わない（利用者の判断）
+- `modelSettings`（モデルごとの `effortLevel` など）は今回は扱わず、見送る（利用者の判断）。
+  追加したモデルで effort を変えられるかをまだ試していない。また、追加したモデルを使う機会は少なく、
+  AIが呼び出す使い方になりそうなので、その使い方が決まったときに設定する
 
 ## 却下した案
 
@@ -47,6 +50,8 @@ overlayを生成するコードは2か所ある。コンテナ側（cw-workspace
 
 分けて得をするのは、個人用の設定が増えたときに置き場が分かりやすくなることくらいである。
 利用者は、名前と役割がずれることを受け入れ、必要になった時点で分けると決めた（2026-11-20）。
+分ける目安は、`env.json.template` を読んだ人（利用者かAI）が、置き場を間違えたり迷ったりしたときとする（2026-11-24、利用者が決めた）。
+本来は分けた方がよいが、分けるとcw-workspace-local 側にも変更が要り、手間が大きい。そのため、気になった時点で対応する。
 分けるときは、`env` 以外のキーを新しいテンプレートへ移し、ホストとコンテナの両方の生成処理で読む。
 
 ### B. 個人用にもClaudeのモデル一覧を手で書く
