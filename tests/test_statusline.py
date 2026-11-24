@@ -65,13 +65,17 @@ class StatuslineTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def run_statusline(self, data):
-        """statusline.js に JSON を流し、色を除いた1行目と git の呼び出し一覧を返す。"""
+    def run_statusline(self, data, env=None):
+        """statusline.js に JSON を流し、色を除いた1行目と git の呼び出し一覧を返す。
+
+        全段は self.lines に入る。env で追加の環境変数（COLUMNS など）を渡せる。
+        """
         if self.git_log.exists():
             self.git_log.unlink()
         environment = {
             key: value for key, value in os.environ.items()
             if not key.startswith("GIT_") and not key.startswith("ANTHROPIC_")
+            and key not in ("COLUMNS", "LINES")
         }
         environment.update({
             "PATH": f"{self.shim_dir}{os.pathsep}{environment.get('PATH', '')}",
@@ -81,6 +85,7 @@ class StatuslineTest(unittest.TestCase):
             # 並列実行の負荷で既定の500msを超え、git の情報が消えて揺れるのを防ぐ
             "STATUSLINE_GIT_TIMEOUT_MS": "10000",
         })
+        environment.update(env or {})
         result = subprocess.run(
             ["node", str(STATUSLINE)], input=json.dumps(data), env=environment,
             capture_output=True, text=True, timeout=10, check=True,
@@ -153,6 +158,32 @@ class StatuslineTest(unittest.TestCase):
         })
         self.assertIn("25%", self.lines[1])
         self.assertNotIn("200k", self.lines[1])
+
+    def test_3段に分かれ各段に決まった項目が出る(self):
+        self.run_statusline({
+            "cwd": str(self.repo), "workspace": self.workspace(self.repo),
+            "model": {"display_name": "Opus"},
+            "context_window": {"used_percentage": 40, "total_input_tokens": 1000, "total_output_tokens": 10},
+            "cost": {"total_cost_usd": 0.5, "total_duration_ms": 61000},
+        })
+        self.assertEqual(len(self.lines), 3, self.lines)
+        self.assertIn("📁 origin_repo", self.lines[0])
+        self.assertIn("⎇ main", self.lines[0])
+        self.assertIn("🤖 Opus", self.lines[1])
+        self.assertIn("🏠PERSONAL", self.lines[1])
+        self.assertIn("40%", self.lines[1])
+        self.assertIn("🪙", self.lines[2])
+        self.assertIn("💰", self.lines[2])
+        self.assertIn("⏱", self.lines[2])
+        self.assertIn("🕐", self.lines[2])
+
+    def test_ブランチ名がworktree名由来なら名前を二度出さない(self):
+        wt = self.repo / ".claude" / "worktrees" / "wt2"
+        git(self.repo, "worktree", "add", "-q", "-b", "worktree-wt2", str(wt))
+        line, _ = self.run_statusline({"cwd": str(wt), "workspace": self.workspace(wt, git_worktree="wt2")})
+        self.assertIn("🌲 wt2", line)
+        self.assertNotIn("worktree-wt2", line)
+        self.assertIn("⎇", line)
 
 
 if __name__ == "__main__":
