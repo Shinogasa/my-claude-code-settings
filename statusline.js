@@ -39,26 +39,63 @@ process.stdin.on('end', async () => {
 });
 
 async function buildStatusLines(data) {
-  const line1 = buildEnvLine(data);
-  const line2 = await buildUsageLine(data);
-  return [line1, line2];
+  const rows = [buildRepoRow(data), await buildBudgetRow(data), buildMetricsRow(data)];
+  return rows.map(renderRow);
 }
 
-// ───── Line 1: 環境・コンテキスト情報 ─────
-function buildEnvLine(data) {
-  const model = data.model?.display_name || 'Claude';
+// セグメントは { id, text } か、名前を省略できる { id, name, render(name) }
+function renderSegment(seg) {
+  return seg.render ? seg.render(seg.name) : seg.text;
+}
+
+function renderRow(segments) {
+  return segments.map(renderSegment).join(' ');
+}
+
+// ───── 1段目: どこで作業しているか ─────
+function buildRepoRow(data) {
   const currentDirPath = data.workspace?.current_dir || data.cwd || '.';
   const projectDir = data.workspace?.project_dir;
-  const outputStyle = data.output_style?.name;
-  const effort = data.effort?.level;
-  const thinking = data.thinking?.enabled;
   const agent = data.agent?.name;
   const sessionName = data.session_name;
   const worktree = data.worktree?.name || data.workspace?.git_worktree;
   // worktree の中では basename が worktree 名になり 🌲 と重複するので、元リポジトリ名を出す
   const currentDir = (worktree && getMainRepoName(currentDirPath)) || path.basename(currentDirPath);
 
-  const parts = [];
+  const segs = [{ id: 'repo', text: `${C.blue}📁 ${currentDir}${C.reset}` }];
+
+  if (worktree) {
+    segs.push({ id: 'worktree', name: worktree, render: n => `${C.dim}🌲 ${n}${C.reset}` });
+  }
+
+  const git = getGitInfo(projectDir);
+  if (git) {
+    const dirty = git.dirty ? `${C.yellow}●${C.reset}` : `${C.green}✓${C.reset}`;
+    // EnterWorktree のブランチ名は worktree-<worktree名> なので、🌲 と同じ名前を二度出さない
+    if (worktree && git.branch === `worktree-${worktree}`) {
+      segs.push({ id: 'branch', text: `${C.magenta}⎇${C.reset} ${dirty}` });
+    } else {
+      segs.push({ id: 'branch', name: git.branch, render: n => `${C.magenta}⎇ ${n}${C.reset} ${dirty}` });
+    }
+  }
+
+  if (sessionName) {
+    segs.push({ id: 'session', name: sessionName, render: n => `${C.dim}📌 ${n}${C.reset}` });
+  }
+  if (agent) segs.push({ id: 'agent', text: `${C.magenta}🤝 ${agent}${C.reset}` });
+
+  return segs;
+}
+
+// ───── 2段目: あとどれだけ効率よく続けられるか ─────
+async function buildBudgetRow(data) {
+  const model = data.model?.display_name || 'Claude';
+  const effort = data.effort?.level;
+  const thinking = data.thinking?.enabled;
+  const rl = data.rate_limits;
+  const usedPct = data.context_window?.used_percentage;
+
+  const segs = [];
 
   // モデル + effort + thinking
   let modelPart = `${C.cyan}🤖 ${model}${C.reset}`;
@@ -66,91 +103,73 @@ function buildEnvLine(data) {
   if (effort) modelSuffix.push(formatEffort(effort));
   if (thinking) modelSuffix.push(`${C.magenta}🧠${C.reset}`);
   if (modelSuffix.length > 0) modelPart += `${C.dim}[${C.reset}${modelSuffix.join(' ')}${C.dim}]${C.reset}`;
-  parts.push(modelPart);
+  segs.push({ id: 'model', text: modelPart });
 
   // 認証プロファイル (常時表示)
-  parts.push(formatProfile());
+  segs.push({ id: 'profile', text: formatProfile() });
 
-  // セッション名 (カスタム名が付いているときのみ)
-  if (sessionName) parts.push(`${C.dim}📌 ${sessionName}${C.reset}`);
+  // バジェット: litellm 利用額 (全ターミナル合算、キャッシュ経由)
+  const budget = await getLitellmBudget();
+  if (budget) segs.push({ id: 'budget', text: formatBudget(budget.spend, budget.max_budget) });
 
-  // エージェント実行中
-  if (agent) parts.push(`${C.magenta}🤝 ${agent}${C.reset}`);
-
-  // ディレクトリ
-  parts.push(`${C.blue}📁 ${currentDir}${C.reset}`);
-
-  // git ブランチ + worktree
-  const gitInfo = getGitInfo(projectDir);
-  if (gitInfo) parts.push(gitInfo);
-  if (worktree) parts.push(`${C.dim}🌲 ${worktree}${C.reset}`);
-
-  return parts.join(' ');
-}
-
-// ───── Line 2: 使用量・コスト・進捗 ─────
-async function buildUsageLine(data) {
-  const ctx = data.context_window || {};
-  const cost = data.cost || {};
-  const rl = data.rate_limits;
-  const outputStyle = data.output_style?.name;
-
-  const parts = [];
+  // レート制限 (Pro/Max契約時のみ存在)
+  if (rl?.five_hour?.used_percentage != null) {
+    segs.push({ id: 'rate5h', text: formatRateLimit('5h', rl.five_hour) });
+  }
+  if (rl?.seven_day?.used_percentage != null) {
+    segs.push({ id: 'rate7d', text: formatRateLimit('7d', rl.seven_day) });
+  }
 
   // コンテキスト使用率 + プログレスバー
-  const usedPct = ctx.used_percentage;
   if (typeof usedPct === 'number') {
-    parts.push(formatProgressBar(usedPct));
+    segs.push({ id: 'context', text: formatProgressBar(usedPct) });
   } else {
-    parts.push(`${C.dim}[░░░░░░░░░░] --%${C.reset}`);
+    segs.push({ id: 'context', text: `${C.dim}[░░░░░░░░░░] --%${C.reset}` });
   }
+
+  return segs;
+}
+
+// ───── 3段目: 参考の数値 ─────
+function buildMetricsRow(data) {
+  const ctx = data.context_window || {};
+  const cost = data.cost || {};
+  const outputStyle = data.output_style?.name;
+
+  const segs = [];
 
   // トークン数 (input / output)
   const totalIn = ctx.total_input_tokens;
   const totalOut = ctx.total_output_tokens;
   if (typeof totalIn === 'number' && totalIn > 0) {
-    parts.push(`${C.gray}🪙 ${formatTokens(totalIn)}↓/${formatTokens(totalOut || 0)}↑${C.reset}`);
+    segs.push({ id: 'tokens', text: `${C.gray}🪙 ${formatTokens(totalIn)}↓/${formatTokens(totalOut || 0)}↑${C.reset}` });
   }
 
   // コスト
   const usd = cost.total_cost_usd;
-  if (typeof usd === 'number') {
-    parts.push(formatCost(usd));
-  }
-
-  // litellm 利用額 (全ターミナル合算、キャッシュ経由)
-  const budget = await getLitellmBudget();
-  if (budget) parts.push(formatBudget(budget.spend, budget.max_budget));
+  if (typeof usd === 'number') segs.push({ id: 'cost', text: formatCost(usd) });
 
   // コード変更行数 (1行以上変更があれば表示)
   const added = cost.total_lines_added || 0;
   const removed = cost.total_lines_removed || 0;
   if (added > 0 || removed > 0) {
-    parts.push(`${C.green}+${added}${C.reset}${C.gray}/${C.reset}${C.red}-${removed}${C.reset}`);
+    segs.push({ id: 'lines', text: `${C.green}+${added}${C.reset}${C.gray}/${C.reset}${C.red}-${removed}${C.reset}` });
   }
 
   // セッション経過時間
   if (typeof cost.total_duration_ms === 'number' && cost.total_duration_ms > 0) {
-    parts.push(`${C.dim}⏱ ${formatDuration(cost.total_duration_ms)}${C.reset}`);
-  }
-
-  // レート制限 (Pro/Max契約時のみ存在)
-  if (rl?.five_hour?.used_percentage != null) {
-    parts.push(formatRateLimit('5h', rl.five_hour));
-  }
-  if (rl?.seven_day?.used_percentage != null) {
-    parts.push(formatRateLimit('7d', rl.seven_day));
+    segs.push({ id: 'duration', text: `${C.dim}⏱ ${formatDuration(cost.total_duration_ms)}${C.reset}` });
   }
 
   // output style (default 以外)
   if (outputStyle && outputStyle !== 'default') {
-    parts.push(`${C.dim}🎨 ${outputStyle}${C.reset}`);
+    segs.push({ id: 'style', text: `${C.dim}🎨 ${outputStyle}${C.reset}` });
   }
 
   // JST 現在時刻
-  parts.push(`${C.dim}🕐 ${jstNow()}${C.reset}`);
+  segs.push({ id: 'time', text: `${C.dim}🕐 ${jstNow()}${C.reset}` });
 
-  return parts.join(' ');
+  return segs;
 }
 
 // ───── ヘルパー ─────
@@ -173,8 +192,7 @@ function getGitInfo(projectDir) {
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
 
-    const dirty = status ? ` ${C.yellow}●${C.reset}` : ` ${C.green}✓${C.reset}`;
-    return `${C.magenta}⎇ ${branch}${C.reset}${dirty}`;
+    return { branch, dirty: Boolean(status) };
   } catch {
     return null;
   }
