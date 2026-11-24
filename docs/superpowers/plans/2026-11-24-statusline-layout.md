@@ -19,7 +19,9 @@
 - 1段目の省略順: セッション名 → ブランチ名 → worktree名。中央を `…` で省略し、各名前は8文字までは残す。リポジトリ名は省略しない
 - 色のしきい値は 70% で警告色、90% で危険色
 - 時刻系フィールド（`expires_at`、`resets_at`）は Unix epoch 秒
-- `statusline.js` は本体のシンボリックリンク先なので、保存した瞬間に実行中のステータスラインへ効く。壊れた状態で長く置かない
+- `statusline.js` は本体のシンボリックリンク先なので、保存した瞬間に実行中のステータスラインへ効く。
+  表示が壊れたら `git checkout HEAD -- statusline.js` で直前のコミットへ戻す。RED のコミットはテストだけを変えるので、
+  直前のコミットの `statusline.js` は常に動く
 - TDD の段階ごとにコミットする（RED で1回、GREEN で1回。メッセージに段階と、失敗・成功したテスト名を書く）
 
 ## Review Focus
@@ -31,6 +33,15 @@
 5. セッション名が日本語 → 全角2桁で数えて省略する。文字の途中で切らない（Task 3）
 
 ---
+
+### Task 0: `COLUMNS` が実際に届くかを確かめる
+
+幅への追従はこの前提の上に立つので、実装の前に確かめる。
+
+- [ ] **Step 1:** `statusline.js` の入力処理の先頭に、一時的に
+  `fs.writeFileSync(path.join(os.homedir(), '.claude', 'cache', 'statusline-columns.log'), String(process.env.COLUMNS))` を足す（コミットしない）
+- [ ] **Step 2:** 次の応答で再描画されたら、ログを読む / Expected: 正の整数。`undefined` なら spec の前提が崩れているので、利用者に報告して止まる
+- [ ] **Step 3:** 足した行を `git checkout HEAD -- statusline.js` で消し、ログファイルも消す。結果を `tasks/todo/statusline-layout.md` に1行書く
 
 ### Task 1: 3段への組み替えとブランチ名の重複除去
 
@@ -133,10 +144,13 @@ def test_ブランチ名がworktree名由来なら名前を二度出さない(se
   - `test_3段目は幅が足りないと時刻から落とす`: 3段目の全項目を出す入力で、3段目の幅から時刻の分だけ削った `COLUMNS` → `🕐` が無く `⏱` と `💰` がある
   - `test_3段目を極端に縮めてもコストは残る`: `COLUMNS=20` → 3段目に `💰` があり `🪙` `+` `⏱` `🕐` が無い
   - `test_1段目はセッション名から中央省略しリポジトリ名は残す`: 長いセッション名と worktree 名で `COLUMNS=60` → `📁 origin_repo ` を含み、セッション名に `…` が入り、1段目の表示幅が60以下
-  - `test_日本語のセッション名は全角2桁で数えて省略する`: `session_name` に日本語30文字、`COLUMNS=50` → `…` を含み、1段目の表示幅が50以下。テスト側にも同じ規則の表示幅関数を置く
+  - `test_日本語のセッション名は全角2桁で数えて省略する`: `session_name` に日本語30文字、`COLUMNS=50` → `…` を含み、
+    残ったセッション名の文字数が、手で数えた期待値と一致する。期待値は実装と同じ関数で計算せず、テストに固定値で書く
+  - `test_2段目は狭くても縮めない`: `COLUMNS=20` → 2段目に、モデル・プロファイル・バー・キャッシュがすべて残る
+  - 幅の期待値はすべて手で数えた固定値にする。それでも、端末が絵文字を実際に何桁で描くかはテストでは確かめられない。Task 4 の目視で見る
   - `test_COLUMNSが無いか不正なら縮めない`: `None`、`"abc"`、`"0"` のそれぞれで、3段目に `🕐` が残る
   - `test_極端に狭くても落ちずにリポジトリ名を出す`: `COLUMNS=20`、長い worktree 名 → 3段出て、`origin_repo` が完全な形で含まれる
-- [ ] **Step 2: 実行して失敗を確かめ、RED でコミット** / Expected: 「縮めない」以外の5件が FAIL
+- [ ] **Step 2: 実行して失敗を確かめ、RED でコミット** / Expected: 「COLUMNSが無いか不正なら縮めない」と「2段目は狭くても縮めない」以外の5件が FAIL
 - [ ] **Step 3: `displayWidth`・`truncateMiddle`・`fitRow` を実装し、1段目に `{ shrink: ['session', 'branch', 'worktree'] }`、3段目に `{ drop: ['time', 'duration', 'lines', 'tokens'] }` で適用する**
 - [ ] **Step 4: 全テストが通ることを確かめ、GREEN でコミット** / Run: `python3 tests/test_statusline.py -v`
 
@@ -146,6 +160,6 @@ def test_ブランチ名がworktree名由来なら名前を二度出さない(se
 
 - [ ] **Step 1: 実データで描画を確かめる**
   Run: 実セッションで取った形の JSON（`prompt_cache`、`pr` を含む）を `COLUMNS=200` と `COLUMNS=60` で `node statusline.js` に流す / Expected: 3段、60では3段目の時刻が落ち、1段目が60桁に収まる
-- [ ] **Step 2: `COLUMNS` が実際に届くかを確かめる**
-  利用者にペインを狭めてもらい、3段目の 🕐 が消えることを目で確かめてもらう。消えなければ `COLUMNS` が届いていない（spec の前提が崩れるので、親に報告して止まる）
+- [ ] **Step 2: 実際の端末での見た目を確かめる**
+  実セッションで3段の表示を見てもらい、絵文字の幅のずれで段がはみ出していないかを確かめる（テストでは確かめられない部分）
 - [ ] **Step 3: 全テストと worktree での表示を確かめる** / Run: `python3 tests/test_statusline.py -v` / Expected: 全件 PASS
