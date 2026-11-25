@@ -11,6 +11,7 @@ Stopで走るので、そのターンの本文は表示された後になる。�
 import json
 import os
 import re
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +43,17 @@ LANGUAGES = {
     ),
 }
 PATH_FIELDS = ("file_path", "path", "notebook_path", "glob")
+# Bashでファイルの中身を読むコマンド。これが無いコマンドの .go パスは「扱った」に数えない。
+# 文字列として渡しただけのパス（heredoc・python -c・echo）で差し戻していた（2026-11-19 の誤検知）
+READ_COMMANDS = frozenset({"cat", "sed", "head", "tail", "grep", "egrep", "fgrep", "rg", "awk",
+                           "less", "more", "nl", "bat", "diff"})
+GIT_READ_SUBCOMMANDS = frozenset({"show", "diff", "blame", "log", "grep"})
+# コマンドの前に置かれ、後ろのコマンドを起動するもの。シェルの予約語（for の do など）も同じく飛ばす
+WRAPPERS = frozenset({"rtk", "sudo", "env", "command", "time", "xargs", "nice",
+                      "do", "then", "else", "elif", "!", "{"})
+SEPARATORS = frozenset({";", "&&", "||", "|", "&", "(", ")"})
+HEREDOC_START = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([A-Za-z_][\w-]*)\2")
+ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
 STATES = "出題|継続中|見送り|候補なし|OFF"
 # 推敲で起きやすい揺れ（全角コロン、半角括弧、->）は受け付ける
 JUDGMENT_LINE = re.compile(rf"^\W*コード学習[:：]\s*.+?\s*(?:→|->)\s*({STATES})\s*[（(][^）)]+[）)]", re.MULTILINE)
@@ -77,6 +89,71 @@ def assistant_texts(entries: List[dict]) -> List[str]:
     return texts
 
 
+def strip_heredoc_bodies(command: str) -> str:
+    """heredoc の本文と終端行を除く。`<<` のある行は残す。"""
+    kept: List[str] = []
+    pending: List[tuple] = []
+    for line in command.split("\n"):
+        if pending:
+            strip_tabs, delimiter = pending[0]
+            if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                pending.pop(0)
+            continue
+        kept.append(line)
+        pending = [(dash == "-", word) for dash, _, word in HEREDOC_START.findall(line)]
+    return "\n".join(kept)
+
+
+def _command_segments(line: str) -> List[List[str]]:
+    """1行を、区切り記号（; && || | & 括弧）でコマンドごとの語の並びに分ける。引用が閉じていなければ ValueError。"""
+    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    segments: List[List[str]] = [[]]
+    for token in lexer:
+        if token in SEPARATORS:
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    return [segment for segment in segments if segment]
+
+
+def _is_read_command(words: List[str]) -> bool:
+    """コマンドの語の並びが、ファイルの中身を読むコマンドか。前置きのラッパーと変数の代入は飛ばす。"""
+    index = 0
+    while index < len(words) and (words[index] in WRAPPERS or ASSIGNMENT.match(words[index])):
+        index += 1
+    if index >= len(words):
+        return False
+    name = os.path.basename(words[index])
+    if name == "git":
+        subcommands = [word for word in words[index + 1:] if not word.startswith("-")]
+        return bool(subcommands) and subcommands[0] in GIT_READ_SUBCOMMANDS
+    return name in READ_COMMANDS
+
+
+def bash_touched(command: str, language: Language) -> bool:
+    """Bashのコマンドが、対象言語のツールを実行したか、対象言語のファイルを読んだか。
+
+    パスは、読むコマンドの引数に限らず、同じコマンドのどこにあっても数える。
+    変数（f=x.go; sed $f）、for の並び、$(...) を経由して読む形が、過去のログに多いため。
+    heredoc の本文は、スクリプトに渡す文字列なので見ない。
+    """
+    body = strip_heredoc_bodies(command)
+    if language.command.search(body):
+        return True
+    if not language.path.search(body):
+        return False
+    for line in body.split("\n"):
+        try:
+            segments = _command_segments(line)
+        except ValueError:
+            # 解析できない行は、読んだかどうかを確かめられない。見逃しより差し戻しの側に倒す
+            return True
+        if any(_is_read_command(words) for words in segments):
+            return True
+    return False
+
+
 def _tool_touched(name: str, tool_input: dict, language: Language) -> bool:
     paths = [tool_input[field] for field in PATH_FIELDS if isinstance(tool_input.get(field), str)]
     if name == "Glob" and isinstance(tool_input.get("pattern"), str):
@@ -86,7 +163,7 @@ def _tool_touched(name: str, tool_input: dict, language: Language) -> bool:
     if name == "Grep" and tool_input.get("type") == language.grep_type:
         return True
     command = tool_input.get("command") if name == "Bash" else None
-    return isinstance(command, str) and bool(language.path.search(command) or language.command.search(command))
+    return isinstance(command, str) and bash_touched(command, language)
 
 
 def touched(window: List[dict], language: Language) -> bool:
@@ -110,8 +187,11 @@ def check(payload: dict) -> Optional[dict]:
         window = since_last_prompt(after_last_compact(read_entries(payload.get("transcript_path"))))
     except TranscriptError as error:
         return {"systemMessage": f"コード学習の確認: 会話記録を読めなかったので確認していない（{error}）"}
+    # Stopの時点では、最後の本文がまだ会話記録に書かれていないことがある。入力の本文も一行の検索に含める
+    last_message = payload.get("last_assistant_message")
+    texts = assistant_texts(window) + ([last_message] if isinstance(last_message, str) else [])
     if any(touched(window, language) for language in known) and not any(
-            JUDGMENT_LINE.search(text) for text in assistant_texts(window)):
+            JUDGMENT_LINE.search(text) for text in texts):
         if payload.get("stop_hook_active"):
             messages.append("コード学習の確認: 判定の一行が無いまま応答が終わった")
         else:

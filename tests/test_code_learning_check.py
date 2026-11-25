@@ -79,6 +79,38 @@ class CodeLearningCheckTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(self.run_hook([prompt(), *entries, say("ok")]), {})
 
+    def test_ignores_go_paths_passed_as_strings_through_bash(self):
+        # 2026-11-19: ログを調べるスクリプトへ .go のパスを文字列で渡しただけで差し戻された（Goのコードは読んでいない）
+        cases = {
+            "heredoc_body": "python3 -I - <<'EOF'\nprint(check('pkg/v3/path_to_url.go'))\nEOF",
+            "inline_script": "python3 -c 'print(\"pkg/series.go\")'",
+            "echo_string": "echo 'see pkg/series.go'",
+        }
+        for name, command in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(self.run_hook([prompt(), call("Bash", command=command), say("ok")]), {})
+
+    def test_detects_go_files_read_through_bash(self):
+        # 過去の作業ログで、Bashの .go パス320回のうち245回は、ファイルを読むコマンドの引数だった
+        cases = {
+            "sed": "sed -n '30,80p' pkg/series.go",
+            "cat_pipe": "cat pkg/series.go | head -40",
+            "after_cd": "cd sub && grep -n 'func New' pkg/series.go",
+            "rtk_wrapper": "rtk grep -n Foo pkg/series.go",
+            "git_show": "git show HEAD:pkg/series.go",
+            "second_line": "ls pkg\nnl -ba pkg/series.go",
+            "unparsable_quote": "sed -n '1,5p pkg/series.go",
+            # 新しい判定を過去ログに当てたとき、取りこぼしていた形
+            "via_variable": "f=pkg/series.go; awk 'NR>=19 && NR<=27' $f",
+            "for_loop": "for f in pkg/a.go pkg/b.go; do head -5 $f; done",
+            "git_grep": "git grep -n 'cooldown' origin/main -- '*.go'",
+            "command_substitution": "f=$(git ls-files 'pkg/*.go' | head -1); grep -n '^func ' \"$f\"",
+        }
+        for name, command in cases.items():
+            with self.subTest(name=name):
+                output = self.run_hook([prompt(), call("Bash", command=command), say("ok")])
+                self.assertEqual(output.get("decision"), "block")
+
     def test_detects_other_go_tooling(self):
         cases = {
             "go_mod": call("Bash", command="go mod tidy"),
@@ -102,6 +134,13 @@ class CodeLearningCheckTests(unittest.TestCase):
             with self.subTest(state=state):
                 entries = [prompt(), call("Read", file_path="/repo/a.go"), say(f"所見の前に\n`コード学習: 何か → {state}`\n本文")]
                 self.assertEqual(self.run_hook(entries), {})
+
+    def test_line_in_last_assistant_message_counts_before_transcript_is_written(self):
+        # 2026-11-12〜13: 一行を書いたのに差し戻された。最終状態の会話記録なら通るので、
+        # Stopの時点では最後の本文がまだ会話記録に無かったとみなす。入力の last_assistant_message には本文がある
+        entries = [prompt(), call("Read", file_path="/repo/a.go")]
+        output = self.run_hook(entries, last_assistant_message=f"{LINE}\n本文")
+        self.assertEqual(output, {})
 
     def test_line_without_reason_or_unknown_state_does_not_count(self):
         for line in ("コード学習: 何か → 候補なし", "コード学習: 何か → たぶん（不明）"):
