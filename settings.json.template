@@ -79,6 +79,7 @@
   },
   "askUserQuestionTimeout": "never",
   "autoCompactEnabled": true,
+  "idleCompaction": false,
   "hooks": {
     "PreToolUse": [
       {
