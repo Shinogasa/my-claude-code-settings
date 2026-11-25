@@ -268,7 +268,7 @@ class TestAwsSkillSubmodule(unittest.TestCase):
 
 MATT_SUBMODULE = "mattpocock-skills"
 MATT_SKILLS = {
-    "grilling": "skills/productivity/grilling",
+    # grillingは推奨回答を外すためフォークした（ADR 0057）。TestGrillingForkで検査する
     # handoffは置き場所を変えるためフォークした（ADR 0054）。TestHandoffForkで検査する
     # retroは最初にwriting-for-agentsを呼ぶので、一緒に配る
     "retro": "skills/engineering/retro",
@@ -300,6 +300,62 @@ class TestMattPocockSkillSubmodule(unittest.TestCase):
         self.assertFalse(link.is_symlink() or link.exists())
         for host in HOST_KEYS:
             self.assertNotIn("grill-me", manifest[host])
+
+
+# フォークの元にした上流のファイルの blob ハッシュ（mattpocock-skills 4ae2317）
+GRILLING_UPSTREAM_BLOBS = {
+    "skills/productivity/grilling/SKILL.md": "d2f09a18e6a6c65c55f1271ba08dfeaf06f0bed3",
+    "skills/productivity/grilling/agents/openai.yaml": "ddbdb96139c0c1dfe6bca698f39d0465674b8a39",
+}
+
+
+class TestGrillingFork(unittest.TestCase):
+    """grillingは上流をフォークし、推奨回答を先に出さない（ADR 0057）。"""
+
+    def setUp(self):
+        self.skill_dir = SKILLS_DIR / "grilling"
+        self.skill_md = self.skill_dir / "SKILL.md"
+
+    def test_is_own_directory_listed_as_shared(self):
+        # symlinkのままだと、submoduleを更新したときに推奨回答の指示が上流の版へ戻る
+        self.assertFalse(self.skill_dir.is_symlink())
+        self.assertTrue(self.skill_md.is_file())
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        self.assertIn("grilling", manifest["shared"])
+
+    def test_keeps_upstream_frontmatter_and_codex_metadata(self):
+        text = self.skill_md.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("---\nname: grilling\n"))
+        openai = (self.skill_dir / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        self.assertIn('display_name: "Grilling"', openai)
+
+    def test_asks_without_recommended_answer(self):
+        # 推奨を先に出すと、ユーザーは承認だけを返しやすい（2026-11-19 の観測で defer の発生源だった）
+        text = self.skill_md.read_text(encoding="utf-8")
+        self.assertNotIn("➡️", text)
+        self.assertNotIn("recommended answer", text)
+        self.assertNotIn('"yes" accepts', text)
+
+    def test_gives_own_view_after_user_answers(self):
+        text = self.skill_md.read_text(encoding="utf-8")
+        self.assertIn("after the user answers", text)
+
+    def test_upstream_unchanged_since_fork(self):
+        # フォークには上流の更新が自動で入らない。submoduleを進めて上流が変わったら、ここで落とす。
+        # 差分を読んで取り込んだら、下のハッシュを新しい上流の値に更新する
+        for upstream_path, expected in GRILLING_UPSTREAM_BLOBS.items():
+            with self.subTest(path=upstream_path):
+                result = subprocess.run(
+                    ["git", "-C", MATT_SUBMODULE, "rev-parse", f"HEAD:{upstream_path}"],
+                    cwd=REPO_ROOT, capture_output=True, text=True,
+                )
+                # 確かめられないときも、通さずに落とす
+                self.assertEqual(result.returncode, 0, f"上流を読めなかった: {result.stderr.strip()}")
+                self.assertEqual(
+                    result.stdout.strip(), expected,
+                    f"上流の {upstream_path} がフォークの元（4ae2317）から変わった。"
+                    "差分を読んで skills/grilling に取り込み、ハッシュを更新する（ADR 0057）",
+                )
 
 
 class TestHandoffFork(unittest.TestCase):

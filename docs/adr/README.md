@@ -116,3 +116,4 @@ status: accepted        # proposed | accepted | superseded by NNNN | deprecated
 | [0054](0054-handoff-fork-into-repo-tasks.md) | handoff skill を上流からフォークし、引き継ぎ資料を作業repoの `tasks/handoff/` に置く | 2026-11-19 | accepted |
 | [0055](0055-transcript-retention-one-year.md) | Claude Code のセッションログの保持期間 | 2026-11-19 | accepted |
 | [0056](0056-personal-overlay-non-env-keys.md) | 個人プロファイルのoverlayに、`env` 以外のキーも通す | 2026-11-19 | accepted |
+| [0057](0057-grilling-fork-without-recommendation.md) | grilling skill を上流からフォークし、推奨回答を外す | 2026-11-25 | accepted |
