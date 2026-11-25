@@ -302,6 +302,38 @@ class TestMattPocockSkillSubmodule(unittest.TestCase):
             self.assertNotIn("grill-me", manifest[host])
 
 
+class TestGrillingFork(unittest.TestCase):
+    """grillingは上流をフォークし、推奨回答を先に出さない（ADR 0056）。"""
+
+    def setUp(self):
+        self.skill_dir = SKILLS_DIR / "grilling"
+        self.skill_md = self.skill_dir / "SKILL.md"
+
+    def test_is_own_directory_listed_as_shared(self):
+        # symlinkのままだと、submoduleを更新したときに推奨回答の指示が上流の版へ戻る
+        self.assertFalse(self.skill_dir.is_symlink())
+        self.assertTrue(self.skill_md.is_file())
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        self.assertIn("grilling", manifest["shared"])
+
+    def test_keeps_upstream_frontmatter_and_codex_metadata(self):
+        text = self.skill_md.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("---\nname: grilling\n"))
+        openai = (self.skill_dir / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        self.assertIn('display_name: "Grilling"', openai)
+
+    def test_asks_without_recommended_answer(self):
+        # 推奨を先に出すと、ユーザーは承認だけを返しやすい（2026-11-19 の観測で defer の発生源だった）
+        text = self.skill_md.read_text(encoding="utf-8")
+        self.assertNotIn("➡️", text)
+        self.assertNotIn("recommended answer", text)
+        self.assertNotIn('"yes" accepts', text)
+
+    def test_gives_own_view_after_user_answers(self):
+        text = self.skill_md.read_text(encoding="utf-8")
+        self.assertIn("after the user answers", text)
+
+
 class TestHandoffFork(unittest.TestCase):
     """handoffは上流をフォークし、引き継ぎ資料を作業repoのgit対象外の場所に置く（ADR 0054）。"""
 
