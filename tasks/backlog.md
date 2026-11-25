@@ -173,6 +173,24 @@ PR作成時の日本語レビュー、マージ済みPRの照会、`claude-headl
 
 ---
 
+## ステータスラインの3段化（PR #150）の残り
+
+### P3: 最終レビューで見送ったMinor
+
+設計は `docs/superpowers/specs/2026-11-24-statusline-layout-design.md`。どれも実際に困った例が出てから直す。
+
+- M-1: `session_name` などの名前が文字列でないと、`displayWidth` と `truncateMiddle` が例外を投げ、全段が1行のフォールバック表示になる。
+  公式の仕様では文字列なので、ふだんは起きない。直すなら `buildRepoRow` で `typeof === 'string'` を確かめる
+- M-2: 「各名前は8文字までは残す」をコードポイントで数えている。そのため、NFD の日本語（macOS のパスから取った worktree 名で起こりうる）や
+  ZWJ で組み合わせた絵文字は、見た目の文字の途中で切れ、幅もずれる。直すなら `Intl.Segmenter` で書記素単位に分ける
+- M-3: 不正な `COLUMNS`（`abc`、`0`）では縮めないことを確かめるテストは、3段目が47桁しかなく、実装が既定の幅で縮めても通ってしまう。
+  100桁を超える行で確かめれば見分けられる
+- M-4: `tests/test_statusline.py` 冒頭の docstring が古い。3段・幅への追従・キャッシュ/PR/spend limit の検証が書かれていない
+
+**決めること**: 狭いペイン（幅60前後）で1段目が折り返すのが気になったら、名前の最小8文字を減らすか、PR表示も縮める対象に入れるか。
+
+---
+
 ## 日本語文書レビュー（yomiyasu）の続き
 
 設計は `docs/superpowers/specs/2026-10-01-jp-doc-review-design.md`、判断の経緯はADR 0024・0025・0032。
