@@ -268,7 +268,7 @@ class TestAwsSkillSubmodule(unittest.TestCase):
 
 MATT_SUBMODULE = "mattpocock-skills"
 MATT_SKILLS = {
-    "grilling": "skills/productivity/grilling",
+    # grillingは推奨回答を外すためフォークした（ADR 0057）。TestGrillingForkで検査する
     # handoffは置き場所を変えるためフォークした（ADR 0054）。TestHandoffForkで検査する
     # retroは最初にwriting-for-agentsを呼ぶので、一緒に配る
     "retro": "skills/engineering/retro",
@@ -303,7 +303,7 @@ class TestMattPocockSkillSubmodule(unittest.TestCase):
 
 
 class TestGrillingFork(unittest.TestCase):
-    """grillingは上流をフォークし、推奨回答を先に出さない（ADR 0056）。"""
+    """grillingは上流をフォークし、推奨回答を先に出さない（ADR 0057）。"""
 
     def setUp(self):
         self.skill_dir = SKILLS_DIR / "grilling"
