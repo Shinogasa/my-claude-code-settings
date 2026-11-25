@@ -352,6 +352,8 @@ _GUARDING_TOP_LEVEL_KEYS = (
 # テンプレートのキーは守りか、ここのどちらかに必ず分類する（テストで強制する）
 _REMOVABLE_TOP_LEVEL_KEYS = (
     "$schema", "statusLine", "outputStyle", "theme", "effortLevel", "askUserQuestionTimeout", "autoCompactEnabled",
+    # 消すと既定（離席中もcompactする）に戻るだけ
+    "idleCompaction",
     # 消すと /model が組み込みの一覧に戻るだけ（ADR 0056）
     "modelPicker",
 )
